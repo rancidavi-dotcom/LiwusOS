@@ -1,0 +1,132 @@
+#include "isr.h"
+#include "io.h"
+#include "serial.h"
+#include "syscall.h" // Para syscall_handler
+#include "task.h"
+#include "string.h"
+
+#define MAX_IRQ_HANDLERS 16
+static void (*irq_handlers[MAX_IRQ_HANDLERS])(void) = {0};
+
+volatile uint8_t g_in_irq = 0;
+
+void irq_install_handler(int irq, void (*handler)(void)) {
+    if (irq >= 0 && irq < MAX_IRQ_HANDLERS) {
+        irq_handlers[irq] = handler;
+    }
+}
+extern void keyboard_handler();
+extern void timer_handler();
+extern void mouse_handler();
+extern uint64_t schedule(uint64_t current_rsp);
+
+
+/* Handler para exceções de CPU (ISR 0-31) e Syscalls (128) */
+/* O Assembly chama 'call isr_handler', passando a struct registers_t na stack
+ * (por valor) */
+void isr_handler(registers_t *regs) {
+  if (regs->int_no == 128) {
+    syscall_handler(regs);
+  } else {
+    serial_print("CPU exception: ");
+    serial_print_hex(regs->int_no);
+    serial_print(" err=");
+    serial_print_hex(regs->err_code);
+    if (regs->int_no == 14) {
+      uint64_t cr2;
+      asm volatile("mov %%cr2, %0" : "=r"(cr2));
+      serial_print(" cr2=");
+      serial_print_hex(cr2);
+    }
+serial_print(" rip=");
+      serial_print_hex(regs->rip);
+      serial_print(" rsp=");
+      serial_print_hex(regs->rsp);
+      serial_print(" rax=");
+      serial_print_hex(regs->rax);
+      serial_print(" rbx=");
+      serial_print_hex(regs->rbx);
+      serial_print(" rcx=");
+      serial_print_hex(regs->rcx);
+      serial_print(" rdx=");
+      serial_print_hex(regs->rdx);
+      serial_print(" rdi=");
+      serial_print_hex(regs->rdi);
+      serial_print(" rsi=");
+      serial_print_hex(regs->rsi);
+      serial_print(" rbp=");
+      serial_print_hex(regs->rbp);
+      serial_print("\n");
+
+      if ((regs->cs & 0x3) == 0x3 && current_task && current_task->user_mode) {
+        serial_print("user task killed after exception\n");
+        /* Dump user stack (return-address candidates) to locate the caller. */
+        {
+          extern void kfree(void *);
+          uint64_t flt_base = (regs->rsp & 0xFFFFF000ULL) - 0x3000;
+          uint64_t flt_end  = (regs->rsp & 0xFFFFF000ULL) + 0x2000;
+          uint64_t *p = (uint64_t *)(regs->rsp & ~0x7ULL);
+          if (p >= (uint64_t *)flt_base && p < (uint64_t *)flt_end) {
+            serial_print("  [stack] rsp area:");
+            for (int i = 0; i < 24 && (uint64_t *)((char*)p + i*8) < (uint64_t *)flt_end; i++) {
+              if (i % 4 == 0) serial_print("\n    ");
+              serial_print_hex(*((uint64_t *)((char*)p + i*8))); serial_print(" ");
+            }
+            serial_print("\n");
+          }
+        }
+        sys_exit_process(128 + (int)regs->int_no);
+      } else {
+      extern void kernel_panic(const char *msg);
+      char buf[64];
+      strcpy(buf, "Unhandled CPU exception (ISR ");
+      char num[16];
+      itoa(regs->int_no, num, 10);
+      strcat(buf, num);
+      strcat(buf, ")");
+      kernel_panic(buf);
+    }
+  }
+}
+
+/* Handler para interrupções de hardware (IRQ 0-15) */
+/* O Assembly 'irq_common_stub' faz 'push %esp' e 'call irq_handler', então
+ * recebe um ponteiro */
+uint64_t irq_handler(uint64_t rsp) {
+  registers_t *regs = (registers_t *)rsp;
+
+  extern void lapic_eoi(void);
+  lapic_eoi();
+
+  g_in_irq = 1;
+
+  int irq = (int)(regs->int_no - 32);
+
+  if (irq == 0) {
+    timer_handler();
+    /* EOI do PIC mestre é OBRIGATÓRIO antes do schedule: o return abaixo
+     * troca de pilha e o código final (outb 0x20) nunca roda nesse caminho.
+     * Sem o EOI, o bit ISR0 do PIC fica preso e ele mascara TODAS as
+     * interrupções (teclado IRQ1, mouse IRQ12 e o próprio PIT). */
+    outb(0x20, 0x20);
+    g_in_irq = 0;
+    return schedule(rsp);
+  } else if (irq == 1) {
+    keyboard_handler();
+  } else if (irq == 12) {
+    mouse_handler();
+  } else if (irq >= 0 && irq < MAX_IRQ_HANDLERS && irq_handlers[irq]) {
+    irq_handlers[irq]();
+  }
+
+  /* Normal hardware boot currently keeps the legacy PIC enabled: AP startup
+   * is intentionally deferred until its IOAPIC routing is complete.  Without
+   * these EOIs the PIC delivers only the first timer/keyboard interrupt. */
+  if (irq >= 8)
+    outb(0xA0, 0x20);
+  outb(0x20, 0x20);
+
+  g_in_irq = 0;
+
+  return rsp;
+}

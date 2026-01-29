@@ -1,0 +1,42 @@
+# Git Attributes
+* text=auto eol=lf
+*.c text diff=cpp
+*.h text diff=cpp
+*.s text diff=asm
+*.asm text diff=asm
+*.ld text
+*.md text diff=markdown
+*.txt text
+Makefile text
+*.mk text
+*.sh text eol=lf
+*.cfg text
+*.conf text
+*.ini text
+*.o binary
+*.bin binary
+*.elf binary
+*.iso binary
+*.img binary
+*.a binary
+*.so binary
+*.dll binary
+*.dylib binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.bmp binary
+*.ico binary
+*.tar binary
+*.gz binary
+*.zip binary
+*.bz2 binary
+*.xz binary
+*.c linguist-language=C
+*.h linguist-language=C
+*.s linguist-language=Assembly
+*.asm linguist-language=Assembly
+Makefile linguist-language=Makefile
+*.mk linguist-language=Makefile
+*.ld linguist-language=Linker Script

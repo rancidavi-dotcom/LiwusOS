@@ -1,0 +1,250 @@
+/*
+ * gui/scene/node.c
+ *
+ * Scene Graph node implementation.
+ */
+
+#include "node.h"
+#include "kheap.h"
+#include "string.h"
+#include "serial.h"     /* for debug output */
+
+/* --------------------------------------------------------------------------
+ * Global scene graph singleton
+ * -------------------------------------------------------------------------- */
+
+scene_graph_t *g_scene = NULL;
+
+void scene_graph_init(void) {
+    if (g_scene) return;
+    g_scene = (scene_graph_t *)kmalloc(sizeof(scene_graph_t));
+    if (!g_scene) return;
+    g_scene->root       = NULL;
+    g_scene->next_id    = 1;
+    g_scene->node_count = 0;
+}
+
+void scene_graph_destroy(void) {
+    if (!g_scene) return;
+    if (g_scene->root) node_destroy(g_scene->root);
+    kfree(g_scene);
+    g_scene = NULL;
+}
+
+/* --------------------------------------------------------------------------
+ * Node creation / destruction
+ * -------------------------------------------------------------------------- */
+
+node_t *node_create(node_type_t type, const char *name) {
+    node_t *n = (node_t *)kmalloc(sizeof(node_t));
+    if (!n) return NULL;
+    memset(n, 0, sizeof(node_t));
+
+    if (g_scene) {
+        n->id = g_scene->next_id++;
+        g_scene->node_count++;
+    } else {
+        n->id = 0; /* created before scene init – unusual */
+    }
+
+    n->type             = type;
+    n->visible          = true;
+    n->interactive      = true;
+    n->opacity          = 1.0f;
+    n->dirty            = NODE_DIRTY_ALL;
+    n->world_transform  = transform_identity();
+    n->screen_bounds    = rect_zero();
+
+    /* Copy name (truncate safely) */
+    if (name) {
+        uint32_t i = 0;
+        while (name[i] && i < NODE_NAME_LEN - 1) {
+            n->name[i] = name[i]; i++;
+        }
+        n->name[i] = '\0';
+    }
+
+    return n;
+}
+
+void node_destroy(node_t *node) {
+    if (!node) return;
+
+    /* Destroy all children first (depth-first). */
+    for (uint32_t i = 0; i < node->child_count; i++) {
+        node_destroy(node->children[i]);
+        node->children[i] = NULL;
+    }
+
+    /* Call subtype destructor if present. */
+    if (node->vtable && node->vtable->destroy) {
+        node->vtable->destroy(node);
+    }
+
+    if (g_scene && g_scene->node_count > 0) g_scene->node_count--;
+
+    kfree(node);
+}
+
+/* --------------------------------------------------------------------------
+ * Hierarchy management
+ * -------------------------------------------------------------------------- */
+
+bool node_add_child(node_t *parent, node_t *child) {
+    if (!parent || !child) return false;
+    if (parent->child_count >= NODE_MAX_CHILDREN) return false;
+    if (child->parent) return false; /* already has a parent */
+
+    child->parent = parent;
+
+    /* Sibling list */
+    if (parent->child_count > 0) {
+        node_t *last = parent->children[parent->child_count - 1];
+        last->next_sibling = child;
+        child->prev_sibling = last;
+    }
+    child->next_sibling = NULL;
+
+    parent->children[parent->child_count++] = child;
+
+    /* Invalidate transforms down from this child */
+    node_mark_dirty(child, NODE_DIRTY_TRANSFORM | NODE_DIRTY_LAYOUT);
+    return true;
+}
+
+void node_remove_child(node_t *parent, node_t *child) {
+    if (!parent || !child) return;
+
+    for (uint32_t i = 0; i < parent->child_count; i++) {
+        if (parent->children[i] == child) {
+            /* Patch sibling list */
+            if (child->prev_sibling) child->prev_sibling->next_sibling = child->next_sibling;
+            if (child->next_sibling) child->next_sibling->prev_sibling = child->prev_sibling;
+
+            /* Compact children array */
+            for (uint32_t j = i; j + 1 < parent->child_count; j++) {
+                parent->children[j] = parent->children[j + 1];
+            }
+            parent->child_count--;
+            parent->children[parent->child_count] = NULL;
+
+            child->parent       = NULL;
+            child->prev_sibling = NULL;
+            child->next_sibling = NULL;
+            return;
+        }
+    }
+}
+
+/* --------------------------------------------------------------------------
+ * Search / hit-testing
+ * -------------------------------------------------------------------------- */
+
+node_t *node_find_by_id(node_t *root, uint32_t id) {
+    if (!root) return NULL;
+    if (root->id == id) return root;
+    for (uint32_t i = 0; i < root->child_count; i++) {
+        node_t *found = node_find_by_id(root->children[i], id);
+        if (found) return found;
+    }
+    return NULL;
+}
+
+
+
+/*
+ * Hit-test: return the frontmost (highest z-order, deepest in tree) node
+ * whose screen_bounds contains (screen_x, screen_y) and is interactive.
+ * We iterate children in reverse order so higher z-index wins.
+ */
+node_t *node_hit_test(node_t *root, int screen_x, int screen_y) {
+    if (!root || !root->visible) return NULL;
+
+    /* Children in reverse (topmost first) */
+    for (int i = (int)root->child_count - 1; i >= 0; i--) {
+        node_t *hit = node_hit_test(root->children[i], screen_x, screen_y);
+        if (hit) return hit;
+    }
+
+    /* Test this node */
+    if (root->interactive &&
+        rect_contains_point(root->screen_bounds, screen_x, screen_y)) {
+        return root;
+    }
+
+    return NULL;
+}
+
+/* --------------------------------------------------------------------------
+ * Spatial helpers
+ * -------------------------------------------------------------------------- */
+
+void node_set_position(node_t *node, int x, int y) {
+    if (!node) return;
+    if (node->local_x == x && node->local_y == y) return;
+    node->local_x = x;
+    node->local_y = y;
+    node_mark_dirty(node, NODE_DIRTY_TRANSFORM);
+}
+
+void node_set_size(node_t *node, int w, int h) {
+    if (!node) return;
+    if (node->width == w && node->height == h) return;
+    node->width = w;
+    node->height = h;
+    node_mark_dirty(node, NODE_DIRTY_LAYOUT | NODE_DIRTY_PAINT);
+}
+
+void node_mark_dirty(node_t *node, uint32_t flags) {
+    if (!node) return;
+    node->dirty |= flags;
+
+    /* Propagate TRANSFORM dirt down to all children */
+    if (flags & NODE_DIRTY_TRANSFORM) {
+        for (uint32_t i = 0; i < node->child_count; i++) {
+            node_mark_dirty(node->children[i], NODE_DIRTY_TRANSFORM);
+        }
+    }
+}
+
+/* --------------------------------------------------------------------------
+ * Transform update (lazy recompute)
+ * -------------------------------------------------------------------------- */
+
+void node_update_transforms(node_t *node, gui_transform_t parent_world) {
+    if (!node) return;
+
+    if (node->dirty & NODE_DIRTY_TRANSFORM) {
+        /* Own transform = translate to local position */
+        gui_transform_t local = transform_translation(node->local_x,
+                                                      node->local_y);
+        node->world_transform = transform_concat(local, parent_world);
+        node->dirty &= ~NODE_DIRTY_TRANSFORM;
+    }
+
+    /* Recurse children */
+    for (uint32_t i = 0; i < node->child_count; i++) {
+        node_update_transforms(node->children[i], node->world_transform);
+    }
+}
+
+/* --------------------------------------------------------------------------
+ * Draw recursion
+ * -------------------------------------------------------------------------- */
+
+void node_draw_recursive(node_t *node, struct gui_renderer *r) {
+    if (!node || !node->visible) return;
+
+    /* Paint self */
+    if (node->vtable && node->vtable->draw) {
+        node->vtable->draw(node, r);
+    }
+
+    /* Children in z-order (ascending) */
+    for (uint32_t i = 0; i < node->child_count; i++) {
+        node_draw_recursive(node->children[i], r);
+    }
+
+    /* Clear paint dirty bit after draw */
+    node->dirty &= ~NODE_DIRTY_PAINT;
+}

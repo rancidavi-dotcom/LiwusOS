@@ -1,0 +1,256 @@
+LiwusOS Kernel Booting...
+VMM: PAT initialized (PAT1 = WC)
+APIC: Starting ACPI search...
+APIC: RSDP found at physical address: 0x00000000000F5280
+APIC: MADT table found at: 0x0000000003FE225D
+APIC: Default LAPIC Physical Base: 0x00000000FEE00000
+APIC: Found Processor Core 0 (ACPI Proc ID: 0, APIC ID: 0)
+APIC: Found I/O APIC ID 0 Base: 0x00000000FEC00000
+APIC: Found IRQ Override - Source 0 -> GSI 2
+APIC: Found IRQ Override - Source 5 -> GSI 5
+APIC: Found IRQ Override - Source 9 -> GSI 9
+APIC: Found IRQ Override - Source : -> GSI :
+APIC: Found IRQ Override - Source ; -> GSI ;
+APIC: Legacy PIC disabled (masked all IRQs)
+APIC: Mapped I/O APIC page.
+APIC: Routings set up in I/O APIC.
+APIC: Local APIC successfully initialized and enabled!
+APIC: Copied trampoline to 0x8000
+VFS initialized
+GPU: Scanning PCI for display controller...
+GPU: Detected Bochs/QEMU GPU (vendor=0x0x0000000000001234 device=0x0x0000000000001111)
+GPU: BAR0=0x0x00000000FD000000 BAR2=0x0x00000000FEBB0000
+GPU: Driver initialized.
+AHCI: No controller found.
+ata: BAR4 not I/O space
+USB: Initializing USB Stack...
+AC97: no audio controller found (using PC speaker)
+initrd: copiado para heap do kernel
+Initrd loaded into memory (for first boot setup)
+ata: found PIO disk bus=0x0x00000000000001F0 drive=0x0x00000000000000A0
+ATA disk found, trying SDFS mount...
+[fsck] Starting filesystem check...
+[fsck] Bitmap inconsistency detected
+[fsck] (may settle after directory scan)
+[fsck] Check complete
+SDFS: Mounted V2
+[vfs] mounted sdfs_root at /house/localhost
+SDFS disk mounted at /house/localhost
+SDFS: system already installed.
+initrd: procurando test_mode
+initrd: achou entrada ./
+initrd: achou entrada ./demo_gui
+initrd: achou entrada ./hello_static
+initrd: achou entrada ./hello_tcc.c
+initrd: achou entrada ./lde
+initrd: achou entrada ./tcc
+initrd: achou entrada ./tccsdk/
+initrd: achou entrada ./tccsdk/include/
+initrd: achou entrada ./tccsdk/include/alloca.h
+initrd: achou entrada ./tccsdk/include/ar.h
+initrd: achou entrada ./tccsdk/include/argz.h
+initrd: achou entrada ./tccsdk/include/arpa/
+initrd: achou entrada ./tccsdk/include/arpa/inet.h
+initrd: achou entrada ./tccsdk/include/assert.h
+initrd: achou entrada ./tccsdk/include/byteswap.h
+initrd: achou entrada ./tccsdk/include/complex.h
+initrd: achou entrada ./tccsdk/include/cpio.h
+initrd: achou entrada ./tccsdk/include/ctype.h
+initrd: achou entrada ./tccsdk/include/devctl.h
+initrd: achou entrada ./tccsdk/include/dirent.h
+initrd: achou entrada ./tccsdk/include/dlfcn.h
+initrd: achou entrada ./tccsdk/include/elf.h
+initrd: achou entrada ./tccsdk/include/endian.h
+initrd: achou entrada ./tccsdk/include/envlock.h
+initrd: achou entrada ./tccsdk/include/envz.h
+initrd: achou entrada ./tccsdk/include/errno.h
+initrd: achou entrada ./tccsdk/include/fastmath.h
+initrd: achou entrada ./tccsdk/include/fcntl.h
+initrd: achou entrada ./tccsdk/include/features.h
+initrd: achou entrada ./tccsdk/include/fenv.h
+initrd: achou entrada ./tccsdk/include/float.h
+initrd: achou entrada ./tccsdk/include/fnmatch.h
+initrd: achou entrada ./tccsdk/include/ftw.h
+initrd: achou entrada ./tccsdk/include/getopt.h
+initrd: achou entrada ./tccsdk/include/glob.h
+initrd: achou entrada ./tccsdk/include/grp.h
+initrd: achou entrada ./tccsdk/include/iconv.h
+initrd: achou entrada ./tccsdk/include/ieeefp.h
+initrd: achou entrada ./tccsdk/include/inttypes.h
+initrd: achou entrada ./tccsdk/include/langinfo.h
+initrd: achou entrada ./tccsdk/include/libgen.h
+initrd: achou entrada ./tccsdk/include/libliw.h
+initrd: achou entrada ./tccsdk/include/limits.h
+initrd: achou entrada ./tccsdk/include/linux/
+initrd: achou entrada ./tccsdk/include/linux/capability.h
+initrd: achou entrada ./tccsdk/include/linux/kd.h
+initrd: achou entrada ./tccsdk/include/linux/vt.h
+initrd: achou entrada ./tccsdk/include/liwus_gui.h
+initrd: achou entrada ./tccsdk/include/locale.h
+initrd: achou entrada ./tccsdk/include/machine/
+initrd: achou entrada ./tccsdk/include/machine/ansi.h
+initrd: achou entrada ./tccsdk/include/machine/endian.h
+initrd: achou entrada ./tccsdk/include/machine/fastmath.h
+initrd: achou entrada ./tccsdk/include/machine/ieee.h
+initrd: achou entrada ./tccsdk/include/machine/ieeefp.h
+initrd: achou entrada ./tccsdk/include/machine/malloc.h
+initrd: achou entrada ./tccsdk/include/machine/param.h
+initrd: achou entrada ./tccsdk/include/machine/setjmp-dj.h
+initrd: achou entrada ./tccsdk/include/machine/setjmp.h
+initrd: achou entrada ./tccsdk/include/machine/stdlib.h
+initrd: achou entrada ./tccsdk/include/machine/termios.h
+initrd: achou entrada ./tccsdk/include/machine/time.h
+initrd: achou entrada ./tccsdk/include/machine/types.h
+initrd: achou entrada ./tccsdk/include/machine/_arc4random.h
+initrd: achou entrada ./tccsdk/include/machine/_default_types.h
+initrd: achou entrada ./tccsdk/include/machine/_endian.h
+initrd: achou entrada ./tccsdk/include/machine/_fpmath.h
+initrd: achou entrada ./tccsdk/include/machine/_time.h
+initrd: achou entrada ./tccsdk/include/machine/_types.h
+initrd: achou entrada ./tccsdk/include/malloc.h
+initrd: achou entrada ./tccsdk/include/math.h
+initrd: achou entrada ./tccsdk/include/memory.h
+initrd: achou entrada ./tccsdk/include/mntent.h
+initrd: achou entrada ./tccsdk/include/ndbm.h
+initrd: achou entrada ./tccsdk/include/net/
+initrd: achou entrada ./tccsdk/include/net/if.h
+initrd: achou entrada ./tccsdk/include/netdb.h
+initrd: achou entrada ./tccsdk/include/netinet/
+initrd: achou entrada ./tccsdk/include/netinet/in.h
+initrd: achou entrada ./tccsdk/include/newlib.h
+initrd: achou entrada ./tccsdk/include/paths.h
+initrd: achou entrada ./tccsdk/include/poll.h
+initrd: achou entrada ./tccsdk/include/pthread.h
+initrd: achou entrada ./tccsdk/include/pwd.h
+initrd: achou entrada ./tccsdk/include/reent.h
+initrd: achou entrada ./tccsdk/include/regdef.h
+initrd: achou entrada ./tccsdk/include/regex.h
+initrd: achou entrada ./tccsdk/include/rpc/
+initrd: achou entrada ./tccsdk/include/rpc/types.h
+initrd: achou entrada ./tccsdk/include/rpc/xdr.h
+initrd: achou entrada ./tccsdk/include/sched.h
+initrd: achou entrada ./tccsdk/include/search.h
+initrd: achou entrada ./tccsdk/include/setjmp.h
+initrd: achou entrada ./tccsdk/include/signal.h
+initrd: achou entrada ./tccsdk/include/spawn.h
+initrd: achou entrada ./tccsdk/include/ssp/
+initrd: achou entrada ./tccsdk/include/ssp/ssp.h
+initrd: achou entrada ./tccsdk/include/ssp/stdio.h
+initrd: achou entrada ./tccsdk/include/ssp/stdlib.h
+initrd: achou entrada ./tccsdk/include/ssp/string.h
+initrd: achou entrada ./tccsdk/include/ssp/strings.h
+initrd: achou entrada ./tccsdk/include/ssp/unistd.h
+initrd: achou entrada ./tccsdk/include/ssp/wchar.h
+initrd: achou entrada ./tccsdk/include/stdalign.h
+initrd: achou entrada ./tccsdk/include/stdarg.h
+initrd: achou entrada ./tccsdk/include/stdatomic.h
+initrd: achou entrada ./tccsdk/include/stdbool.h
+initrd: achou entrada ./tccsdk/include/stddef.h
+initrd: achou entrada ./tccsdk/include/stdint.h
+initrd: achou entrada ./tccsdk/include/stdio.h
+initrd: achou entrada ./tccsdk/include/stdio_ext.h
+initrd: achou entrada ./tccsdk/include/stdlib.h
+initrd: achou entrada ./tccsdk/include/stdnoreturn.h
+initrd: achou entrada ./tccsdk/include/string.h
+initrd: achou entrada ./tccsdk/include/strings.h
+initrd: achou entrada ./tccsdk/include/sys/
+initrd: achou entrada ./tccsdk/include/sys/cdefs.h
+initrd: achou entrada ./tccsdk/include/sys/config.h
+initrd: achou entrada ./tccsdk/include/sys/custom_file.h
+initrd: achou entrada ./tccsdk/include/sys/dir.h
+initrd: achou entrada ./tccsdk/include/sys/dirent.h
+initrd: achou entrada ./tccsdk/include/sys/endian.h
+initrd: achou entrada ./tccsdk/include/sys/errno.h
+initrd: achou entrada ./tccsdk/include/sys/fcntl.h
+initrd: achou entrada ./tccsdk/include/sys/features.h
+initrd: achou entrada ./tccsdk/include/sys/fenv.h
+initrd: achou entrada ./tccsdk/include/sys/file.h
+initrd: achou entrada ./tccsdk/include/sys/iconvnls.h
+initrd: achou entrada ./tccsdk/include/sys/ioctl.h
+initrd: achou entrada ./tccsdk/include/sys/kd.h
+initrd: achou entrada ./tccsdk/include/sys/lock.h
+initrd: achou entrada ./tccsdk/include/sys/mman.h
+initrd: achou entrada ./tccsdk/include/sys/mount.h
+initrd: achou entrada ./tccsdk/include/sys/param.h
+initrd: achou entrada ./tccsdk/include/sys/queue.h
+initrd: achou entrada ./tccsdk/include/sys/reboot.h
+initrd: achou entrada ./tccsdk/include/sys/reent.h
+initrd: achou entrada ./tccsdk/include/sys/resource.h
+initrd: achou entrada ./tccsdk/include/sys/sched.h
+initrd: achou entrada ./tccsdk/include/sys/select.h
+initrd: achou entrada ./tccsdk/include/sys/sendfile.h
+initrd: achou entrada ./tccsdk/include/sys/signal.h
+initrd: achou entrada ./tccsdk/include/sys/socket.h
+initrd: achou entrada ./tccsdk/include/sys/stat.h
+initrd: achou entrada ./tccsdk/include/sys/statfs.h
+initrd: achou entrada ./tccsdk/include/sys/statvfs.h
+initrd: achou entrada ./tccsdk/include/sys/stdio.h
+initrd: achou entrada ./tccsdk/include/sys/string.h
+initrd: achou entrada ./tccsdk/include/sys/syslimits.h
+initrd: achou entrada ./tccsdk/include/sys/sysmacros.h
+initrd: achou entrada ./tccsdk/include/sys/termios.h
+initrd: achou entrada ./tccsdk/include/sys/time.h
+initrd: achou entrada ./tccsdk/include/sys/timeb.h
+initrd: achou entrada ./tccsdk/include/sys/times.h
+initrd: achou entrada ./tccsdk/include/sys/timespec.h
+initrd: achou entrada ./tccsdk/include/sys/tree.h
+initrd: achou entrada ./tccsdk/include/sys/types.h
+initrd: achou entrada ./tccsdk/include/sys/un.h
+initrd: achou entrada ./tccsdk/include/sys/unistd.h
+initrd: achou entrada ./tccsdk/include/sys/utime.h
+initrd: achou entrada ./tccsdk/include/sys/utsname.h
+initrd: achou entrada ./tccsdk/include/sys/vt.h
+initrd: achou entrada ./tccsdk/include/sys/wait.h
+initrd: achou entrada ./tccsdk/include/sys/_default_fcntl.h
+initrd: achou entrada ./tccsdk/include/sys/_intsup.h
+initrd: achou entrada ./tccsdk/include/sys/_locale.h
+initrd: achou entrada ./tccsdk/include/sys/_pthreadtypes.h
+initrd: achou entrada ./tccsdk/include/sys/_sigset.h
+initrd: achou entrada ./tccsdk/include/sys/_stdint.h
+initrd: achou entrada ./tccsdk/include/sys/_timespec.h
+initrd: achou entrada ./tccsdk/include/sys/_timeval.h
+initrd: achou entrada ./tccsdk/include/sys/_types.h
+initrd: achou entrada ./tccsdk/include/sys/_tz_structs.h
+initrd: achou entrada ./tccsdk/include/syslog.h
+initrd: achou entrada ./tccsdk/include/tar.h
+initrd: achou entrada ./tccsdk/include/tccdefs.h
+initrd: achou entrada ./tccsdk/include/tcclib.h
+initrd: achou entrada ./tccsdk/include/termios.h
+initrd: achou entrada ./tccsdk/include/tgmath.h
+initrd: achou entrada ./tccsdk/include/threads.h
+initrd: achou entrada ./tccsdk/include/time.h
+initrd: achou entrada ./tccsdk/include/unctrl.h
+initrd: achou entrada ./tccsdk/include/unistd.h
+initrd: achou entrada ./tccsdk/include/utime.h
+initrd: achou entrada ./tccsdk/include/utmp.h
+initrd: achou entrada ./tccsdk/include/varargs.h
+initrd: achou entrada ./tccsdk/include/wchar.h
+initrd: achou entrada ./tccsdk/include/wctype.h
+initrd: achou entrada ./tccsdk/include/wordexp.h
+initrd: achou entrada ./tccsdk/include/_ansi.h
+initrd: achou entrada ./tccsdk/include/_newlib_version.h
+initrd: achou entrada ./tccsdk/include/_syslist.h
+initrd: achou entrada ./tccsdk/lib/
+initrd: achou entrada ./tccsdk/lib/crt0.o
+initrd: achou entrada ./tccsdk/lib/crt1.o
+initrd: achou entrada ./tccsdk/lib/crti.o
+initrd: achou entrada ./tccsdk/lib/crtn.o
+initrd: achou entrada ./tccsdk/lib/libc.a
+initrd: achou entrada ./tccsdk/lib/libgloss.a
+initrd: achou entrada ./tccsdk/lib/libm.a
+initrd: achou entrada ./tccsdk/lib/libtcc1.a
+initrd: achou entrada ./tccsdk/lib/runmain.o
+initrd: achou entrada ./teste.jpg
+initrd: achou entrada ./teste.png
+initrd: achou entrada ./test_tcc
+initrd: nenhum match encontrado
+mp3: syncing music from initrd...
+mp3: sync done, 0x0000000000000000 songs
+scsi: am53c974 not found
+pen: nenhum pendrive no boot
+LIWUS_BOOT_READY
+sti...
+root@liwusos# tcc hello_tcc.c -o hello
+[kernel] launch_initrd_program_argv calling sys_execve
+CPU exception: 0x000000000000000D err=0x0000000000000000 rip=0x0000000001009554 rsp=0x0000000001AA1A00 rax=0xF000D43DF000EF57 rbx=0x0000000001AA0BB0 rcx=0x00000000C0000101 rdx=0x0000000001001FF0 rdi=0x0000000001AA1A40 rsi=0x0000000000018449 rbp=0x0000000001364368
+KERNEL PANIC: Unhandled CPU exception (ISR 13)

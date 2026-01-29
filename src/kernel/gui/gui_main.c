@@ -1,0 +1,245 @@
+/*
+ * gui/gui_main.c  —  Bootstrap do subsistema gráfico
+ *
+ * Ordem de inicialização (respeita dependências):
+ *   1. scene_graph_init()
+ *   2. event_bus_create()
+ *   3. input_manager_create()
+ *   4. camera_create()
+ *   5. fb_renderer_create()
+ *   6. Montagem da Scene (canvas root + terminal node)
+ *   7. compositor_create()
+ */
+#include "gui_main.h"
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include "core/event_bus.h"
+#include "scene/node.h"
+#include "scene/camera.h"
+#include "core/theme_engine.h"
+#include "core/animation_engine.h"
+#include "render/renderer.h"
+#include "render/fb_renderer.h"
+#include "render/compositor.h"
+#include "layout/layout_engine.h"
+#include "input/input_manager.h"
+#include "input/tools/tool_manager.h"
+#include "input/tools/select_tool.h"
+#include "input/tools/move_tool.h"
+
+#include "widgets/window_node.h"
+#include "widgets/button.h"
+#include "widgets/label.h"
+#include "widgets/panel.h"
+#include "window/focus_manager.h"
+#include "window/window_manager.h"
+#include "core/app_registry.h"
+#include "core/taskbar.h"
+#include "core/desktop.h"
+#include "apps/gui_settings.h"
+#include "apps/gui_media.h"
+#include "apps/gui_explorer.h"
+#include "apps/gui_imageviewer.h"
+
+/* VGA globals (de vga.c) */
+extern uint32_t vga_fb_width;
+extern uint32_t vga_fb_height;
+
+/* --------------------------------------------------------------------------
+ * Instâncias (owned por este TU)
+ * -------------------------------------------------------------------------- */
+
+gui_event_bus_t *g_event_bus = NULL;
+input_manager_t *g_input_manager = NULL;
+camera_t        *g_camera = NULL;
+focus_manager_t *g_focus_manager = NULL;
+static gui_renderer_t  *s_renderer = NULL;
+static compositor_t    *s_comp     = NULL;
+static tool_manager_t  *s_tools    = NULL;
+static window_manager_t *s_wm      = NULL;
+
+/* --------------------------------------------------------------------------
+ * Init
+ * -------------------------------------------------------------------------- */
+
+void demo_app_start(void) {
+    extern scene_graph_t *g_scene;
+    if (!g_scene || !g_scene->root) return;
+
+    node_t *win = window_node_create("demo_win", 100, 100, 300, 200, "LiwusOS Demo");
+    if (win) {
+        win->layout_type = LAYOUT_VBOX;
+        win->padding[0] = 30;
+        win->padding[1] = 10;
+        win->padding[2] = 10;
+        win->padding[3] = 10;
+
+        node_t *lbl = label_create("lbl", 0, 0, "Hello, Infinite Canvas!", 0xFFE6E8EB);
+        lbl->margin[2] = 10;
+        lbl->layout_align = ALIGN_CENTER;
+
+        node_t *btn = button_create("btn", 0, 0, 120, 36, "Click Me");
+        btn->margin[2] = 10;
+        btn->layout_align = ALIGN_CENTER;
+
+        node_t *panel = panel_create("pnl", 0, 0, 260, 40, 0xFF252A33);
+        panel_set_border(panel, 0xFF3D4450, 1);
+        panel->flex_weight = 1;
+        panel->layout_align = ALIGN_STRETCH;
+        
+        node_add_child(win, lbl);
+        node_add_child(win, btn);
+        node_add_child(win, panel);
+        node_add_child(g_scene->root, win);
+        
+        layout_engine_compute(win);
+
+        win->width = 0;
+        win->height = 0;
+        animation_start(win, ANIM_PROP_WIDTH, NULL, 0, 300, 30);
+        animation_start(win, ANIM_PROP_HEIGHT, NULL, 0, 200, 30);
+    }
+}
+
+void settings_app_start(void) {
+    extern scene_graph_t *g_scene;
+    if (!g_scene || !g_scene->root) return;
+
+    node_t *win = window_node_create("settings_win", 150, 150, 400, 300, "System Settings");
+    if (win) {
+        win->layout_type = LAYOUT_VBOX;
+        win->padding[0] = 30;
+        win->padding[1] = 10;
+        win->padding[2] = 10;
+        win->padding[3] = 10;
+
+        node_t *lbl = label_create("lbl_set", 0, 0, "Settings Panel", 0xFFE6E8EB);
+        lbl->margin[2] = 10;
+        lbl->layout_align = ALIGN_CENTER;
+
+        node_t *lbl2 = label_create("lbl_set2", 0, 0, "Theme: Dark Modern", 0xFF99A1AF);
+        lbl2->margin[2] = 20;
+        lbl2->layout_align = ALIGN_CENTER;
+
+        node_add_child(win, lbl);
+        node_add_child(win, lbl2);
+        node_add_child(g_scene->root, win);
+        layout_engine_compute(win);
+    }
+}
+
+/* The old terminal logic has been removed and replaced by gui_terminal.h */
+
+void terminal_app_start(void) {
+    extern scene_graph_t *g_scene;
+    if (!g_scene || !g_scene->root) return;
+    
+    extern node_t *gui_terminal_create(const char *win_name, int x, int y, int w, int h);
+    
+    node_t *term = gui_terminal_create("terminal_win", 200, 200, 652, 416); // 80 cols * 8 + padding, 24 rows * 16 + padding + titlebar
+    if (term) {
+        node_add_child(g_scene->root, term);
+        layout_engine_compute(term);
+        
+        extern focus_manager_t *g_focus_manager;
+        if (g_focus_manager) focus_manager_set_focus(g_focus_manager, term);
+        extern void window_manager_bring_to_front(node_t *node);
+        window_manager_bring_to_front(term);
+    }
+}
+
+
+
+
+void gui_init(void) {
+    /* 1. Scene graph */
+    scene_graph_init();
+    
+    /* 1.1. App Registry */
+    app_registry_init();
+    app_settings_init();
+    app_media_init();
+    app_imageviewer_init();
+    extern void app_browser_init(void);
+    app_browser_init();
+
+    /* 1.5. Theme Engine */
+    theme_engine_init();
+
+    /* 1.6. Animation Engine */
+    animation_engine_init();
+
+    /* 2. Event bus */
+    g_event_bus = event_bus_create();
+
+    /* 3. Input manager */
+    g_input_manager = input_manager_create(g_event_bus);
+
+    /* 4. Camera */
+    int sw = (int)vga_fb_width;
+    int sh = (int)vga_fb_height;
+    g_camera = camera_create(sw, sh);
+
+    /* 5. Framebuffer renderer */
+    s_renderer = fb_renderer_create();
+
+    /* 6. Montar a Scene */
+    node_t *root = node_create(NODE_CANVAS, "canvas");
+    if (!root) return;
+    g_scene->root = root;
+
+    /* Register Apps */
+    extern void terminal_app_start(void);
+    extern void demo_app_start(void);
+    app_registry_add("Demo Window", NULL, demo_app_start);
+    app_registry_add("Terminal", NULL, terminal_app_start);
+    
+    extern void lde_app_start(void);
+    app_registry_add("Liwus Desktop Engine", NULL, lde_app_start);
+
+
+    /* 7. Managers (must subscribe BEFORE tools to intercept focus events) */
+    g_focus_manager = focus_manager_create(g_event_bus, root);
+    s_wm    = window_manager_create(g_event_bus, root);
+
+    /* 8. Tools (desktop normal: mover/arrastar janelas e selecionar, sem
+     *    pan/zoom infinito da câmera — camera fica fixa na origem) */
+    s_tools = tool_manager_create(g_event_bus, g_camera, root);
+    if (s_tools) {
+        tool_t *select = select_tool_create(g_camera, root);
+        tool_t *move   = move_tool_create(g_camera, root, select);
+
+        /* A ordem importa: primeiro tentamos Move, depois Select */
+        tool_manager_add_tool(s_tools, move);
+        tool_manager_add_tool(s_tools, select);
+    }
+
+    /* 9. Compositor */
+    s_comp = compositor_create(s_renderer, g_camera, g_event_bus, g_input_manager, root);
+
+    /* 10. Desktop (ícones de apps) e barra de tarefas */
+    desktop_create(sw, sh);
+    taskbar_create(sw, sh);
+
+    /* Start page: abre o Browser quando há placa de rede */
+    extern void browser_auto_start(void);
+    browser_auto_start();
+}
+
+/* --------------------------------------------------------------------------
+ * Task do compositor (loop infinito, chamado como kernel task)
+ * -------------------------------------------------------------------------- */
+
+void lde_app_start(void) {
+    extern int launch_initrd_program_argv(const char *filename, char *const argv[]);
+    char *lde_argv[] = { "lde", NULL };
+    launch_initrd_program_argv("lde", lde_argv);
+}
+
+void gui_compositor_task(void) {
+    if (!s_comp) return;
+    while (1) {
+        compositor_frame(s_comp);
+    }
+}

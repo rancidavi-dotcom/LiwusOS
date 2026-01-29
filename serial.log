@@ -1,0 +1,46 @@
+LiwusOS Kernel Booting [Network + DNS Patch]...
+VMM: PAT initialized (PAT1 = WC)
+VFS initialized
+GPU: Scanning PCI for display controller...
+GPU: Detected Bochs/QEMU GPU (vendor=0x0x0000000000001234 device=0x0x0000000000001111)
+GPU: BAR0=0x0x00000000FD000000 BAR2=0x0x00000000FEBB0000
+GPU: Driver initialized.
+AHCI: No controller found.
+ata: BAR4 not I/O space
+USB: Initializing USB Stack...
+initrd: copiado para heap do kernel
+Initrd loaded into memory (for first boot setup)
+RTL8139 ethernet initialized
+ata: no legacy PIO disk found
+No ATA disk found, trying AHCI...
+SDFS: no ATA disk at requested bus/drive
+SDFS: No valid filesystem, formatting disk...
+SDFS: format refused, no ATA or AHCI disk selected
+SDFS disk unavailable, falling back to ramdisk
+SDFS: Ramdisk enabled!
+SDFS: format refused, no ATA or AHCI disk selected
+sti...
+[kernel] launch_initrd_program_argv calling sys_execve
+initrd: procurando lde
+initrd: achou entrada ./
+initrd: achou entrada ./demo_gui
+initrd: achou entrada ./lde
+initrd: match encontrado
+EXEC: lde argc=1 class=64
+DBG_TASK64: pid=3 name=lde entry=0x00000000004016DE rsp=0x00000000BFFFFFC0
+[kernel] launch_initrd_program_argv created pid=[LDE] Starting Living Desktop Engine
+3
+VMM DEBUG: mapping for entry[LDE] Canvas created successfully
+ point [LDE] Image created successfully
+[LDE] City generated
+0x00000000004016DE[LDE] Entering main loop
+
+  PML4[0]: 0x000000000133E027[syscall] sys_open failed: /proc/cpu
+
+  PDP[0]: [syscall] sys_open failed: /proc/mem
+0x000000000133F027[syscall] sys_open failed: /proc/processes
+
+[LDE] Loop tick (100)
+  PD[2]: 0x0000000005674027
+  PT[1]: 0x0000000005675067
+launch: returning pid=3

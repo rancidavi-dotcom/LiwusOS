@@ -1,0 +1,14 @@
+--- src/kernel/gui/scene/node.c
++++ src/kernel/gui/scene/node.c
+@@ -230,6 +230,11 @@
+ void node_draw_recursive(node_t *node, struct gui_renderer *r) {
+     if (!node || !node->visible) return;
+ 
++    extern void serial_print(const char*);
++    serial_print("Visiting node: ");
++    serial_print(node->name);
++    serial_print("\n");
++
+     /* Paint self */
+     if (node->vtable && node->vtable->draw) {
+         node->vtable->draw(node, r);
