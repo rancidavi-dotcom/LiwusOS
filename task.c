@@ -43,6 +43,10 @@ void create_task(void (*entry_point)()) {
     task_list->next = new_task;
 }
 
+void switch_task() {
+    asm volatile("int $32");
+}
+
 uint32_t schedule(uint32_t current_esp) {
     if (!current_task) return current_esp;
 

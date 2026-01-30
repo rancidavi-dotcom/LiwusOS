@@ -7,7 +7,7 @@ CFLAGS = -m32 -std=gnu99 -ffreestanding -O2 -Wall -Wextra
 ASFLAGS = --32
 LDFLAGS = -m32 -ffreestanding -O2 -nostdlib
 
-OBJS = boot.o kernel.o gdt.o idt.o interrupt.o isr.o keyboard.o pmm.o vmm.o kheap.o timer.o task.o video.o mouse.o font.o liw.o initrd.o gui.o calc.o book.o dock.o ata.o installer.o string.o fat32.o uninstaller.o terminal.o settings.o pci.o rtl8139.o net.o wifi.o explorer.o browser.o welcome.o netstack.o launcher.o
+OBJS = boot.o kernel.o gdt.o idt.o interrupt.o isr.o keyboard.o pmm.o vmm.o kheap.o vfs.o timer.o task.o video.o mouse.o font.o liw.o initrd.o gui.o calc.o book.o dock.o ata.o installer.o string.o fat32.o uninstaller.o terminal.o settings.o pci.o rtl8139.o net.o wifi.o explorer.o browser.o welcome.o netstack.o launcher.o lgx.o lgx_virtio.o
 
 KERNEL_BIN = kernel.bin
 ISO_IMAGE = liwusos.iso

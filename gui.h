@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "events.h"
+#include "lgx.h"
 
 typedef enum { TYPE_WINDOW, TYPE_BUTTON, TYPE_LABEL } widget_type_t;
 
@@ -23,6 +24,7 @@ typedef struct widget {
     
     // Compositor Support
     uint32_t* backing_store;
+    lg_image_t lg_image;
     bool dirty; // Does the surface need redrawing?
     
     bool is_dragging;

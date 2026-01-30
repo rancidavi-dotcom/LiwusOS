@@ -9,6 +9,9 @@
 #include "launcher.h"
 #include "timer.h"
 
+extern bool is_live_mode;
+extern void open_installer();
+
 extern uint32_t screen_width;
 extern uint32_t screen_height;
 
@@ -26,7 +29,7 @@ void update_dock(int mx, int my) {
 
     /* Detecção de Clique na Dock */
     if (is_left_clicked()) {
-        int dock_w = 600;
+        int dock_w = 700;
         int dock_x = (screen_width - dock_w) / 2;
         
         if (my >= dock_y) {
@@ -54,12 +57,16 @@ void update_dock(int mx, int my) {
                 open_browser();
                 extern widget_t* browser_win; if(browser_win) browser_win->minimized = false;
             }
+            /* Instalar (somente em modo live) */
+            if (is_live_mode && is_inside(mx, my, dock_x + 460, dock_y + 5, 80, 35)) {
+                open_installer();
+            }
         }
     }
 }
 
 void draw_dock() {
-    int dock_w = 600;
+    int dock_w = 700;
     int dock_h = 50; // Increased slightly for better look
     int dock_x = (screen_width - dock_w) / 2;
     dock_y = screen_height - dock_h;
@@ -74,6 +81,10 @@ void draw_dock() {
     draw_button_visual(dock_x + 190, dock_y + 5, 80, 35, "Config", 0x5555AA);
     draw_button_visual(dock_x + 280, dock_y + 5, 80, 35, "Files", 0x333333);
     draw_button_visual(dock_x + 370, dock_y + 5, 80, 35, "Web", 0x0055AA);
+    
+    if (is_live_mode) {
+        draw_button_visual(dock_x + 460, dock_y + 5, 80, 35, "Instalar", 0xAA0000);
+    }
     
     // Relogio Real baseado no Timer do Kernel
     int total_seconds = timer_ticks / 100;
