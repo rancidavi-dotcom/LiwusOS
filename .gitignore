@@ -1,0 +1,20 @@
+# Build artifacts
+*.o
+obj/
+isodir/
+initrd.tar
+kernel.bin
+liwus_disk.img
+liwusos.iso
+
+# Binaries and packages
+*.elf
+*.liw
+*.liwpkg
+sdk/tools/liw-builder
+
+# IDE and Tooling
+.gemini/
+.DS_Store
+*.swp
+*.bak
