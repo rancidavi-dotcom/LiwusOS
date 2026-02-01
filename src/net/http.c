@@ -3,7 +3,6 @@
 #include "netstack.h"
 #include "string.h"
 #include "tcp.h"
-#include "tls.h"
 #include "video.h"
 
 // Parse URL: http://host[:port]/path
@@ -14,8 +13,8 @@ int http_parse_url(const char *url, char *host, char *path, uint16_t *port) {
   if (strstr(url, "http://") == url) {
     url += 7;
   } else if (strstr(url, "https://") == url) {
-    url += 8;
-    *port = 443;
+    // HTTPS not supported
+    return -1;
   }
 
   // Find end of host (either ':', '/', or end of string)
@@ -59,18 +58,11 @@ int http_get(const char *host, uint16_t port, const char *path, char *response,
     return -1;
   }
 
-  bool is_https = (port == 443);
-  tcp_socket_t *tcp_sock = NULL;
-  tls_socket_t *tls_sock = NULL;
-
-  if (is_https) {
-    tls_sock = tls_connect(ip, port);
-    if (!tls_sock)
-      return -1;
-  } else {
-    tcp_sock = tcp_connect(ip, port);
-    if (!tcp_sock)
-      return -1;
+  // Connect via TCP
+  tcp_socket_t *sock = tcp_connect(ip, port);
+  if (!sock) {
+    draw_string(10, 80, "TCP Connect Failed", 0xFF0000);
+    return -1;
   }
 
   // Build HTTP request
@@ -79,31 +71,18 @@ int http_get(const char *host, uint16_t port, const char *path, char *response,
   strcat(request, path);
   strcat(request, " HTTP/1.0\r\nHost: ");
   strcat(request, host);
-  strcat(request,
-         "\r\nUser-Agent: LiwusBrowser/1.0\r\nConnection: close\r\n\r\n");
+  strcat(request, "\r\nConnection: close\r\n\r\n");
 
   // Send request
-  if (is_https) {
-    tls_send(tls_sock, (const uint8_t *)request, strlen(request));
-  } else {
-    tcp_send(tcp_sock, (const uint8_t *)request, strlen(request));
-  }
+  tcp_send(sock, (const uint8_t *)request, strlen(request));
 
   // Receive response
   uint32_t total = 0;
   int received;
   char chunk[1024];
 
-  while (true) {
-    if (is_https) {
-      received = tls_receive(tls_sock, (uint8_t *)chunk, sizeof(chunk) - 1);
-    } else {
-      received = tcp_receive(tcp_sock, (uint8_t *)chunk, sizeof(chunk) - 1);
-    }
-
-    if (received <= 0)
-      break;
-
+  while ((received = tcp_receive(sock, (uint8_t *)chunk, sizeof(chunk) - 1)) >
+         0) {
     if (total + received >= max_len - 1) {
       received = max_len - 1 - total;
     }
@@ -116,6 +95,8 @@ int http_get(const char *host, uint16_t port, const char *path, char *response,
   response[total] = '\0';
 
   // Close connection
+  tcp_close(sock);
+
   // Skip HTTP headers (find \r\n\r\n)
   char *body = strstr(response, "\r\n\r\n");
   if (body) {

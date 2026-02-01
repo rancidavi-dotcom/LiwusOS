@@ -87,17 +87,9 @@ void compositor_repaint() {
 
     // 5. Content Rendering
     if (s->current_buffer && s->current_buffer->pixels) {
-      extern void lg_set_image_raw_ptr(lg_image_t image, void *ptr);
-      lg_image_create_info_t img_info = {
-          s->current_buffer->width, s->current_buffer->height,
-          LGX_FORMAT_B8G8R8A8_UNORM, LGX_IMAGE_USAGE_TRANSFER_SRC_BIT};
-      lg_image_t surf_img;
-      if (lg_create_image(global_lg_device, &img_info, &surf_img) ==
-          LGX_SUCCESS) {
-        lg_set_image_raw_ptr(surf_img, s->current_buffer->pixels);
-        lg_cmd_copy_image(comp_cmd, surf_img, sw_img, wx, wy + title_h);
-        kfree((void *)surf_img);
-      }
+      video_blit(s->current_buffer->pixels, s->current_buffer->width, 0, 0, 
+                 s->current_buffer->width, s->current_buffer->height, 
+                 wx, wy + title_h);
     }
 
     // 6. Widget Rendering
@@ -180,6 +172,7 @@ void wl_commit(wl_surface_t *surface) {
 }
 
 static int last_mx = 0, last_my = 0;
+static bool is_dragging = false;
 
 void wl_handle_mouse(int mx, int my, bool left, bool right) {
   (void)right;
@@ -200,29 +193,57 @@ void wl_handle_mouse(int mx, int my, bool left, bool right) {
 
   compositor.mouse_focus = hit;
 
-  // Button Hover Detection
-  wl_surface_t *it = compositor.surfaces_head;
-  while (it) {
-    it->traffic_light_hover = false;
-    it->hovered_button = -1;
-    if (it->type == WL_SURFACE_TOPLEVEL) {
-      int rx = mx - it->x;
-      int ry = my - it->y;
-      if (rx >= 10 && rx <= 70 && ry >= 0 && ry <= 40) {
-        it->traffic_light_hover = true;
-        if (rx >= 14 && rx <= 26)
-          it->hovered_button = 0; // Red
-        else if (rx >= 34 && rx <= 46)
-          it->hovered_button = 1; // Yellow
-        else if (rx >= 54 && rx <= 66)
-          it->hovered_button = 2; // Green
+  // Drag Logic (Stateful)
+  if (left) {
+    if (!is_dragging && hit && hit->type == WL_SURFACE_TOPLEVEL) {
+      int ryc = my - hit->y;
+      if (ryc >= 0 && ryc < 40 && !hit->traffic_light_hover) {
+        is_dragging = true;
+        compositor.focused_surface = hit;
+        // Bring to Front logic... (moved here to happen once at start of drag)
+        if (hit != compositor.surfaces_head) {
+            if (hit->prev) hit->prev->next = hit->next;
+            if (hit->next) hit->next->prev = hit->prev;
+            if (hit == compositor.surfaces_tail) compositor.surfaces_tail = hit->prev;
+            hit->next = compositor.surfaces_head;
+            hit->prev = NULL;
+            compositor.surfaces_head->prev = hit;
+            compositor.surfaces_head = hit;
+        }
       }
     }
-    it = it->next;
+
+    if (is_dragging && compositor.focused_surface) {
+      compositor.focused_surface->x += (mx - last_mx);
+      compositor.focused_surface->y += (my - last_my);
+      compositor_repaint();
+    }
+  } else {
+    is_dragging = false;
   }
 
-  // Widget Interaction Logic
-  if (hit) {
+  // Button Hover Detection (Only if not dragging)
+  if (!is_dragging) {
+    wl_surface_t *it = compositor.surfaces_head;
+    while (it) {
+      it->traffic_light_hover = false;
+      it->hovered_button = -1;
+      if (it->type == WL_SURFACE_TOPLEVEL) {
+        int rx = mx - it->x;
+        int ry = my - it->y;
+        if (rx >= 10 && rx <= 70 && ry >= 0 && ry <= 40) {
+          it->traffic_light_hover = true;
+          if (rx >= 14 && rx <= 26) it->hovered_button = 0;
+          else if (rx >= 34 && rx <= 46) it->hovered_button = 1;
+          else if (rx >= 54 && rx <= 66) it->hovered_button = 2;
+        }
+      }
+      it = it->next;
+    }
+  }
+
+  // Widget Interaction (Only if not dragging)
+  if (!is_dragging && hit) {
     int th = (hit->type == WL_SURFACE_TOPLEVEL) ? 40 : 0;
     int rx = mx - hit->x;
     int ry = my - (hit->y + th);
@@ -234,78 +255,23 @@ void wl_handle_mouse(int mx, int my, bool left, bool right) {
       hit->widgets[i].hovered = inside;
       if (left && inside && hit->widgets[i].callback) {
         hit->widgets[i].callback(&hit->widgets[i], hit);
-        return; // Consumed
+        last_mx = mx; last_my = my; // Update but consume
+        return; 
       }
     }
   }
 
-  if (left) {
-    if (hit && hit->type != WL_SURFACE_BACKGROUND) {
-      // Bring to Front (Only if not already top)
-      if (hit != compositor.surfaces_head) {
-        if (hit->prev)
-          hit->prev->next = hit->next;
-        if (hit->next)
-          hit->next->prev = hit->prev;
-        if (hit == compositor.surfaces_tail)
-          compositor.surfaces_tail = hit->prev;
-
-        hit->next = compositor.surfaces_head;
-        hit->prev = NULL;
-        if (compositor.surfaces_head)
-          compositor.surfaces_head->prev = hit;
-        compositor.surfaces_head = hit;
-      }
-      wl_set_focused_surface(hit);
-      compositor_repaint();
-    }
-
-    // Button Click Logic (Always check if hit)
-    if (hit && hit->traffic_light_hover && hit->hovered_button != -1) {
+  // Button Click Logic (Only if not dragging)
+  if (!is_dragging && left && hit && hit->traffic_light_hover && hit->hovered_button != -1) {
       if (hit->hovered_button == 0) { // Close
-        if (hit->prev)
-          hit->prev->next = hit->next;
-        if (hit->next)
-          hit->next->prev = hit->prev;
-        if (hit == compositor.surfaces_head)
-          compositor.surfaces_head = hit->next;
-        if (hit == compositor.surfaces_tail)
-          compositor.surfaces_tail = hit->prev;
-        if (compositor.focused_surface == hit)
-          compositor.focused_surface = compositor.surfaces_head;
+        if (hit->prev) hit->prev->next = hit->next;
+        if (hit->next) hit->next->prev = hit->prev;
+        if (hit == compositor.surfaces_head) compositor.surfaces_head = hit->next;
+        if (hit == compositor.surfaces_tail) compositor.surfaces_tail = hit->prev;
+        if (compositor.focused_surface == hit) compositor.focused_surface = compositor.surfaces_head;
         kfree(hit);
         compositor_repaint();
-        return;
-      } else if (hit->hovered_button == 2) { // Maximize
-        if (!hit->is_maximized) {
-          hit->is_maximized = true;
-          hit->x = 0;
-          hit->y = 0;
-          hit->width = compositor.screen_width;
-          hit->height = compositor.screen_height - 40;
-        } else {
-          hit->is_maximized = false;
-          hit->x = 100;
-          hit->y = 100;
-          hit->width = 600;
-          hit->height = 400;
-        }
-        compositor_repaint();
-        return;
       }
-    }
-
-    // Drag Logic
-    if (compositor.focused_surface &&
-        compositor.focused_surface->type == WL_SURFACE_TOPLEVEL) {
-      int ryc = my - compositor.focused_surface->y;
-      if (ryc >= 0 && ryc < 40 &&
-          !compositor.focused_surface->traffic_light_hover) {
-        compositor.focused_surface->x += (mx - last_mx);
-        compositor.focused_surface->y += (my - last_my);
-        compositor_repaint();
-      }
-    }
   }
 
   last_mx = mx;
@@ -313,14 +279,6 @@ void wl_handle_mouse(int mx, int my, bool left, bool right) {
 }
 
 void wl_handle_key(char key) {
-  if (compositor.focused_surface &&
-      compositor.focused_surface->type == WL_SURFACE_TOPLEVEL) {
-    // In LiwusOS, for now, we still rely on the global get_last_key for apps,
-    // but we need to ensure the compositor knows which one has the focus for
-    // it. We will leave the global key polling for now but ensure focused state
-    // is correct.
-  }
-
   extern bool check_alt_f4();
   if (check_alt_f4() && compositor.focused_surface &&
       compositor.focused_surface->type == WL_SURFACE_TOPLEVEL) {
@@ -339,12 +297,4 @@ void wl_handle_key(char key) {
     return;
   }
   (void)key;
-}
-void wl_set_focused_surface(wl_surface_t *surface) {
-  wl_surface_t *it = compositor.surfaces_head;
-  while (it) {
-    it->is_focused = (it == surface);
-    it = it->next;
-  }
-  compositor.focused_surface = surface;
 }

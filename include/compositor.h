@@ -90,6 +90,5 @@ void wl_commit(wl_surface_t *surface);
 /* Input */
 void wl_handle_mouse(int mx, int my, bool left, bool right);
 void wl_handle_key(char key);
-void wl_set_focused_surface(wl_surface_t *surface);
 
 #endif

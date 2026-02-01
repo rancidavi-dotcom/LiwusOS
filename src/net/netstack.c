@@ -101,8 +101,6 @@ uint32_t net_resolve_host(const char *host) {
     return 0x5DB8D822; // 93.184.216.34
   if (strstr(host, "neverssl.com"))
     return 0x22C63C8E; // 34.198.60.142
-  if (strstr(host, "duckduckgo.com"))
-    return 0xD77C8E34; // 52.142.124.215 (approx IP for API)
 
   // Fallback hash
   uint32_t hash = 5381;

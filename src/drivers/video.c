@@ -26,18 +26,10 @@ typedef struct {
 } PSF1_header;
 
 void set_clip(int x, int y, int w, int h) {
-  clip_x1 = x;
-  clip_y1 = y;
-  clip_x2 = x + w;
-  clip_y2 = y + h;
-  if (clip_x1 < 0)
-    clip_x1 = 0;
-  if (clip_y1 < 0)
-    clip_y1 = 0;
-  if ((uint32_t)clip_x2 > target_width)
-    clip_x2 = target_width;
-  if ((uint32_t)clip_y2 > target_height)
-    clip_y2 = target_height;
+  clip_x1 = (x < 0) ? 0 : x;
+  clip_y1 = (y < 0) ? 0 : y;
+  clip_x2 = (uint32_t)(x + w) > target_width ? target_width : (x + w);
+  clip_y2 = (uint32_t)(y + h) > target_height ? target_height : (y + h);
 }
 
 void reset_clip() {
@@ -77,34 +69,16 @@ void draw_pixel(int x, int y, uint32_t color) {
 }
 
 void draw_rect(int x, int y, int w, int h, uint32_t color) {
-  if (x < clip_x1) {
-    w -= (clip_x1 - x);
-    x = clip_x1;
-  }
-  if (y < clip_y1) {
-    h -= (clip_y1 - y);
-    y = clip_y1;
-  }
-  if (x + w > clip_x2)
-    w = clip_x2 - x;
-  if (y + h > clip_y2)
-    h = clip_y2 - y;
-  if (w <= 0 || h <= 0)
-    return;
+  if (x < clip_x1) { w -= (clip_x1 - x); x = clip_x1; }
+  if (y < clip_y1) { h -= (clip_y1 - y); y = clip_y1; }
+  if (x + w > clip_x2) w = clip_x2 - x;
+  if (y + h > clip_y2) h = clip_y2 - y;
+  if (w <= 0 || h <= 0) return;
 
+  uint32_t *dest = &target_buffer[y * target_width + x];
   for (int i = 0; i < h; i++) {
-    uint32_t *dest = &target_buffer[(y + i) * target_width + x];
-    int len = w;
-    while (len >= 4) {
-      dest[0] = color;
-      dest[1] = color;
-      dest[2] = color;
-      dest[3] = color;
-      dest += 4;
-      len -= 4;
-    }
-    while (len--)
-      *dest++ = color;
+    memset32(dest, color, w);
+    dest += target_width;
   }
 }
 
@@ -123,21 +97,33 @@ void video_blit(uint32_t *source, int src_pitch, int sx, int sy, int w, int h,
 
     if (start_c >= end_c)
       continue;
-    for (int c = start_c; c < end_c; c++) {
-      uint32_t p = src_row[c];
-      if (p != 0)
-        dest_row[c] = p; // Chroma key: skip black
-    }
+    
+    // Fast path: memcpy for row
+    memcpy(&dest_row[start_c], &src_row[start_c], (end_c - start_c) * 4);
   }
 }
 
 void draw_filled_circle(int xm, int ym, int r, uint32_t color) {
   for (int y = -r; y <= r; y++) {
     for (int x = -r; x <= r; x++) {
-      if (x * x + y * y <= r * r)
-        draw_pixel(xm + x, ym + y, color);
+      if (x * x + y * y <= r * r) {
+          int px = xm + x;
+          int py = ym + y;
+          if (px >= clip_x1 && px < clip_x2 && py >= clip_y1 && py < clip_y2)
+            target_buffer[py * target_width + px] = color;
+      }
     }
   }
+}
+
+void clear_screen(uint32_t color) {
+  memset32(target_buffer, color, target_width * target_height);
+}
+
+void refresh_screen() {
+  if (!framebuffer)
+    return;
+  memcpy(framebuffer, backbuffer, screen_size * 4);
 }
 
 void draw_rounded_rect(int x, int y, int w, int h, int r, uint32_t color) {
@@ -150,62 +136,20 @@ void draw_rounded_rect(int x, int y, int w, int h, int r, uint32_t color) {
 }
 
 void draw_mouse_cursor(int x, int y, int type) {
+  (void)type;
   static const char *arrow[] = {
       "X           ", "XX          ", "X.X         ", "X..X        ",
       "X...X       ", "X....X      ", "X.....X     ", "X......X    ",
       "X.......X   ", "X........X  ", "X.....XXXXX ", "X..X..X     ",
       "X.X X..X    ", "XX   X..X   ", "     X..X   ", "      XX    "};
-  const char **cursor = arrow;
   for (int i = 0; i < 16; i++) {
     for (int j = 0; j < 12; j++) {
-      if (cursor[i][j] == 'X')
+      if (arrow[i][j] == 'X')
         draw_pixel(x + j, y + i, 0x000000);
-      else if (cursor[i][j] == '.')
+      else if (arrow[i][j] == '.')
         draw_pixel(x + j, y + i, 0xFFFFFF);
     }
   }
-}
-
-void clear_screen(uint32_t color) {
-  uint32_t size = target_width * target_height;
-  uint32_t *ptr = target_buffer;
-  while (size >= 8) {
-    ptr[0] = color;
-    ptr[1] = color;
-    ptr[2] = color;
-    ptr[3] = color;
-    ptr[4] = color;
-    ptr[5] = color;
-    ptr[6] = color;
-    ptr[7] = color;
-    ptr += 8;
-    size -= 8;
-  }
-  while (size--)
-    *ptr++ = color;
-}
-
-void refresh_screen() {
-  if (!framebuffer)
-    return;
-  uint32_t *src = backbuffer;
-  uint32_t *dest = framebuffer;
-  uint32_t n = screen_size;
-  while (n >= 8) {
-    dest[0] = src[0];
-    dest[1] = src[1];
-    dest[2] = src[2];
-    dest[3] = src[3];
-    dest[4] = src[4];
-    dest[5] = src[5];
-    dest[6] = src[6];
-    dest[7] = src[7];
-    dest += 8;
-    src += 8;
-    n -= 8;
-  }
-  while (n--)
-    *dest++ = *src++;
 }
 
 void draw_loading_bar(int x, int y, int w, int h, int p) {
@@ -256,36 +200,16 @@ void draw_string(int x, int y, const char *str, uint32_t color) {
 void video_refresh_rect(rect_t r) {
   if (!framebuffer)
     return;
-  if (r.x < 0) {
-    r.w += r.x;
-    r.x = 0;
-  }
-  if (r.y < 0) {
-    r.h += r.y;
-    r.y = 0;
-  }
-  if ((uint32_t)(r.x + r.w) > screen_width)
-    r.w = screen_width - r.x;
-  if ((uint32_t)(r.y + r.h) > screen_height)
-    r.h = screen_height - r.y;
-  if (r.w <= 0 || r.h <= 0)
-    return;
+  if (r.x < 0) { r.w += r.x; r.x = 0; }
+  if (r.y < 0) { r.h += r.y; r.y = 0; }
+  if ((uint32_t)(r.x + r.w) > screen_width) r.w = screen_width - r.x;
+  if ((uint32_t)(r.y + r.h) > screen_height) r.h = screen_height - r.y;
+  if (r.w <= 0 || r.h <= 0) return;
 
   for (int i = 0; i < r.h; i++) {
     uint32_t *src = &backbuffer[(r.y + i) * screen_width + r.x];
     uint32_t *dest = &framebuffer[(r.y + i) * screen_width + r.x];
-    int n = r.w;
-    while (n >= 4) {
-      dest[0] = src[0];
-      dest[1] = src[1];
-      dest[2] = src[2];
-      dest[3] = src[3];
-      dest += 4;
-      src += 4;
-      n -= 4;
-    }
-    while (n--)
-      *dest++ = *src++;
+    memcpy(dest, src, r.w * 4);
   }
 }
 
@@ -299,79 +223,43 @@ rect_t video_rect_intersect(rect_t a, rect_t b) {
   return (rect_t){x1, y1, x2 - x1, y2 - y1};
 }
 
-/* Alpha Blending Helper */
+/* Alpha Blending Helper - Optimized */
 void draw_pixel_alpha(int x, int y, uint32_t color, uint8_t alpha) {
   if (x < clip_x1 || x >= clip_x2 || y < clip_y1 || y >= clip_y2)
     return;
+  if (alpha == 0) return;
+  if (alpha == 255) { target_buffer[y * target_width + x] = color; return; }
 
   uint32_t *ptr = &target_buffer[y * target_width + x];
   uint32_t bg = *ptr;
-
-  // Extract channels
-  uint32_t r_bg = (bg >> 16) & 0xFF;
-  uint32_t g_bg = (bg >> 8) & 0xFF;
-  uint32_t b_bg = (bg) & 0xFF;
-
-  uint32_t r_fg = (color >> 16) & 0xFF;
-  uint32_t g_fg = (color >> 8) & 0xFF;
-  uint32_t b_fg = (color) & 0xFF;
-
-  // Blend: out = alpha * fg + (1-alpha) * bg
-  // alpha 0..255
-  uint32_t r_out = (alpha * r_fg + (255 - alpha) * r_bg) / 255;
-  uint32_t g_out = (alpha * g_fg + (255 - alpha) * g_bg) / 255;
-  uint32_t b_out = (alpha * b_fg + (255 - alpha) * b_bg) / 255;
-
-  *ptr = (r_out << 16) | (g_out << 8) | b_out;
+  uint32_t rb = bg & 0xFF00FF;
+  uint32_t g = bg & 0x00FF00;
+  uint32_t rb_fg = color & 0xFF00FF;
+  uint32_t g_fg = color & 0x00FF00;
+  rb += ((rb_fg - rb) * alpha) >> 8;
+  g += ((g_fg - g) * alpha) >> 8;
+  *ptr = (rb & 0xFF00FF) | (g & 0x00FF00);
 }
 
-/* Simulated Box Shadow (Simplified for performance) */
-void draw_box_shadow(int x, int y, int w, int h, int r, int blur,
-                     uint32_t color) {
-  // Draw 3 layers of fading rects to simulate blur shadow
-  // Shadow 1 (Main): Offset Y=8, Blur=24 (Simulated by wide fading rects)
-
-  (void)blur; // Use fixed mock blur steps for speed
-
-  // Layer 1: Deep shadow (close)
-  // Offset Y+4, Alpha ~30
-  int offset_y = 6;
-  int spread = 2; // Extra pixels out
-
-  uint8_t alpha_base =
-      (color >> 24) &
-      0xFF; // Usually ignored in passed color int, treating as opaque RGB?
-  // Color arg format not strictly ARGB in this OS drawing API usually?
-  // `draw_pixel` does simple set. `draw_pixel_alpha` uses separate alpha arg.
-  // Let's assume color is RGB and we use hardcoded alpha steps for shadow.
-
-  uint32_t shadow_rgb = 0x000000;
-
-  // Step 1: Wide faint (The "Blur")
-  // Draw rounded rect with low alpha
-  for (int i = 0; i < 3; i++) {
-    int expand = 4 + (i * 3);
-    uint8_t a = 10 - (i * 2); // Very faint
-    // Using draw_rect with alpha per pixel... expensive?
-    // Let's implement rect_alpha
-    for (int py = y + offset_y - expand; py < y + h + offset_y + expand; py++) {
-      // Optimized horizontal Scanline?
-      // Just simple loop for now
-      for (int px = x - expand; px < x + w + expand; px++) {
-        // Skip center (covered by window) to save fill rate?
-        if (px >= x && px < x + w && py >= y && py < y + h)
-          continue;
-
-        // Rounded mask check? Too complex for software "fast" shadow.
-        // Just Rect Shadow for speed, maybe corners look weird.
-        draw_pixel_alpha(px, py, shadow_rgb, a);
+void draw_box_shadow(int x, int y, int w, int h, int r, int blur, uint32_t color) {
+  (void)r; (void)blur; (void)color;
+  int offset = 4;
+  for (int i = 0; i < 2; i++) {
+      uint8_t a = 30 - (i * 10);
+      for (int py = y + h; py < y + h + offset; py++) {
+          for (int px = x + offset; px < x + w + offset; px++) {
+              draw_pixel_alpha(px, py, 0, a);
+          }
       }
-    }
+      for (int py = y + offset; py < y + h; py++) {
+          for (int px = x + w; px < x + w + offset; px++) {
+              draw_pixel_alpha(px, py, 0, a);
+          }
+      }
   }
 }
 
-void draw_button_visual(int x, int y, int w, int h, const char *text,
-                        uint32_t color) {
+void draw_button_visual(int x, int y, int w, int h, const char *text, uint32_t color) {
   draw_rect(x, y, w, h, color);
   draw_string(x + 5, y + 5, text, 0xFFFFFF);
 }

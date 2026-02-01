@@ -110,24 +110,9 @@ void exec_command_term(const char *cmd_raw) {
   } else if (strcmp(cmd, "clear") == 0) {
     output_text[0] = '\0';
   } else if (strcmp(cmd, "browser") == 0) {
-    if (argc < 2) {
-      strcat(output_text, "Uso: browser <url ou busca>\n");
-    } else {
-      // Reconstitute query from args
-      char query[256] = "";
-      for (int i = 1; i < argc; i++) {
-        strcat(query, args[i]);
-        if (i < argc - 1)
-          strcat(query, " ");
-      }
-
-      char result[4096] = "";
-      extern void browser_cli_execute(const char *input, char *output,
-                                      uint32_t max_len);
-      browser_cli_execute(query, result, 4096);
-      strcat(output_text, result);
-      strcat(output_text, "\n");
-    }
+    extern void open_browser();
+    open_browser();
+    strcat(output_text, "Abrindo navegador...\\n");
   } else if (strcmp(cmd, "liwfetch") == 0) {
     strcat(output_text,
            "LiwusOS Wayland Edition\\nArchitecture: LGX Compositor\\n");
@@ -195,11 +180,11 @@ void open_terminal() {
   if (!term_win)
     init_terminal_app();
   term_win->visible = true;
-  wl_set_focused_surface(term_win);
+  term_win->is_focused = true;
 }
 
 void update_terminal_key(char k) {
-  if (!term_surface || !term_surface->is_focused)
+  if (!term_surface)
     return;
 
   if (k == '\n') {

@@ -13,6 +13,7 @@
 #include "pci.h"
 #include "pmm.h"
 #include "rtl8139.h"
+#include "serial.h"
 #include "string.h"
 #include "task.h"
 #include "terminal.h"
@@ -40,8 +41,8 @@ void task_compositor_loop() {
   init_terminal_app();
   init_book_app();
 
-  // Loop principal do Compositor (Server)
-  uint32_t last_render = 0;
+  int last_mx = -1, last_my = -1;
+  bool last_clicked = false;
 
   while (1) {
     int mx = get_mouse_x();
@@ -49,56 +50,50 @@ void task_compositor_loop() {
     bool clicked = is_left_clicked();
     char key = get_last_key();
 
-    // Input processing
-    wl_handle_mouse(mx, my, clicked, false);
+    bool needs_update = (mx != last_mx || my != last_my || clicked != last_clicked || key != 0);
 
-    // Simple Interaction Dispatcher (Hack para demonstrar book interativo)
-    if (clicked) {
-      extern wl_surface_t *
-      wl_get_focused_surface(); // Precisamos expor isso ou wrapper
-      // Vamos checar diretamente se o foco é o book
-      wl_surface_t *book_surf = get_book_surface(); // via book.h
-      // struct wl_surface em compositor.h é opaco se não incluirmos a definição
-      // completa. Mas incluimos compositor.h que define a struct.
+    if (needs_update) {
+        // Input processing
+        wl_handle_mouse(mx, my, clicked, false);
 
-      // Mas precisamos saber quem está focado.
-      // Vamos assumir que wl_handle_mouse atualizou o foco interno.
-      // Em um sistema real, o compositor mandaria evento 'click' para o cliente
-      // via socket. Aqui, vamos checar bounding box manual para o demo
-      if (mx >= book_surf->x && mx <= book_surf->x + (int)book_surf->width &&
-          my >= book_surf->y &&
-          my <= book_surf->y + (int)book_surf->height + 40) {
-        // Correctly account for the compositor's titlebar (40px)
-        int rx = mx - book_surf->x;
-        int ry = my - (book_surf->y + 40);
-
-        // Ensure we don't send negative Y if clicked on title bar area
-        if (ry >= 0) {
-          book_click_handler(rx, ry);
+        if (clicked) {
+          wl_surface_t *book_surf = get_book_surface(); 
+          if (mx >= book_surf->x && mx <= book_surf->x + (int)book_surf->width &&
+              my >= book_surf->y &&
+              my <= book_surf->y + (int)book_surf->height + 40) {
+            int rx = mx - book_surf->x;
+            int ry = my - (book_surf->y + 40);
+            if (ry >= 0) book_click_handler(rx, ry);
+          }
         }
-      }
+
+        if (key) {
+          wl_handle_key(key);
+          update_terminal_key(key);
+        }
+
+        extern bool check_win_key();
+        extern void toggle_launcher();
+        if (check_win_key()) {
+          toggle_launcher();
+        }
+
+        compositor_repaint();
+        
+        last_mx = mx;
+        last_my = my;
+        last_clicked = clicked;
+    } else {
+        asm volatile("hlt"); // Descansa a CPU se nada mudou
     }
-
-    if (key) {
-      wl_handle_key(key);
-      update_terminal_key(key);
-    }
-
-    extern bool check_win_key();
-    extern void toggle_launcher();
-    if (check_win_key()) {
-      toggle_launcher();
-    }
-
-    compositor_repaint();
-    last_render = timer_ticks;
-
-    asm volatile("hlt");
   }
 }
 
 void kernel_main(uint32_t magic, multiboot_info_t *mbi) {
   (void)magic;
+
+  init_serial();
+  serial_print("LiwusOS Kernel Booting...\n");
 
   init_gdt();
   init_idt();

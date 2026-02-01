@@ -1,6 +1,9 @@
 #include "pci.h"
 #include "io.h"
 #include "kheap.h"
+#include "video.h" // Added for draw_string
+#include "virtio.h" // Added VirtIO support
+#include "serial.h" // Serial Log
 
 static pci_device_t *devices[32];
 static int pci_count = 0;
@@ -13,6 +16,16 @@ uint32_t pci_read_config(uint16_t bus, uint16_t device, uint16_t function,
                  ((uint32_t)0x80000000));
   outl(0xCF8, address);
   return inl(0xCFC);
+}
+
+void pci_write_config(uint16_t bus, uint16_t device, uint16_t function,
+                          uint16_t offset, uint32_t val) {
+  uint32_t address =
+      (uint32_t)((((uint32_t)bus) << 16) | (((uint32_t)device) << 11) |
+                 (((uint32_t)function) << 8) | (offset & 0xFC) |
+                 ((uint32_t)0x80000000));
+  outl(0xCF8, address);
+  outl(0xCFC, val);
 }
 
 void pci_init() {
@@ -33,6 +46,15 @@ void pci_init() {
 
         uint32_t int_reg = pci_read_config(bus, dev, 0, 0x3C);
         d->interrupt_line = int_reg & 0xFF;
+
+        // CHECK FOR VIRTIO GPU
+        if (d->vendor_id == 0x1AF4) {
+             serial_print("PCI: FOUND VIRTIO DEVICE!\n");
+             if (d->device_id == 0x1050) {
+                 serial_print("PCI: IT IS THE GPU (VirtIO-GPU)! skipping auto-init to keep UI...\n");
+                 // virtio_init(d); // Commented to keep the standard UI visible
+             }
+        }
 
         if (pci_count < 32)
           devices[pci_count++] = d;

@@ -81,15 +81,57 @@ char *strchr(const char *s, int c) {
 }
 
 void *memset(void *dest, int val, size_t len) {
-  unsigned char *ptr = dest;
+  uint8_t *ptr = (uint8_t *)dest;
+  uint32_t val32 = (uint8_t)val;
+  val32 |= val32 << 8;
+  val32 |= val32 << 16;
+  val32 |= val32 << 24;
+
+  while (len > 0 && ((uintptr_t)ptr & 3) != 0) {
+    *ptr++ = (uint8_t)val;
+    len--;
+  }
+
+  uint32_t *ptr32 = (uint32_t *)ptr;
+  while (len >= 4) {
+    *ptr32++ = val32;
+    len -= 4;
+  }
+
+  ptr = (uint8_t *)ptr32;
+  while (len > 0) {
+    *ptr++ = (uint8_t)val;
+    len--;
+  }
+  return dest;
+}
+
+void *memset32(void *dest, uint32_t val, size_t len) {
+  uint32_t *ptr = (uint32_t *)dest;
   while (len-- > 0)
-    *ptr++ = (unsigned char)val;
+    *ptr++ = val;
   return dest;
 }
 
 void *memcpy(void *dest, const void *src, size_t len) {
-  unsigned char *d = dest;
-  const unsigned char *s = src;
+  uint8_t *d = (uint8_t *)dest;
+  const uint8_t *s = (const uint8_t *)src;
+
+  if (((uintptr_t)d & 3) == ((uintptr_t)s & 3)) {
+    while (len > 0 && ((uintptr_t)d & 3) != 0) {
+      *d++ = *s++;
+      len--;
+    }
+    uint32_t *d32 = (uint32_t *)d;
+    const uint32_t *s32 = (const uint32_t *)s;
+    while (len >= 4) {
+      *d32++ = *s32++;
+      len -= 4;
+    }
+    d = (uint8_t *)d32;
+    s = (uint8_t *)s32;
+  }
+
   while (len-- > 0)
     *d++ = *s++;
   return dest;

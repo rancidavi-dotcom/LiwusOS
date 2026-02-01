@@ -1,14 +1,11 @@
 #ifndef BROWSER_H
 #define BROWSER_H
 
-#include <stdint.h>
+#include "gui.h"
 
-/**
- * LiwusOS Browser CLI API
- */
-
-/* Executa uma requisição web ou busca e retorna o conteúdo formatado em texto
- */
-void browser_cli_execute(const char *input, char *output, uint32_t max_len);
+widget_t* init_browser();
+void draw_browser_content();
+void update_browser();
+void open_browser();
 
 #endif

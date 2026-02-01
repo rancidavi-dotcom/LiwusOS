@@ -88,7 +88,7 @@ $(BOOT_DIR)/test.elf: $(BOOT_DIR)/test.s
 
 run: $(ISO_IMAGE)
 	qemu-img create -f raw liwus_disk.img 100M
-	qemu-system-i386 -cdrom $(ISO_IMAGE) -drive file=liwus_disk.img,format=raw,index=0,media=disk -m 512M -boot d -full-screen -net nic,model=rtl8139 -net user
+	qemu-system-i386 -cdrom $(ISO_IMAGE) -drive file=liwus_disk.img,format=raw,index=0,media=disk -m 512M -boot d -full-screen -vga std -device virtio-gpu-pci -serial stdio -net nic,model=rtl8139 -net user
 
 clean:
 	rm -rf $(OBJ_DIR)
