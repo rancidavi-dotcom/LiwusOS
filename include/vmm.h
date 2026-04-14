@@ -15,7 +15,7 @@ typedef struct {
 } page_directory_t;
 
 /* Inicializa a Memória Virtual */
-void init_vmm();
+void init_vmm(uint32_t memory_size);
 
 /* Alterna diretório de páginas */
 void switch_page_directory(page_directory_t *dir);

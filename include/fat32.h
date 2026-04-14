@@ -65,9 +65,27 @@ typedef struct {
 fs_node_t *fat32_mount(uint16_t bus, uint8_t drive,
                        uint32_t partition_lba_start);
 int fat32_format(int *progress);
+int fat32_is_mounted(void);
 
 // Write API
 int fat32_create_file(const char *name); // Create in root
 uint32_t fat32_write_file(const char *name, uint8_t *buffer, uint32_t size);
+int fat32_root_list_entry(int index, char *name_out, int *is_dir_out,
+                          uint32_t *size_out);
+void *fat32_read_file(const char *name, uint32_t *size_out);
+int fat32_delete_file(const char *name);
+int fat32_rename_file(const char *old_name, const char *new_name);
+
+// Path-based API
+int fat32_list_dir_entry(const char *path, int index, char *name_out,
+                         int *is_dir_out, uint32_t *size_out);
+void *fat32_read_file_path(const char *path, uint32_t *size_out);
+int fat32_create_file_path(const char *path);
+uint32_t fat32_write_file_path(const char *path, uint8_t *buffer,
+                               uint32_t size);
+int fat32_delete_path(const char *path);
+int fat32_rename_path(const char *old_path, const char *new_path);
+int fat32_create_dir(const char *path);
+int fat32_path_info(const char *path, int *is_dir_out, uint32_t *size_out);
 
 #endif

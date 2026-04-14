@@ -2,21 +2,26 @@
 #include "video.h"
 #include "gui.h"
 #include "mouse.h"
+#include "syscall.h"
 #include "terminal.h"
 #include "settings.h"
 #include "explorer.h"
+#include "editor.h"
 #include "browser.h"
 #include "launcher.h"
 #include "timer.h"
 
 extern bool is_live_mode;
 extern void open_installer();
-
 extern uint32_t screen_width;
 extern uint32_t screen_height;
 
 static int dock_y = -50;
 static int target_y = -50;
+
+static void launch_program(const char *name) {
+    launch_initrd_program(name);
+}
 
 void init_dock() {
     dock_y = screen_height - 50;
@@ -29,8 +34,10 @@ void update_dock(int mx, int my) {
 
     /* Detecção de Clique na Dock */
     if (is_left_clicked()) {
-        int dock_w = 700;
+        int dock_w = 790;
         int dock_x = (screen_width - dock_w) / 2;
+        int editor_x = is_live_mode ? dock_x + 550 : dock_x + 460;
+        int doom_x = editor_x + 90;
         
         if (my >= dock_y) {
             /* Menu Apps */
@@ -61,12 +68,20 @@ void update_dock(int mx, int my) {
             if (is_live_mode && is_inside(mx, my, dock_x + 460, dock_y + 5, 80, 35)) {
                 open_installer();
             }
+            /* Editor */
+            if (is_inside(mx, my, editor_x, dock_y + 5, 80, 35)) {
+                open_editor();
+            }
+            /* Doom */
+            if (is_inside(mx, my, doom_x, dock_y + 5, 80, 35)) {
+                launch_program("doomgeneric");
+            }
         }
     }
 }
 
 void draw_dock() {
-    int dock_w = 700;
+    int dock_w = 790;
     int dock_h = 50; // Increased slightly for better look
     int dock_x = (screen_width - dock_w) / 2;
     dock_y = screen_height - dock_h;
@@ -85,6 +100,10 @@ void draw_dock() {
     if (is_live_mode) {
         draw_button_visual(dock_x + 460, dock_y + 5, 80, 35, "Instalar", 0xAA0000);
     }
+    draw_button_visual(dock_x + (is_live_mode ? 550 : 460), dock_y + 5, 80, 35,
+                       "Liwim", 0x3A6EA5);
+    draw_button_visual(dock_x + (is_live_mode ? 640 : 550), dock_y + 5, 80, 35,
+                       "Doom", 0xAA5500);
     
     // Relogio Real baseado no Timer do Kernel
     int total_seconds = timer_ticks / 100;

@@ -4,33 +4,43 @@ Bem-vindo ao Kit de Desenvolvimento do LiwusOS!
 Este SDK permite criar aplicativos nativos em C para o LiwusOS.
 
 ## Estrutura
-- `include/`: Headers da biblioteca (`libliw.h`)
-- `lib/`: Arquivos de startup (`crt0.s`)
+- `include/`: Header de compatibilidade (`libliw.h`)
+- `lib/`: Runtime de startup (`crt0.s`) e a biblioteca `libliwc.a`
+- `libc/include/`: Headers C básicos (`stdio.h`, `stdlib.h`, `string.h`, `unistd.h`, ...)
+- `libc/`: Implementacao da libc de userspace do LiwusOS
 
 ## Como Compilar um App
 
-Requisitos: `gcc` (suporte a multilib/32-bit se estiver em x64).
+Requisitos: `i686-elf-gcc` e `i686-elf-ar`.
 
 1. Crie seu arquivo C (ex: `main.c`):
    ```c
-   #include "libliw.h"
+   #include <stdio.h>
    
    int main() {
-       print("Hello from LiwusOS!\n");
+       printf("Hello from LiwusOS!\n");
        return 0;
    }
    ```
 
-2. Compile usando o GCC com flags para 32-bit e freestanding:
+2. Compile a libc do SDK:
    ```bash
-   gcc -m32 -nostdlib -fno-builtin -I sdk/include \
-       sdk/lib/crt0.s main.c -o app.elf
+   make sdk/lib/libliwc.a
    ```
 
-3. (Opcional) Crie um pacote `.liw`:
+3. Compile seu app com o runtime do LiwusOS:
+   ```bash
+   i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra \
+       -Isdk/include -Isdk/libc/include -nostdlib -static \
+       sdk/lib/crt0.s main.c sdk/lib/libliwc.a -o app.elf
+   ```
+
+4. (Opcional) Crie um pacote `.liw`:
    Use a ferramenta `liw-builder` (se disponível) para empacotar.
 
 ## API Disponível
-- `print(str)`: Imprime no console.
-- `exit(code)`: Encerra o programa.
-- Syscalls raw (`syscall0`-`syscall4`) disponíveis em `libliw.h`.
+- `printf()`, `puts()`, `putchar()`
+- `malloc()`, `calloc()`, `realloc()`, `free()`
+- `read()`, `write()`, `open()`, `close()`, `fork()`, `execve()`, `waitpid()`, `sbrk()`
+- `print()` e `print_int()` continuam disponiveis em `libliw.h` como compatibilidade
+- Partes puras de `string.h` sao reaproveitadas da PDCLib; a camada de syscall e heap e propria do LiwusOS

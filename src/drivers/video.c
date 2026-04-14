@@ -2,6 +2,7 @@
 #include "io.h"
 #include "kheap.h"
 #include "string.h"
+#include "vmm.h"
 
 uint32_t *framebuffer;
 uint32_t *backbuffer;
@@ -54,10 +55,27 @@ void video_reset_target() {
 }
 
 void init_video(multiboot_info_t *mbi) {
+  uint32_t fb_addr;
+  uint32_t fb_size;
+  uint32_t map_start;
+  uint32_t map_end;
+
   framebuffer = (uint32_t *)((uint32_t)mbi->framebuffer_addr);
   screen_width = mbi->framebuffer_width;
   screen_height = mbi->framebuffer_height;
   screen_size = screen_width * screen_height;
+
+  fb_addr = (uint32_t)mbi->framebuffer_addr;
+  fb_size = mbi->framebuffer_pitch * mbi->framebuffer_height;
+  if (fb_size == 0) {
+    fb_size = screen_size * 4;
+  }
+  map_start = fb_addr & 0xFFFFF000;
+  map_end = (fb_addr + fb_size + 0xFFF) & 0xFFFFF000;
+  for (uint32_t addr = map_start; addr < map_end; addr += 4096) {
+    vmm_map_page((void *)addr, (void *)addr, 0x3);
+  }
+
   backbuffer = (uint32_t *)kmalloc(screen_size * 4);
   video_reset_target();
 }
@@ -127,29 +145,14 @@ void refresh_screen() {
 }
 
 void draw_rounded_rect(int x, int y, int w, int h, int r, uint32_t color) {
-  draw_rect(x + r, y, w - 2 * r, h, color);
-  draw_rect(x, y + r, w, h - 2 * r, color);
-  draw_filled_circle(x + r, y + r, r, color);
-  draw_filled_circle(x + w - r - 1, y + r, r, color);
-  draw_filled_circle(x + r, y + h - r - 1, r, color);
-  draw_filled_circle(x + w - r - 1, y + h - r - 1, r, color);
+  (void)r;
+  draw_rect(x, y, w, h, color);
 }
 
 void draw_mouse_cursor(int x, int y, int type) {
   (void)type;
-  static const char *arrow[] = {
-      "X           ", "XX          ", "X.X         ", "X..X        ",
-      "X...X       ", "X....X      ", "X.....X     ", "X......X    ",
-      "X.......X   ", "X........X  ", "X.....XXXXX ", "X..X..X     ",
-      "X.X X..X    ", "XX   X..X   ", "     X..X   ", "      XX    "};
-  for (int i = 0; i < 16; i++) {
-    for (int j = 0; j < 12; j++) {
-      if (arrow[i][j] == 'X')
-        draw_pixel(x + j, y + i, 0x000000);
-      else if (arrow[i][j] == '.')
-        draw_pixel(x + j, y + i, 0xFFFFFF);
-    }
-  }
+  draw_filled_circle(x + 3, y + 3, 3, 0xFFF4F4F4);
+  draw_filled_circle(x + 3, y + 3, 1, 0xFF111111);
 }
 
 void draw_loading_bar(int x, int y, int w, int h, int p) {
@@ -242,24 +245,17 @@ void draw_pixel_alpha(int x, int y, uint32_t color, uint8_t alpha) {
 }
 
 void draw_box_shadow(int x, int y, int w, int h, int r, int blur, uint32_t color) {
-  (void)r; (void)blur; (void)color;
-  int offset = 4;
-  for (int i = 0; i < 2; i++) {
-      uint8_t a = 30 - (i * 10);
-      for (int py = y + h; py < y + h + offset; py++) {
-          for (int px = x + offset; px < x + w + offset; px++) {
-              draw_pixel_alpha(px, py, 0, a);
-          }
-      }
-      for (int py = y + offset; py < y + h; py++) {
-          for (int px = x + w; px < x + w + offset; px++) {
-              draw_pixel_alpha(px, py, 0, a);
-          }
-      }
-  }
+  (void)x;
+  (void)y;
+  (void)w;
+  (void)h;
+  (void)r;
+  (void)blur;
+  (void)color;
 }
 
 void draw_button_visual(int x, int y, int w, int h, const char *text, uint32_t color) {
-  draw_rect(x, y, w, h, color);
-  draw_string(x + 5, y + 5, text, 0xFFFFFF);
+  draw_rounded_rect(x, y, w, h, 8, color);
+  draw_rect(x, y + h - 1, w, 1, 0x50000000);
+  draw_string(x + 10, y + 9, text, 0xFFFFFF);
 }

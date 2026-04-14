@@ -49,11 +49,10 @@ void pci_init() {
 
         // CHECK FOR VIRTIO GPU
         if (d->vendor_id == 0x1AF4) {
-             serial_print("PCI: FOUND VIRTIO DEVICE!\n");
-             if (d->device_id == 0x1050) {
-                 serial_print("PCI: IT IS THE GPU (VirtIO-GPU)! skipping auto-init to keep UI...\n");
-                 // virtio_init(d); // Commented to keep the standard UI visible
-             }
+          serial_print("PCI: FOUND VIRTIO DEVICE!\n");
+          if (d->device_id == 0x1050) {
+            serial_print("PCI: IT IS THE GPU (VirtIO-GPU)! skipping auto-init to keep UI...\n");
+          }
         }
 
         if (pci_count < 32)

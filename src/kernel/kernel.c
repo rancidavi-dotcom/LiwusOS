@@ -1,15 +1,15 @@
 #include "ata.h"
-#include "book.h" // NOVO
-#include "compositor.h"
 #include "fat32.h"
 #include "gdt.h"
 #include "idt.h"
+#include "initrd.h"
 #include "io.h"
-#include "lgx.h"
+#include "kheap.h"
+#include "keyboard.h"
 #include "mouse.h"
 #include "multiboot.h"
 #include "net.h"
-#include "panel.h" // NOVO
+#include "netstack.h"
 #include "pci.h"
 #include "pmm.h"
 #include "rtl8139.h"
@@ -17,9 +17,15 @@
 #include "string.h"
 #include "task.h"
 #include "terminal.h"
+#include "tcp.h"
+#include "udp.h"
+#include "dns.h"
 #include "timer.h"
 #include "vfs.h"
 #include "video.h"
+#include "syscall.h"
+#include "vmm.h"
+#include "vga.h"
 #include "wifi.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -29,124 +35,153 @@ bool is_live_mode = true; // Definir global
 
 extern uint32_t end;
 extern void refresh_screen();
-extern char get_last_key();
-// extern void init_dock(); // Removido pois layer shell é controlado pelo
-// compositor agora
+extern int graphics_exclusive_active(void);
 
-void task_compositor_loop() {
-  compositor_init();
-
-  // Inicializa a UI do Sistema
-  init_panel();
+void task_terminal_loop() {
+  terminal_enable_console_mode();
   init_terminal_app();
-  init_book_app();
-
-  int last_mx = -1, last_my = -1;
-  bool last_clicked = false;
 
   while (1) {
-    int mx = get_mouse_x();
-    int my = get_mouse_y();
-    bool clicked = is_left_clicked();
-    char key = get_last_key();
+    char key_batch[64];
+    int key_count = 0;
+    char popped_key = 0;
+    bool terminal_dirty;
 
-    bool needs_update = (mx != last_mx || my != last_my || clicked != last_clicked || key != 0);
+    if (graphics_exclusive_active()) {
+      asm volatile("hlt");
+      continue;
+    }
 
-    if (needs_update) {
-        // Input processing
-        wl_handle_mouse(mx, my, clicked, false);
+    while (key_count < (int)(sizeof(key_batch) / sizeof(key_batch[0])) &&
+           keyboard_pop_char(&popped_key)) {
+      key_batch[key_count++] = popped_key;
+    }
 
-        if (clicked) {
-          wl_surface_t *book_surf = get_book_surface(); 
-          if (mx >= book_surf->x && mx <= book_surf->x + (int)book_surf->width &&
-              my >= book_surf->y &&
-              my <= book_surf->y + (int)book_surf->height + 40) {
-            int rx = mx - book_surf->x;
-            int ry = my - (book_surf->y + 40);
-            if (ry >= 0) book_click_handler(rx, ry);
-          }
-        }
+    for (int i = 0; i < key_count; i++) {
+      update_terminal_key(key_batch[i]);
+    }
 
-        if (key) {
-          wl_handle_key(key);
-          update_terminal_key(key);
-        }
+    terminal_dirty = terminal_needs_update(timer_ticks);
+    if (terminal_dirty) {
+      terminal_flush_updates(timer_ticks);
+    }
 
-        extern bool check_win_key();
-        extern void toggle_launcher();
-        if (check_win_key()) {
-          toggle_launcher();
-        }
-
-        compositor_repaint();
-        
-        last_mx = mx;
-        last_my = my;
-        last_clicked = clicked;
-    } else {
-        asm volatile("hlt"); // Descansa a CPU se nada mudou
+    if (key_count == 0 && !terminal_dirty) {
+      asm volatile("hlt");
     }
   }
 }
 
-void kernel_main(uint32_t magic, multiboot_info_t *mbi) {
-  (void)magic;
+static void ensure_fat32_disk_ready(void) {
+  int format_progress = 0;
 
-  init_serial();
-  serial_print("LiwusOS Kernel Booting...\n");
-
-  init_gdt();
-  init_idt();
-  pmm_init((uint32_t)&end + 0x1000, mbi->mem_upper * 1024);
-  init_video(mbi);
-
-  pci_init();
-
-  // Rede e Disco
-  // pci_device_t* net = pci_get_net();
-  // if (net) init_rtl8139(net);
-  // fs_root = fat32_mount(ATA_PRIMARY, ATA_MASTER, 0);
-
-  init_timer(100);
-  init_tasking();
-  init_timer(100);
-  init_tasking();
-  init_mouse();
-
-// Initialize GPU (Overrides Video LFB if BGA present)
-#include "gpu.h"
-  init_gpu();
-
-  // LGX Foundation Initialization (Backend for Compositor)
-  lg_instance_t lgx_inst;
-  lg_instance_create_info_t lgx_info = {"LiwusOS Wayland", 1};
-  extern lg_device_t global_lg_device;
-  extern lg_queue_t global_lg_queue;
-  extern lg_command_pool_t global_lg_pool;
-  extern lg_swapchain_t global_sw;
-
-  if (lg_create_instance(&lgx_info, &lgx_inst) == LGX_SUCCESS) {
-    uint32_t gpu_count = 0;
-    lg_enumerate_physical_devices(lgx_inst, &gpu_count, NULL);
-    if (gpu_count > 0) {
-      lg_physical_device_t gpus[1];
-      lg_enumerate_physical_devices(lgx_inst, &gpu_count, gpus);
-      lg_create_device(gpus[0], &global_lg_device);
-      lg_get_device_queue(global_lg_device, 0, 0, &global_lg_queue);
-      lg_command_pool_create_info_t pool_info = {0};
-      lg_create_command_pool(global_lg_device, &pool_info, &global_lg_pool);
-      lg_swapchain_create_info_t sw_info = {screen_width, screen_height,
-                                            LGX_FORMAT_B8G8R8A8_UNORM};
-      lg_create_swapchain(global_lg_device, &sw_info, &global_sw);
-
-      draw_string(10, 10, "LGX Backend initialized for Wayland Compositor",
-                  0x00FF00);
+  fs_node_t *fat_root = fat32_mount(ATA_PRIMARY, ATA_MASTER, 0);
+  if (!fat_root) {
+    serial_print("FAT32 mount failed, formatting disk...\n");
+    if (fat32_format(&format_progress) == 0) {
+      fat_root = fat32_mount(ATA_PRIMARY, ATA_MASTER, 0);
     }
   }
 
-  create_task(task_compositor_loop);
-  extern void test_posix();
-  create_task(test_posix);
+  if (fat_root) {
+    vfs_mount("/house/localhost", fat_root);
+    serial_print("FAT32 disk mounted at /house/localhost\n");
+  } else {
+    serial_print("FAT32 disk unavailable\n");
+  }
+}
+
+void init_fpu() {
+    uint32_t cr0;
+    asm volatile("mov %%cr0, %0" : "=r"(cr0));
+    cr0 &= ~(1 << 2); // EM
+    cr0 |= (1 << 1);  // MP
+    asm volatile("mov %0, %%cr0" :: "r"(cr0));
+
+    uint32_t cr4;
+    asm volatile("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= (1 << 9);  // OSFXSR
+    cr4 |= (1 << 10); // OSXMMEXCPT
+    asm volatile("mov %0, %%cr4" :: "r"(cr4));
+
+    asm volatile("finit");
+}
+
+void kernel_main(uint32_t magic, multiboot_info_t *mbi) {
+  (void)magic;
+  uint32_t reserved_start = (uint32_t)&end + 0x1000;
+  uint32_t memory_size = mbi->mem_upper * 1024;
+  uint32_t pmm_bitmap_bytes;
+  uint32_t heap_start;
+
+  init_serial();
+  serial_print("LiwusOS Kernel Booting [Network + DNS Patch]...\n");
+
+  if (mbi->mods_count > 0) {
+    multiboot_module_t *mods = (multiboot_module_t *)mbi->mods_addr;
+    if (mods[0].mod_end + 0x1000 > reserved_start) {
+      reserved_start = mods[0].mod_end + 0x1000;
+    }
+  }
+
+  pmm_bitmap_bytes = ((memory_size / 4096) / 32) * sizeof(uint32_t);
+  if (pmm_bitmap_bytes == 0) {
+    pmm_bitmap_bytes = 4096;
+  }
+
+  init_gdt();
+  init_idt();
+  init_fpu();
+  pmm_init(reserved_start, memory_size);
+
+  heap_start = reserved_start + pmm_bitmap_bytes + 0x1000;
+  kheap_set_start(heap_start);
+  init_vmm(memory_size);
+  serial_print("VMM initialized\n");
+
+  vfs_init();
+  serial_print("VFS initialized\n");
+
+  vga_init();
+  vga_puts("LiwusOS Kernel Booting (Text Mode Only)...\n");
+
+  // init_video(mbi);
+
+  pci_init();
+  net_init();
+  tcp_init();
+  udp_init();
+  dns_init();
+
+  if (mbi->mods_count > 0) {
+    multiboot_module_t *mods = (multiboot_module_t *)mbi->mods_addr;
+    fs_node_t *initrd_root = init_initrd(mods[0].mod_start, mods[0].mod_end - mods[0].mod_start);
+    vfs_mount("/", initrd_root);
+    serial_print("Initrd initialized and mounted at /\n");
+  } else {
+    serial_print("Initrd not provided by bootloader\n");
+  }
+
+  // Rede e Disco
+  {
+    pci_device_t *net_dev = pci_get_net();
+    if (net_dev) {
+      init_rtl8139(net_dev);
+      serial_print("RTL8139 ethernet initialized\n");
+    } else {
+      serial_print("No ethernet device found\n");
+    }
+  }
+  ensure_fat32_disk_ready();
+
+  init_timer(100);
+  init_tasking();
+  init_syscalls();
+  create_task_named(task_terminal_loop, "terminal");
+
+  extern void liwshd_loop();
+  create_task_named(liwshd_loop, "liwshd");
+
   asm volatile("sti");
   while (1) {
     asm volatile("hlt");

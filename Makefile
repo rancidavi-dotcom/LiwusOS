@@ -1,12 +1,16 @@
-CC = gcc
-CFLAGS = -m32 -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Iinclude
-AS = as
-ASFLAGS = --32
-LDFLAGS = -m32 -ffreestanding -O2 -nostdlib
+CC = i686-elf-gcc
+AR = i686-elf-ar
+HOSTCC = gcc
 
-# Project Layout
+CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Iinclude -Isdk/libc/include -Ithird_party/lvgl -Ithird_party/lvgl/src -DLV_CONF_INCLUDE_SIMPLE
+USER_CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include
+LIBGCC = -lgcc
+CRT0_OBJ = sdk/lib/crt0.o
+
+$(CRT0_OBJ): sdk/lib/crt0.s
+	$(CC) -c $< -o $@
+
 SRC_DIR = src
-OBJ_DIR = obj
 BOOT_DIR = $(SRC_DIR)/boot
 KERNEL_DIR = $(SRC_DIR)/kernel
 DRIVERS_DIR = $(SRC_DIR)/drivers
@@ -14,8 +18,21 @@ FS_DIR = $(SRC_DIR)/fs
 NET_DIR = $(SRC_DIR)/net
 GUI_DIR = $(SRC_DIR)/gui
 APPS_DIR = $(SRC_DIR)/apps
+OBJ_DIR = obj
 
-# Source files
+KERNEL_BIN = kernel.bin
+ISO_IMAGE = liwusos.iso
+LIW_ELF = liw.elf
+HELLO_ELF = apps/hello/hello.elf
+DOOMPROBE_ELF = apps/doomprobe/doomprobe.elf
+LUA_ELF = apps/lua/lua.elf
+DOOMGENERIC_ELF = apps/doomgeneric/doomgeneric.elf
+CRUN_ELF = apps/c4/crun.elf
+VIEW_ELF = apps/view/view.elf
+
+TCC_DIR = third_party/tcc
+TCC_BIN = $(TCC_DIR)/tcc
+
 BOOT_SRCS = $(BOOT_DIR)/boot.s $(BOOT_DIR)/interrupt.s
 KERNEL_SRCS = $(wildcard $(KERNEL_DIR)/*.c) $(wildcard $(KERNEL_DIR)/*.s)
 DRIVERS_SRCS = $(wildcard $(DRIVERS_DIR)/*.c)
@@ -24,58 +41,173 @@ NET_SRCS = $(wildcard $(NET_DIR)/*.c)
 GUI_SRCS = $(wildcard $(GUI_DIR)/*.c)
 APPS_SRCS = $(filter-out $(APPS_DIR)/liw_app.c, $(wildcard $(APPS_DIR)/*.c))
 
-# Object files
-# Function to map src to obj
-to_obj = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(patsubst $(SRC_DIR)/%.s, $(OBJ_DIR)/%.o, $(1)))
+LVGL_DIR = third_party/lvgl
+LVGL_CORE_SRCS = $(shell find $(LVGL_DIR)/src/core -name '*.c')
+LVGL_DISPLAY_SRCS = $(shell find $(LVGL_DIR)/src/display -name '*.c')
+LVGL_DRAW_SRCS = $(shell find $(LVGL_DIR)/src/draw -maxdepth 1 -name '*.c') \
+		 $(shell find $(LVGL_DIR)/src/draw/sw -maxdepth 1 -name '*.c') \
+		 $(shell find $(LVGL_DIR)/src/draw/sw/blend -name '*.c')
+LVGL_FONT_SRCS = $(shell find $(LVGL_DIR)/src/font -name '*.c')
+LVGL_INDEV_SRCS = $(shell find $(LVGL_DIR)/src/indev -name '*.c')
+LVGL_LAYOUT_SRCS = $(shell find $(LVGL_DIR)/src/layouts -name '*.c')
+LVGL_MISC_SRCS = $(shell find $(LVGL_DIR)/src/misc -name '*.c')
+LVGL_STDLIB_SRCS = $(LVGL_DIR)/src/stdlib/lv_mem.c \
+		   $(shell find $(LVGL_DIR)/src/stdlib/builtin -name '*.c')
+LVGL_WIDGET_SRCS = $(LVGL_DIR)/src/widgets/button/lv_button.c \
+		   $(LVGL_DIR)/src/widgets/label/lv_label.c \
+		   $(LVGL_DIR)/src/widgets/textarea/lv_textarea.c
+LVGL_OSAL_SRCS = $(LVGL_DIR)/src/osal/lv_os_none.c
+LVGL_TICK_SRCS = $(LVGL_DIR)/src/tick/lv_tick.c
+LVGL_INIT_SRCS = $(LVGL_DIR)/src/lv_init.c
+LVGL_SRCS = $(LVGL_INIT_SRCS) $(LVGL_CORE_SRCS) $(LVGL_DISPLAY_SRCS) \
+	    $(LVGL_DRAW_SRCS) $(LVGL_FONT_SRCS) $(LVGL_INDEV_SRCS) \
+	    $(LVGL_LAYOUT_SRCS) $(LVGL_MISC_SRCS) $(LVGL_STDLIB_SRCS) \
+	    $(LVGL_WIDGET_SRCS) $(LVGL_OSAL_SRCS) $(LVGL_TICK_SRCS)
 
-OBJS = $(call to_obj, $(BOOT_SRCS) $(KERNEL_SRCS) $(DRIVERS_SRCS) $(FS_SRCS) $(NET_SRCS) $(GUI_SRCS) $(APPS_SRCS)) \
-       $(OBJ_DIR)/drivers/font.o
+KERNEL_C_SRCS = $(KERNEL_SRCS) $(DRIVERS_SRCS) $(FS_SRCS) $(NET_SRCS) $(GUI_SRCS) $(APPS_SRCS) $(LVGL_SRCS)
+KERNEL_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(filter %.c,$(KERNEL_C_SRCS))) \
+              $(patsubst %.s,$(OBJ_DIR)/%.o,$(filter %.s,$(KERNEL_C_SRCS))) \
+              $(patsubst %.s,$(OBJ_DIR)/%.o,$(BOOT_SRCS)) \
+              $(OBJ_DIR)/$(DRIVERS_DIR)/font.o
 
-KERNEL_BIN = kernel.bin
-ISO_IMAGE = liwusos.iso
+SDK_LIBC_SRCS = $(wildcard sdk/libc/*.c)
+SDK_LIBC_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(SDK_LIBC_SRCS))
+SDK_LIB = sdk/lib/libliwc.a
 
-all: $(ISO_IMAGE)
+DOOM_DIR = third_party/doomgeneric/doomgeneric
+DOOMGENERIC_CFLAGS = $(USER_CFLAGS) -I$(DOOM_DIR) -DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200
+DOOM_ALL_SRCS = $(wildcard $(DOOM_DIR)/*.c)
+DOOM_EXCLUDE = $(DOOM_DIR)/doomgeneric_allegro.c $(DOOM_DIR)/doomgeneric_emscripten.c \
+               $(DOOM_DIR)/doomgeneric_linuxvt.c $(DOOM_DIR)/doomgeneric_sdl.c \
+               $(DOOM_DIR)/doomgeneric_soso.c $(DOOM_DIR)/doomgeneric_sosox.c \
+               $(DOOM_DIR)/doomgeneric_win.c $(DOOM_DIR)/doomgeneric_xlib.c \
+               $(DOOM_DIR)/i_allegromusic.c $(DOOM_DIR)/i_allegrosound.c \
+               $(DOOM_DIR)/i_sdlmusic.c $(DOOM_DIR)/i_sdlsound.c
+DOOM_SRCS = $(filter-out $(DOOM_EXCLUDE), $(DOOM_ALL_SRCS))
 
-$(KERNEL_BIN): $(OBJS) $(BOOT_DIR)/linker.ld
-	$(CC) -T $(BOOT_DIR)/linker.ld -o $@ $(CFLAGS) -nostdlib $(OBJS)
+LUA_DIR = third_party/lua/src
+LUA_CFLAGS = $(USER_CFLAGS) -I$(LUA_DIR) -DLUA_USE_C89
+LUA_ALL_SRCS = $(wildcard $(LUA_DIR)/*.c)
+LUA_SRCS = $(filter-out $(LUA_DIR)/lua.c $(LUA_DIR)/luac.c, $(LUA_ALL_SRCS)) apps/lua/lua_main.c
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
+SDK_LIB = sdk/lib/libliwc.a
+ZLIB_LIB = sdk/lib/libz.a
+PNG_LIB = sdk/lib/libpng.a
+JPEG_LIB = sdk/lib/libjpeg.a
+
+ZLIB_DIR = third_party/zlib
+PNG_DIR = third_party/libpng
+JPEG_DIR = third_party/libjpeg
+
+.PHONY: all run clean tcc zlib libpng libjpeg
+
+all: $(SDK_LIB) zlib libpng libjpeg $(ISO_IMAGE)
+
+zlib:
+	@if [ -d $(ZLIB_DIR) ]; then \
+		cd $(ZLIB_DIR) && CHOST=i686-elf CC=$(CC) CFLAGS="$(USER_CFLAGS) -I$(CURDIR)/sdk/libc/include" ./configure --static --prefix=$(CURDIR)/sdk && $(MAKE) libz.a && \
+		cp libz.a ../../$(ZLIB_LIB) && cp *.h ../../sdk/libc/include/; \
+	fi
+
+libpng: zlib $(SDK_LIB) $(CRT0_OBJ)
+	@if [ -d $(PNG_DIR) ]; then \
+		cd $(PNG_DIR) && \
+		CPPFLAGS="-I$(CURDIR)/sdk/libc/include" \
+		LDFLAGS="-L$(CURDIR)/sdk/lib -nostdlib" \
+		LIBS="-l:libliwc.a -lgcc" \
+		./configure --host=i686-elf --prefix=$(CURDIR)/sdk \
+		--enable-static --disable-shared \
+		--with-zlib-prefix=$(CURDIR)/sdk \
+		ac_cv_func_malloc_0_nonnull=yes \
+		ac_cv_func_realloc_0_nonnull=yes \
+		ac_cv_lib_z_zlibVersion=yes && \
+		$(MAKE) libpng16.la && \
+		cp .libs/libpng16.a ../../$(PNG_LIB) && cp *.h ../../sdk/libc/include/; \
+	fi
+
+libjpeg: $(SDK_LIB) $(CRT0_OBJ)
+	@if [ -d $(JPEG_DIR) ]; then \
+		cd $(JPEG_DIR) && \
+		./configure --host=i686-elf --prefix=$(CURDIR)/sdk \
+		--enable-static --disable-shared \
+		CC=$(CC) CFLAGS="$(USER_CFLAGS) -I$(CURDIR)/sdk/libc/include" \
+		LDFLAGS="-L$(CURDIR)/sdk/lib -nostdlib" \
+		LIBS="-l:libliwc.a -lgcc" \
+		ac_cv_func_malloc_0_nonnull=yes \
+		ac_cv_func_realloc_0_nonnull=yes && \
+		$(MAKE) libjpeg.la && \
+		cp .libs/libjpeg.a ../../$(JPEG_LIB) && cp *.h ../../sdk/libc/include/; \
+	fi
+
+tcc:
+	cd $(TCC_DIR) && ./configure --cc=$(CC) --cpu=i386 --triplet=i686-elf --prefix=/usr/local --extra-cflags="-ffreestanding -I$(CURDIR)/sdk/libc/include" && $(MAKE) tcc
+
+$(KERNEL_BIN): $(KERNEL_OBJS) $(BOOT_DIR)/linker.ld
+	$(CC) -T $(BOOT_DIR)/linker.ld -o $@ $(CFLAGS) -nostdlib $(KERNEL_OBJS) $(LIBGCC)
+
+$(OBJ_DIR)/sdk/libc/%.o: sdk/libc/%.c
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ $(USER_CFLAGS)
+
+$(OBJ_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $< -o $@ $(CFLAGS)
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.s
+$(OBJ_DIR)/%.o: %.s
 	@mkdir -p $(dir $@)
-	$(AS) $(ASFLAGS) $< -o $@
+	$(CC) -c $< -o $@
 
-$(OBJ_DIR)/drivers/font.o: $(SRC_DIR)/drivers/font.psf
+$(OBJ_DIR)/$(DRIVERS_DIR)/font.o: $(DRIVERS_DIR)/font.psf
 	@mkdir -p $(dir $@)
 	objcopy -I binary -O elf32-i386 -B i386 $< $@
 
-$(SRC_DIR)/drivers/font.psf:
-	cp /usr/share/consolefonts/Uni2-Terminus16.psf.gz font.psf.gz
-	gunzip -f font.psf.gz
-	mv font.psf $(SRC_DIR)/drivers/font.psf
+$(SDK_LIB): $(SDK_LIBC_OBJS)
+	@mkdir -p $(dir $@)
+	$(AR) rcs $@ $(SDK_LIBC_OBJS)
+	cp $@ sdk/lib/libm.a
+	cp $@ sdk/lib/libc.a
 
-$(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf
-	# Build Host Tool
-	$(CC) -Iinclude sdk/tools/liw-builder.c -o sdk/tools/liw-builder
+$(LIW_ELF): src/apps/liw_app.c
+	$(CC) $(USER_CFLAGS) -nostdlib -static $< -o $@ $(LIBGCC)
+
+$(HELLO_ELF): apps/hello/hello.c $(SDK_LIB) $(CRT0_OBJ)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/hello/hello.c $(SDK_LIB) -o $@ $(LIBGCC)
+
+$(DOOMPROBE_ELF): apps/doomprobe/doomprobe.c $(SDK_LIB) $(CRT0_OBJ)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/doomprobe/doomprobe.c $(SDK_LIB) -o $@ $(LIBGCC)
+
+$(LUA_ELF): $(LUA_SRCS) $(SDK_LIB) $(CRT0_OBJ)
+	$(CC) $(LUA_CFLAGS) -nostdlib -static $(CRT0_OBJ) $(LUA_SRCS) $(SDK_LIB) -o $@ $(LIBGCC)
+
+$(DOOMGENERIC_ELF): $(DOOM_SRCS) $(SDK_LIB) $(CRT0_OBJ)
+	$(CC) $(DOOMGENERIC_CFLAGS) -nostdlib -static $(CRT0_OBJ) $(DOOM_SRCS) $(SDK_LIB) -o $@ $(LIBGCC)
+
+$(CRUN_ELF): apps/c4/c4.c $(SDK_LIB) $(CRT0_OBJ)
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/c4/c4.c $(SDK_LIB) -o $@ $(LIBGCC)
+
+$(VIEW_ELF): apps/view/view.c $(SDK_LIB) $(CRT0_OBJ) zlib libpng libjpeg
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -I$(CURDIR)/sdk/libc/include -nostdlib -static $(CRT0_OBJ) apps/view/view.c $(PNG_LIB) $(JPEG_LIB) $(ZLIB_LIB) $(SDK_LIB) -o $@ $(LIBGCC)
+
+$(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(SDK_LIB) $(LIW_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(LUA_ELF) $(DOOMGENERIC_ELF) $(CRUN_ELF) $(VIEW_ELF)
+	$(HOSTCC) -Iinclude sdk/tools/liw-builder.c -o sdk/tools/liw-builder
 	./sdk/tools/liw-builder src/boot/test.liw src/boot/test.elf src/boot/test_manifest.json
-	
-	# Build Apps
-	$(CC) -m32 -nostdlib -static src/apps/liw_app.c -o liw.elf
-	$(CC) -m32 -nostdlib -fno-builtin -I sdk/include sdk/lib/crt0.s apps/hello/hello.c -o apps/hello/hello.elf
-
 	grub-file --is-x86-multiboot $(KERNEL_BIN)
 	mkdir -p repo
-	echo "LiwusOS Theme Package" > repo/theme.liw
-	echo "LiwusOS Calc Package" > repo/calc.liw
-	cp src/boot/test.elf repo/test.elf
-	cp src/boot/test.liw repo/test.liw
-	
-	# Install Apps
-	cp liw.elf repo/liw
-	cp apps/hello/hello.elf repo/hello.liwpkg
-	
+	# Gerar arquivos de imagem de teste automaticamente
+	printf '\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90\x77\x53\xde\x00\x00\x00\x0c\x49\x44\x41\x54\x08\xd7\x63\xf8\xff\xff\x3f\x00\x05\xfe\x02\xfe\xdc\x44\x74\x8e\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82' > repo/teste.png
+	printf '\xff\xd8\xff\xdb\x00\x43\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x14\x10\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00\x37\xff\xd9' > repo/teste.jpg
+	if [ -f assets/LiwusOSlogo.png ]; then cp assets/LiwusOSlogo.png repo/logo.png; fi
+	cp $(LIW_ELF) repo/liw
+	cp $(HELLO_ELF) repo/hello.liwpkg
+	cp $(DOOMPROBE_ELF) repo/doomprobe.liwpkg
+	cp $(LUA_ELF) repo/lua
+	cp $(CRUN_ELF) repo/crun
+	cp $(VIEW_ELF) repo/view.liwpkg
+	cp apps/lua/hello.lua repo/hello.lua
+	cp $(DOOMGENERIC_ELF) repo/doomgeneric
+	if [ -f freedoom1.wad ]; then cp freedoom1.wad repo/freedoom1.wad; fi
 	tar -cvf initrd.tar -C repo . --format=ustar
 	mkdir -p isodir/boot/grub
 	cp $(KERNEL_BIN) isodir/boot/kernel.bin
@@ -84,13 +216,9 @@ $(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf
 	grub-mkrescue -o $(ISO_IMAGE) isodir
 
 $(BOOT_DIR)/test.elf: $(BOOT_DIR)/test.s
-	$(CC) -m32 -nostdlib -static $< -o $@
-
-run: $(ISO_IMAGE)
-	qemu-img create -f raw liwus_disk.img 100M
-	qemu-system-i386 -cdrom $(ISO_IMAGE) -drive file=liwus_disk.img,format=raw,index=0,media=disk -m 512M -boot d -vga std -device virtio-gpu-pci -serial stdio -net nic,model=rtl8139 -net user
+	$(CC) -nostdlib -static $< -o $@ $(LIBGCC)
 
 clean:
 	rm -rf $(OBJ_DIR)
-	rm -f $(KERNEL_BIN) $(ISO_IMAGE) initrd.tar liwus_disk.img src/boot/test.elf src/boot/test.liw liw.elf
+	rm -f $(KERNEL_BIN) $(ISO_IMAGE) initrd.tar liwus_disk.img src/boot/test.elf src/boot/test.liw $(LIW_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(LUA_ELF) $(DOOMGENERIC_ELF) $(CRUN_ELF)
 	rm -rf isodir repo

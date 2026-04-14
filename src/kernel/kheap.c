@@ -8,10 +8,17 @@ static uint32_t kheap_current = 0;
 
 extern uint32_t end; // Definido no linker.ld
 
+void kheap_set_start(uint32_t start) {
+  if (start % 4096 != 0) {
+    start += 4096 - (start % 4096);
+  }
+  kheap_start = start;
+  kheap_current = start;
+}
+
 void *kmalloc(size_t size) {
   if (kheap_start == 0) {
-    kheap_start = (uint32_t)&end + 0x1000;
-    kheap_current = kheap_start;
+    kheap_set_start((uint32_t)&end + 0x1000);
   }
 
   // Alinhamento simples (4 bytes)
@@ -26,8 +33,7 @@ void *kmalloc(size_t size) {
 
 void *kmalloc_a(size_t size) {
   if (kheap_start == 0) {
-    kheap_start = (uint32_t)&end + 0x1000;
-    kheap_current = kheap_start;
+    kheap_set_start((uint32_t)&end + 0x1000);
   }
 
   // Alinhamento de página (4096 bytes)

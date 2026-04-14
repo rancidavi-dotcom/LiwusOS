@@ -36,5 +36,9 @@ typedef struct {
 uint16_t net_checksum(void *data, int len);
 void netstack_send_ipv4(uint32_t dest_ip, uint8_t proto, void *data,
                         uint16_t len);
+uint32_t net_resolve_host(const char *host);
+void netstack_send_ping(uint32_t dest_ip);
+int netstack_ping(uint32_t dest_ip, uint32_t timeout_ticks);
+uint32_t netstack_get_my_ip(void);
 
 #endif

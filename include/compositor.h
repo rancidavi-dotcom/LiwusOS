@@ -51,6 +51,9 @@ typedef struct wl_surface {
   bool traffic_light_hover;
   int hovered_button;       // -1 none, 0 close, 1 min, 2 max
   uint32_t titlebar_height; // 40 or 52
+  int32_t restore_x, restore_y;
+  uint32_t restore_width, restore_height;
+  uint32_t min_width, min_height;
 
   /* Interactive Elements (Widgets) */
   struct wl_widget {
@@ -90,5 +93,8 @@ void wl_commit(wl_surface_t *surface);
 /* Input */
 void wl_handle_mouse(int mx, int my, bool left, bool right);
 void wl_handle_key(char key);
+int wl_list_taskbar_surfaces(wl_surface_t **out, int max_entries);
+void wl_activate_surface(wl_surface_t *surface);
+void wl_toggle_taskbar_surface(wl_surface_t *surface);
 
 #endif

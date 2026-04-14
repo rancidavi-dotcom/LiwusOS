@@ -1,0 +1,16 @@
+jcprepct.lo: jcprepct.c jinclude.h jconfig.h \
+ /os-build/sdk/libc/include/stddef.h /os-build/sdk/libc/include/stdlib.h \
+ /os-build/sdk/libc/include/stdio.h /os-build/sdk/libc/include/stdarg.h \
+ /os-build/sdk/libc/include/string.h jpeglib.h jmorecfg.h jpegint.h \
+ jerror.h
+jinclude.h:
+jconfig.h:
+/os-build/sdk/libc/include/stddef.h:
+/os-build/sdk/libc/include/stdlib.h:
+/os-build/sdk/libc/include/stdio.h:
+/os-build/sdk/libc/include/stdarg.h:
+/os-build/sdk/libc/include/string.h:
+jpeglib.h:
+jmorecfg.h:
+jpegint.h:
+jerror.h:

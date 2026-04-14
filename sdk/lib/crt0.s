@@ -27,9 +27,6 @@ _start:
     call main
     
     # Exit with return value
-    call main
-    
-    # Exit with return value
     movl %eax, %ebx
     movl $1, %eax  # SYS_EXIT
     int $0x80

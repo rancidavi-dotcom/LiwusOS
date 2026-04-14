@@ -86,4 +86,8 @@ void draw_settings_content() {
         draw_button_visual(cx + 20, cy + 200, 200, 35, "Alterar (Bloqueado)", 0x888888);
     }
 }
-void open_settings() { settings_win->visible = true; settings_win->focused = true; }
+void open_settings() {
+    if (!settings_win) init_settings();
+    settings_win->visible = true;
+    settings_win->focused = true;
+}

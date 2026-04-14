@@ -6,6 +6,7 @@
 
 /* Aloca n bytes no heap do kernel */
 void *kmalloc(size_t size);
+void kheap_set_start(uint32_t start);
 
 /* Versão que garante alinhamento em página (4KB) */
 void *kmalloc_a(size_t size);

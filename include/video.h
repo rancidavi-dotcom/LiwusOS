@@ -8,6 +8,7 @@
 extern uint32_t screen_width;
 extern uint32_t screen_height;
 extern uint32_t screen_size;
+extern uint32_t *backbuffer;
 
 typedef struct {
   int x, y, w, h;

@@ -6,6 +6,152 @@
 #include "video.h"
 
 static wl_compositor_t compositor;
+static bool is_resizing = false;
+static int resize_start_w = 0;
+static int resize_start_h = 0;
+static int resize_start_mx = 0;
+static int resize_start_my = 0;
+
+#define SHELL_BG 0xFF0B1016
+#define SHELL_BG_ALT 0xFF121A24
+#define WINDOW_BG 0xFF111821
+#define WINDOW_BORDER 0xFF263241
+#define WINDOW_TITLE_ACTIVE 0xFF18212C
+#define WINDOW_TITLE_INACTIVE 0xFF121922
+#define WINDOW_TEXT 0xFFF4F7FB
+#define WINDOW_MUTED 0xFF93A0B2
+#define WIDGET_BG 0xFF315DCC
+#define WIDGET_BG_HOVER 0xFF4475ED
+#define TITLEBAR_HEIGHT 40
+#define RESIZE_HANDLE 16
+#define WORKAREA_TOP 30
+#define WORKAREA_BOTTOM 50
+
+static void compositor_draw_modern_button(int x, int y, int w, int h,
+                                          const char *text, uint32_t color) {
+  draw_rect(x, y, w, h, color);
+  draw_rect(x, y, w, 1, WINDOW_BORDER);
+  draw_rect(x, y + h - 1, w, 1, WINDOW_BORDER);
+  draw_rect(x, y, 1, h, WINDOW_BORDER);
+  draw_rect(x + w - 1, y, 1, h, WINDOW_BORDER);
+  draw_rect(x, y + h - 1, w, 1, 0x50000000);
+  draw_string(x + 12, y + 9, text, 0xFFFFFFFF);
+}
+
+static void compositor_draw_modern_window_frame(int wx, int wy, int ww, int wh,
+                                                int title_h, bool active) {
+  uint32_t title_color = active ? WINDOW_TITLE_ACTIVE : WINDOW_TITLE_INACTIVE;
+
+  draw_rect(wx, wy, ww, wh + title_h, WINDOW_BG);
+  draw_rect(wx, wy, ww, title_h, title_color);
+  draw_rect(wx, wy, ww, 1, WINDOW_BORDER);
+  draw_rect(wx, wy, 1, wh + title_h, WINDOW_BORDER);
+  draw_rect(wx + ww - 1, wy, 1, wh + title_h, WINDOW_BORDER);
+  draw_rect(wx, wy + wh + title_h - 1, ww, 1, WINDOW_BORDER);
+  draw_rect(wx, wy + title_h - 1, ww, 1, WINDOW_BORDER);
+  draw_rect(wx, wy + title_h, ww, wh, WINDOW_BG);
+  draw_rect(wx + ww - RESIZE_HANDLE, wy + title_h + wh - 1, RESIZE_HANDLE, 1,
+            WINDOW_MUTED);
+  draw_rect(wx + ww - 1, wy + title_h + wh - RESIZE_HANDLE, 1, RESIZE_HANDLE,
+            WINDOW_MUTED);
+}
+
+static int compositor_workarea_height(void) {
+  int h = (int)compositor.screen_height - WORKAREA_TOP - WORKAREA_BOTTOM;
+  return h > 120 ? h : (int)compositor.screen_height;
+}
+
+static void compositor_focus_surface(wl_surface_t *surface) {
+  wl_surface_t *it = compositor.surfaces_head;
+  while (it) {
+    it->is_focused = false;
+    it = it->next;
+  }
+  compositor.focused_surface = surface;
+  if (surface) {
+    surface->is_focused = true;
+  }
+}
+
+static void compositor_unlink_surface(wl_surface_t *surface) {
+  if (!surface) {
+    return;
+  }
+
+  if (surface->prev) {
+    surface->prev->next = surface->next;
+  }
+  if (surface->next) {
+    surface->next->prev = surface->prev;
+  }
+  if (surface == compositor.surfaces_head) {
+    compositor.surfaces_head = surface->next;
+  }
+  if (surface == compositor.surfaces_tail) {
+    compositor.surfaces_tail = surface->prev;
+  }
+}
+
+static void compositor_raise_surface(wl_surface_t *surface) {
+  if (!surface || surface == compositor.surfaces_head) {
+    compositor_focus_surface(surface);
+    return;
+  }
+
+  compositor_unlink_surface(surface);
+  surface->prev = NULL;
+  surface->next = compositor.surfaces_head;
+  if (compositor.surfaces_head) {
+    compositor.surfaces_head->prev = surface;
+  } else {
+    compositor.surfaces_tail = surface;
+  }
+  compositor.surfaces_head = surface;
+  compositor_focus_surface(surface);
+}
+
+static void compositor_toggle_maximize(wl_surface_t *surface) {
+  if (!surface || surface->type != WL_SURFACE_TOPLEVEL) {
+    return;
+  }
+
+  if (!surface->is_maximized) {
+    surface->restore_x = surface->x;
+    surface->restore_y = surface->y;
+    surface->restore_width = surface->width;
+    surface->restore_height = surface->height;
+    surface->x = 0;
+    surface->y = WORKAREA_TOP;
+    surface->width = compositor.screen_width;
+    surface->height = compositor_workarea_height() - TITLEBAR_HEIGHT;
+    surface->is_maximized = true;
+  } else {
+    surface->x = surface->restore_x;
+    surface->y = surface->restore_y;
+    surface->width = surface->restore_width ? surface->restore_width : 640;
+    surface->height = surface->restore_height ? surface->restore_height : 400;
+    surface->is_maximized = false;
+  }
+}
+
+static bool compositor_point_in_resize_handle(wl_surface_t *surface, int mx,
+                                              int my) {
+  int title_h;
+  int handle_x;
+  int handle_y;
+
+  if (!surface || surface->type != WL_SURFACE_TOPLEVEL) {
+    return false;
+  }
+
+  title_h = TITLEBAR_HEIGHT;
+  handle_x = surface->x + (int)surface->width - RESIZE_HANDLE;
+  handle_y = surface->y + title_h + (int)surface->height - RESIZE_HANDLE;
+
+  return mx >= handle_x && my >= handle_y &&
+         mx < surface->x + (int)surface->width &&
+         my < surface->y + title_h + (int)surface->height;
+}
 
 /* --- LGX Integration --- */
 extern lg_device_t global_lg_device;
@@ -29,9 +175,11 @@ void compositor_init() {
 }
 
 void compositor_repaint() {
-  // 1. Limpar Background
   video_reset_target();
-  clear_screen(0xFF333333);
+  clear_screen(SHELL_BG);
+  draw_rect(0, 0, compositor.screen_width, 96, SHELL_BG_ALT);
+  draw_rect(0, compositor.screen_height - 120, compositor.screen_width, 120,
+            0xFF0F151D);
 
   if (!global_lg_device || !comp_cmd)
     return;
@@ -39,10 +187,15 @@ void compositor_repaint() {
   lg_command_buffer_begin_info_t begin = {true};
   lg_begin_command_buffer(comp_cmd, &begin);
   lg_image_t sw_img = lg_get_swapchain_image(global_sw, 0);
+  (void)sw_img;
 
   // Render Surfaces (Back to Front)
   wl_surface_t *s = compositor.surfaces_tail;
   while (s) {
+    if (!s->visible) {
+      s = s->prev;
+      continue;
+    }
     int wx = s->x;
     int wy = s->y;
     int ww = s->width;
@@ -50,39 +203,26 @@ void compositor_repaint() {
     int title_h = (s->type == WL_SURFACE_TOPLEVEL) ? 40 : 0;
 
     if (s->type == WL_SURFACE_TOPLEVEL) {
-      // 1. Shadow
-      draw_rect(wx + 4, wy + 4, ww, wh + title_h, 0x40000000);
-
       bool active = (s == compositor.focused_surface);
-      uint32_t bg_color = 0xFFFFFFFF;
-      uint32_t title_color = active ? 0xFFE5E5E5 : 0xFFF0F0F0;
+      compositor_draw_modern_window_frame(wx, wy, ww, wh, title_h, active);
 
-      // 2. Window Body & Titlebar
-      draw_rect(wx, wy + title_h, ww, wh, bg_color);
-      draw_rect(wx, wy, ww, title_h, title_color);
-      draw_rect(wx, wy + title_h - 1, ww, 1, 0xFFCCCCCC);
-
-      // 3. Window Title
       if (s->title[0]) {
-        int t_len = strlen(s->title) * 8;
-        int t_x = wx + (ww - t_len) / 2;
-        int t_y = wy + (title_h - 16) / 2;
-        draw_string(t_x, t_y, s->title, active ? 0xFF000000 : 0xFF888888);
+        draw_string(wx + 88, wy + 12, s->title, active ? WINDOW_TEXT : WINDOW_MUTED);
       }
 
-      // 4. Traffic Lights (Buttons)
-      int btn_y = wy + (title_h / 2);
-      int btn_r = 6;
-      int spacing = 20;
+      int btn_y = wy + 12;
+      int btn_w = 12;
+      int btn_h = 12;
+      int spacing = 18;
       int start_x = wx + 20;
 
-      uint32_t c_red = active ? 0xFFFF5F57 : 0xFFDDDDDD;
-      uint32_t c_yel = active ? 0xFFFFBD2E : 0xFFDDDDDD;
-      uint32_t c_grn = active ? 0xFF28C840 : 0xFFDDDDDD;
+      uint32_t c_red = active ? 0xFFE26767 : 0xFF495565;
+      uint32_t c_yel = active ? 0xFFD8A84F : 0xFF495565;
+      uint32_t c_grn = active ? 0xFF4FAF7A : 0xFF495565;
 
-      draw_filled_circle(start_x, btn_y, btn_r, c_red);
-      draw_filled_circle(start_x + spacing, btn_y, btn_r, c_yel);
-      draw_filled_circle(start_x + spacing * 2, btn_y, btn_r, c_grn);
+      draw_rect(start_x, btn_y, btn_w, btn_h, c_red);
+      draw_rect(start_x + spacing, btn_y, btn_w, btn_h, c_yel);
+      draw_rect(start_x + spacing * 2, btn_y, btn_w, btn_h, c_grn);
     }
 
     // 5. Content Rendering
@@ -96,15 +236,10 @@ void compositor_repaint() {
     for (int i = 0; i < s->widget_count; i++) {
       int bx = wx + s->widgets[i].x;
       int by = wy + title_h + s->widgets[i].y;
-      uint32_t color = s->widgets[i].hovered ? 0xFF888888 : s->widgets[i].color;
-      draw_rect(bx, by, s->widgets[i].w, s->widgets[i].h, color);
-      draw_rect(bx, by, s->widgets[i].w, 1, 0xC0FFFFFF);
-      draw_rect(bx, by + s->widgets[i].h - 1, s->widgets[i].w, 1, 0x80000000);
-
-      int tw = strlen(s->widgets[i].text) * 8;
-      int tx = bx + (s->widgets[i].w - tw) / 2;
-      int ty = by + (s->widgets[i].h - 16) / 2;
-      draw_string(tx, ty, s->widgets[i].text, 0xFFFFFF);
+      uint32_t color = s->widgets[i].hovered ? WIDGET_BG_HOVER : s->widgets[i].color;
+      compositor_draw_modern_button(bx, by, s->widgets[i].w, s->widgets[i].h,
+                                    s->widgets[i].text,
+                                    color ? color : WIDGET_BG);
     }
 
     s = s->prev;
@@ -130,6 +265,10 @@ wl_surface_t *wl_create_surface(uint32_t w, uint32_t h,
   s->width = w;
   s->height = h;
   s->type = type;
+  s->visible = true;
+  s->titlebar_height = TITLEBAR_HEIGHT;
+  s->min_width = 220;
+  s->min_height = 140;
 
   if (type == WL_SURFACE_BACKGROUND) {
     if (!compositor.surfaces_tail) {
@@ -151,7 +290,7 @@ wl_surface_t *wl_create_surface(uint32_t w, uint32_t h,
       compositor.surfaces_head = s;
       s->prev = NULL;
     }
-    compositor.focused_surface = s;
+    compositor_focus_surface(s);
   }
   return s;
 }
@@ -159,8 +298,6 @@ wl_surface_t *wl_create_surface(uint32_t w, uint32_t h,
 void wl_attach_buffer(wl_surface_t *surface, wl_buffer_t *buffer) {
   if (surface) {
     surface->current_buffer = buffer;
-    surface->width = buffer->width;
-    surface->height = buffer->height;
   }
 }
 
@@ -182,6 +319,10 @@ void wl_handle_mouse(int mx, int my, bool left, bool right) {
 
   // Hit Test (Consider Titlebar)
   while (s) {
+    if (!s->visible) {
+      s = s->next;
+      continue;
+    }
     int th = (s->type == WL_SURFACE_TOPLEVEL) ? 40 : 0;
     if (mx >= s->x && mx < s->x + (int)s->width && my >= s->y &&
         my < s->y + (int)s->height + th) {
@@ -193,23 +334,24 @@ void wl_handle_mouse(int mx, int my, bool left, bool right) {
 
   compositor.mouse_focus = hit;
 
+  if (left && hit) {
+    compositor_raise_surface(hit);
+  }
+
   // Drag Logic (Stateful)
   if (left) {
     if (!is_dragging && hit && hit->type == WL_SURFACE_TOPLEVEL) {
       int ryc = my - hit->y;
-      if (ryc >= 0 && ryc < 40 && !hit->traffic_light_hover) {
+      if (!hit->is_maximized &&
+          compositor_point_in_resize_handle(hit, mx, my)) {
+        is_resizing = true;
+        resize_start_w = (int)hit->width;
+        resize_start_h = (int)hit->height;
+        resize_start_mx = mx;
+        resize_start_my = my;
+      } else if (ryc >= 0 && ryc < 40 && !hit->traffic_light_hover &&
+                 !hit->is_maximized) {
         is_dragging = true;
-        compositor.focused_surface = hit;
-        // Bring to Front logic... (moved here to happen once at start of drag)
-        if (hit != compositor.surfaces_head) {
-            if (hit->prev) hit->prev->next = hit->next;
-            if (hit->next) hit->next->prev = hit->prev;
-            if (hit == compositor.surfaces_tail) compositor.surfaces_tail = hit->prev;
-            hit->next = compositor.surfaces_head;
-            hit->prev = NULL;
-            compositor.surfaces_head->prev = hit;
-            compositor.surfaces_head = hit;
-        }
       }
     }
 
@@ -217,18 +359,33 @@ void wl_handle_mouse(int mx, int my, bool left, bool right) {
       compositor.focused_surface->x += (mx - last_mx);
       compositor.focused_surface->y += (my - last_my);
       compositor_repaint();
+    } else if (is_resizing && compositor.focused_surface) {
+      int new_w = resize_start_w + (mx - resize_start_mx);
+      int new_h = resize_start_h + (my - resize_start_my);
+
+      if (new_w < (int)compositor.focused_surface->min_width) {
+        new_w = compositor.focused_surface->min_width;
+      }
+      if (new_h < (int)compositor.focused_surface->min_height) {
+        new_h = compositor.focused_surface->min_height;
+      }
+
+      compositor.focused_surface->width = (uint32_t)new_w;
+      compositor.focused_surface->height = (uint32_t)new_h;
+      compositor_repaint();
     }
   } else {
     is_dragging = false;
+    is_resizing = false;
   }
 
   // Button Hover Detection (Only if not dragging)
-  if (!is_dragging) {
+  if (!is_dragging && !is_resizing) {
     wl_surface_t *it = compositor.surfaces_head;
     while (it) {
       it->traffic_light_hover = false;
       it->hovered_button = -1;
-      if (it->type == WL_SURFACE_TOPLEVEL) {
+      if (it->visible && it->type == WL_SURFACE_TOPLEVEL) {
         int rx = mx - it->x;
         int ry = my - it->y;
         if (rx >= 10 && rx <= 70 && ry >= 0 && ry <= 40) {
@@ -243,7 +400,7 @@ void wl_handle_mouse(int mx, int my, bool left, bool right) {
   }
 
   // Widget Interaction (Only if not dragging)
-  if (!is_dragging && hit) {
+  if (!is_dragging && !is_resizing && hit) {
     int th = (hit->type == WL_SURFACE_TOPLEVEL) ? 40 : 0;
     int rx = mx - hit->x;
     int ry = my - (hit->y + th);
@@ -262,14 +419,20 @@ void wl_handle_mouse(int mx, int my, bool left, bool right) {
   }
 
   // Button Click Logic (Only if not dragging)
-  if (!is_dragging && left && hit && hit->traffic_light_hover && hit->hovered_button != -1) {
+  if (!is_dragging && !is_resizing && left && hit && hit->traffic_light_hover &&
+      hit->hovered_button != -1) {
       if (hit->hovered_button == 0) { // Close
-        if (hit->prev) hit->prev->next = hit->next;
-        if (hit->next) hit->next->prev = hit->prev;
-        if (hit == compositor.surfaces_head) compositor.surfaces_head = hit->next;
-        if (hit == compositor.surfaces_tail) compositor.surfaces_tail = hit->prev;
-        if (compositor.focused_surface == hit) compositor.focused_surface = compositor.surfaces_head;
+        compositor_unlink_surface(hit);
+        compositor_focus_surface(compositor.surfaces_head);
         kfree(hit);
+        compositor_repaint();
+      } else if (hit->hovered_button == 1) { // Minimize
+        hit->visible = false;
+        hit->is_minimized = true;
+        compositor_focus_surface(compositor.surfaces_head);
+        compositor_repaint();
+      } else if (hit->hovered_button == 2) { // Maximize / restore
+        compositor_toggle_maximize(hit);
         compositor_repaint();
       }
   }
@@ -283,18 +446,53 @@ void wl_handle_key(char key) {
   if (check_alt_f4() && compositor.focused_surface &&
       compositor.focused_surface->type == WL_SURFACE_TOPLEVEL) {
     wl_surface_t *tc = compositor.focused_surface;
-    if (tc->prev)
-      tc->prev->next = tc->next;
-    if (tc->next)
-      tc->next->prev = tc->prev;
-    if (tc == compositor.surfaces_head)
-      compositor.surfaces_head = tc->next;
-    if (tc == compositor.surfaces_tail)
-      compositor.surfaces_tail = tc->prev;
-    compositor.focused_surface = compositor.surfaces_head;
+    compositor_unlink_surface(tc);
+    compositor_focus_surface(compositor.surfaces_head);
     kfree(tc);
     compositor_repaint();
     return;
   }
   (void)key;
+}
+
+int wl_list_taskbar_surfaces(wl_surface_t **out, int max_entries) {
+  wl_surface_t *s = compositor.surfaces_tail;
+  int count = 0;
+
+  if (!out || max_entries <= 0) {
+    return 0;
+  }
+
+  while (s && count < max_entries) {
+    if (s->type == WL_SURFACE_TOPLEVEL) {
+      out[count++] = s;
+    }
+    s = s->prev;
+  }
+
+  return count;
+}
+
+void wl_activate_surface(wl_surface_t *surface) {
+  if (!surface) {
+    return;
+  }
+
+  surface->visible = true;
+  surface->is_minimized = false;
+  compositor_raise_surface(surface);
+}
+
+void wl_toggle_taskbar_surface(wl_surface_t *surface) {
+  if (!surface) {
+    return;
+  }
+
+  if (surface->visible && surface == compositor.focused_surface) {
+    surface->visible = false;
+    surface->is_minimized = true;
+    compositor_focus_surface(compositor.surfaces_head);
+  } else {
+    wl_activate_surface(surface);
+  }
 }

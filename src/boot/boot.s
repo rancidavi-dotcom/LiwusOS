@@ -2,8 +2,7 @@
 
 .set ALIGN,    1<<0
 .set MEMINFO,  1<<1
-.set VIDEO_MODE, 1<<2
-.set FLAGS,    ALIGN | MEMINFO | VIDEO_MODE
+.set FLAGS,    ALIGN | MEMINFO
 .set MAGIC,    0x1BADB002
 .set CHECKSUM, -(MAGIC + FLAGS)
 
@@ -12,11 +11,6 @@
 .long MAGIC
 .long FLAGS
 .long CHECKSUM
-.long 0, 0, 0, 0, 0
-.long 0          /* mode_type */
-.long 1024       /* width */
-.long 768        /* height */
-.long 32         /* depth */
 
 .global tss_flush
 tss_flush:

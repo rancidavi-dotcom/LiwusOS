@@ -1,0 +1,10 @@
+        serial_print("Syscall desconhecida: ");
+        serial_print_hex(call_num);
+        serial_print("\n");
+        break;
+  }
+}
+
+void init_syscalls() {
+  memset(fd_table, 0, sizeof(fd_table));
+}

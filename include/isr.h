@@ -12,7 +12,7 @@ typedef struct {
 } registers_t;
 
 /* Handlers */
-void isr_handler(registers_t regs);
+void isr_handler(registers_t *regs);
 uint32_t irq_handler(uint32_t esp);
 
 #endif

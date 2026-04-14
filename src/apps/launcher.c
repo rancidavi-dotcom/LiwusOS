@@ -1,14 +1,20 @@
 #include "launcher.h"
 #include "book.h"
 #include "browser.h"
+#include "editor.h"
 #include "kheap.h"
 #include "string.h"
+#include "syscall.h"
 #include "terminal.h"
 #include "video.h"
 
 static widget_t *launcher_win = NULL;
 static widget_t **system_apps;
 static int system_app_count;
+
+static void launch_program(const char *name) {
+  launch_initrd_program(name);
+}
 
 void on_app_item_click(void *widget, void *surface) {
   (void)surface;
@@ -20,6 +26,10 @@ void on_app_item_click(void *widget, void *surface) {
     open_book();
   } else if (strstr(btn->text, "Browser") || strstr(btn->text, "Web")) {
     open_browser();
+  } else if (strstr(btn->text, "Liwim") || strstr(btn->text, "Editor")) {
+    open_editor();
+  } else if (strstr(btn->text, "Doom")) {
+    launch_program("doomgeneric");
   }
 
   launcher_win->visible = false;
@@ -43,6 +53,10 @@ widget_t *init_launcher(widget_t *all_apps[], int count) {
              create_button("> Settings", 10, 90, 380, 35, on_app_item_click));
   add_widget(launcher_win, create_button("> Web Browser", 10, 130, 380, 35,
                                          on_app_item_click));
+  add_widget(launcher_win,
+             create_button("> Liwim Editor", 10, 170, 380, 35, on_app_item_click));
+  add_widget(launcher_win,
+             create_button("> Doom", 10, 210, 380, 35, on_app_item_click));
 
   return launcher_win;
 }

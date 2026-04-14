@@ -1,75 +1,36 @@
 #ifndef LIBLIW_H
 #define LIBLIW_H
 
-// LiwusOS Standard Library
-// Compatible with GCC cross-compiler or -m32 host compiler
+#include <stdint.h>
+#include <stddef.h>
 
-#define NULL ((void *)0)
+// Estruturas de Framebuffer
+typedef struct {
+    uint32_t *address;
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch;
+    uint8_t bpp;
+} liw_fb_info_t;
 
-typedef unsigned int size_t;
-typedef unsigned int uint32_t;
-typedef int int32_t;
-typedef unsigned short uint16_t;
-typedef unsigned char uint8_t;
+// API Grafica Base
+void liw_get_fb_info(liw_fb_info_t *info);
+void liw_present_fb(void);
+void liw_draw_pixel(int x, int y, uint32_t color);
 
-// Syscall Numbers
-#define SYS_EXIT 1
-#define SYS_READ 3
-#define SYS_WRITE 4
-#define SYS_OPEN 5
-#define SYS_CLOSE 6
-#define SYS_EXECVE 11
-#define SYS_SOCKET 12
-#define SYS_CONNECT 13
-#define SYS_SEND 14
-#define SYS_RECV 15
-#define SYS_SAVE_FILE 16
+// Teclado
+int liw_key_down(int key);
+int liw_get_key_event(void *ev);
 
-// Syscall Wrappers (Inline Assembly)
-static inline int syscall0(int num) {
-  int ret;
-  asm volatile("int $0x80" : "=a"(ret) : "a"(num));
-  return ret;
-}
+// Sistema
+int liw_get_ticks(void);
+void print(const char *s);
+void print_int(int n);
 
-static inline int syscall1(int num, int p1) {
-  int ret;
-  asm volatile("int $0x80" : "=a"(ret) : "a"(num), "b"(p1));
-  return ret;
-}
-
-static inline int syscall2(int num, int p1, int p2) {
-  int ret;
-  asm volatile("int $0x80" : "=a"(ret) : "a"(num), "b"(p1), "c"(p2));
-  return ret;
-}
-
-static inline int syscall3(int num, int p1, int p2, int p3) {
-  int ret;
-  asm volatile("int $0x80" : "=a"(ret) : "a"(num), "b"(p1), "c"(p2), "d"(p3));
-  return ret;
-}
-
-static inline int syscall4(int num, int p1, int p2, int p3, int p4) {
-  int ret;
-  asm volatile("int $0x80"
-               : "=a"(ret)
-               : "a"(num), "b"(p1), "c"(p2), "d"(p3), "S"(p4));
-  return ret;
-}
-
-// Standard Functions
-static inline void exit(int status) {
-  syscall1(SYS_EXIT, status);
-  while (1)
-    ;
-}
-
-static inline int print(const char *str) {
-  int len = 0;
-  while (str[len])
-    len++;
-  return syscall3(SYS_WRITE, 1, (int)str, len);
-}
+// Syscalls brutos
+int syscall_fork(void);
+int syscall_waitpid(int pid, int *status, int options);
+void syscall_exit(int status);
+uint32_t syscall_brk(uint32_t addr);
 
 #endif

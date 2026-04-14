@@ -13,11 +13,13 @@ char *strcat(char *dest, const char *src);
 char *strstr(const char *haystack, const char *needle);
 void *memcpy(void *dest, const void *src, size_t n);
 void *memmove(void *dest, const void *src, size_t n);
+int memcmp(const void *s1, const void *s2, size_t n);
 void *memset(void *s, int c, size_t n);
 void *memset32(void *s, uint32_t val, size_t n);
 void hex_to_str(uint8_t val, char *out);
 void int_to_str(uint32_t n, char *out);
 char *strchr(const char *s, int c);
+char *strrchr(const char *s, int c);
 char *itoa(int value, char *str, int base);
 
 #endif

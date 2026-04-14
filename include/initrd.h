@@ -23,7 +23,9 @@ struct tar_header {
     char prefix[155];
 } __attribute__((packed));
 
-void init_initrd(uint32_t location);
+#include "vfs.h"
+
+fs_node_t* init_initrd(uint32_t location, uint32_t size);
 void* initrd_get_file(const char* name, uint32_t* size);
 char* initrd_list_files(int index);
 

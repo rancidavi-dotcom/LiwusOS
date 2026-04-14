@@ -22,7 +22,7 @@ int ata_wait_drq(uint16_t bus) {
 
 int ata_read_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffer) {
     /* Seleciona o drive */
-    outb(bus + 6, drive | ((lba >> 24) & 0x0F));
+    outb(bus + 6, 0x40 | drive | ((lba >> 24) & 0x0F));
     
     /* Pequeno atraso para o hardware reagir */
     for(int i=0; i<100; i++) inb(bus + ATA_REG_STATUS);
@@ -43,7 +43,7 @@ int ata_read_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffer)
 }
 
 void ata_write_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffer) {
-    outb(bus + 6, drive | ((lba >> 24) & 0x0F));
+    outb(bus + 6, 0x40 | drive | ((lba >> 24) & 0x0F));
     outb(bus + 2, 1);
     outb(bus + 3, (uint8_t)lba);
     outb(bus + 4, (uint8_t)(lba >> 8));
@@ -56,4 +56,8 @@ void ata_write_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffe
     for (int i = 0; i < 256; i++) {
         outw(bus, buffer[i]);
     }
+
+    /* Flush cache to persist writes before the next read/mount */
+    outb(bus + 7, 0xE7);
+    ata_wait_bsy(bus);
 }

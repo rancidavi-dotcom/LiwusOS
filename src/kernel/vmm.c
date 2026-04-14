@@ -20,6 +20,7 @@ void vmm_map_page(void *phys, void *virt, uint32_t flags) {
   page_directory_t *dir = current_directory;
   uint32_t pd_index = (uint32_t)virt >> 22;
   uint32_t pt_index = ((uint32_t)virt >> 12) & 0x03FF;
+  uint32_t *pd = (uint32_t *)dir->physicalAddr;
 
   if (!dir->tablesVirtual[pd_index]) {
     uint32_t *new_table = (uint32_t *)kmalloc_a(4096);
@@ -28,7 +29,16 @@ void vmm_map_page(void *phys, void *virt, uint32_t flags) {
 
     dir->tablesVirtual[pd_index] = new_table;
     dir->tablesPhysical[pd_index] = phys_table | 0x7; // PRESENT, RW, US
-    ((uint32_t*)dir->physicalAddr)[pd_index] = phys_table | 0x7;
+    pd[pd_index] = phys_table | 0x7;
+  } else {
+    uint32_t pd_flags = 0x1;
+    if (flags & 0x2) {
+      pd_flags |= 0x2;
+    }
+    if (flags & 0x4) {
+      pd_flags |= 0x4;
+    }
+    pd[pd_index] |= pd_flags;
   }
 
   uint32_t *table = dir->tablesVirtual[pd_index];
@@ -37,7 +47,7 @@ void vmm_map_page(void *phys, void *virt, uint32_t flags) {
   asm volatile("invlpg (%0)" ::"r" (virt) : "memory");
 }
 
-void init_vmm() {
+void init_vmm(uint32_t memory_size) {
   kernel_directory = (page_directory_t *)kmalloc(sizeof(page_directory_t));
   memset(kernel_directory, 0, sizeof(page_directory_t));
 
@@ -47,7 +57,7 @@ void init_vmm() {
 
   uint32_t *pd = (uint32_t *)kernel_directory->physicalAddr;
 
-  for (int i = 0; i < 64 * 1024 * 1024; i += 4096) {
+  for (uint32_t i = 0; i < memory_size; i += 4096) {
     uint32_t pd_index = i >> 22;
     uint32_t pt_index = (i >> 12) & 0x03FF;
 

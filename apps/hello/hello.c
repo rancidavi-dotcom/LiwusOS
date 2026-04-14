@@ -1,8 +1,8 @@
-#include "libliw.h"
+#include <stdio.h>
 
 int main() {
-  print("=========================\n");
-  print(" Hello from Liwus! \n");
-  print("=========================\n");
+  printf("=========================\n");
+  printf(" Hello from Liwus libc! \n");
+  printf("=========================\n");
   return 0;
 }

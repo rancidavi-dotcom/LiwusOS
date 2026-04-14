@@ -68,7 +68,9 @@ isr_common_stub:
     mov %ax, %es
     mov %ax, %fs
     mov %ax, %gs
+    push %esp
     call isr_handler
+    add $4, %esp
     pop %eax
     mov %ax, %ds
     mov %ax, %es

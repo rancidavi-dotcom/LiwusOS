@@ -1,12 +1,40 @@
 #include "http.h"
 #include "kheap.h"
 #include "netstack.h"
+#include "serial.h"
 #include "string.h"
 #include "tcp.h"
 #include "video.h"
 
+static void http_log(const char *msg) { serial_print(msg); }
+
+static void http_log_u32(uint32_t value) {
+  char num[16];
+  itoa((int)value, num, 10);
+  serial_print(num);
+}
+
+static void http_log_ip(uint32_t ip) {
+  char num[16];
+
+  itoa((int)(ip & 0xFF), num, 10);
+  serial_print(num);
+  serial_print(".");
+  itoa((int)((ip >> 8) & 0xFF), num, 10);
+  serial_print(num);
+  serial_print(".");
+  itoa((int)((ip >> 16) & 0xFF), num, 10);
+  serial_print(num);
+  serial_print(".");
+  itoa((int)((ip >> 24) & 0xFF), num, 10);
+  serial_print(num);
+}
+
 // Parse URL: http://host[:port]/path
 int http_parse_url(const char *url, char *host, char *path, uint16_t *port) {
+  http_log("[http] parse_url: ");
+  http_log(url);
+  http_log("\n");
   *port = 80; // Default HTTP port
 
   // Skip "http://" if present
@@ -43,6 +71,14 @@ int http_parse_url(const char *url, char *host, char *path, uint16_t *port) {
     strcpy(path, "/");
   }
 
+  http_log("[http] host=");
+  http_log(host);
+  http_log(" port=");
+  http_log_u32(*port);
+  http_log(" path=");
+  http_log(path);
+  http_log("\n");
+
   return 0;
 }
 
@@ -53,17 +89,25 @@ int http_get(const char *host, uint16_t port, const char *path, char *response,
   extern uint32_t net_resolve_host(const char *host);
   uint32_t ip = net_resolve_host(host);
 
+  http_log("[http] resolve ");
+  http_log(host);
+  http_log(" -> ");
+  http_log_ip(ip);
+  http_log("\n");
+
   if (ip == 0) {
-    draw_string(10, 80, "DNS Resolve Failed", 0xFF0000);
+    http_log("[http] resolve failed\n");
     return -1;
   }
 
   // Connect via TCP
+  http_log("[http] tcp_connect begin\n");
   tcp_socket_t *sock = tcp_connect(ip, port);
   if (!sock) {
-    draw_string(10, 80, "TCP Connect Failed", 0xFF0000);
+    http_log("[http] tcp_connect failed\n");
     return -1;
   }
+  http_log("[http] tcp_connect ok\n");
 
   // Build HTTP request
   char request[512];
@@ -73,16 +117,23 @@ int http_get(const char *host, uint16_t port, const char *path, char *response,
   strcat(request, host);
   strcat(request, "\r\nConnection: close\r\n\r\n");
 
+  http_log("[http] request bytes=");
+  http_log_u32((uint32_t)strlen(request));
+  http_log("\n");
+
   // Send request
   tcp_send(sock, (const uint8_t *)request, strlen(request));
+  http_log("[http] request sent\n");
 
   // Receive response
   uint32_t total = 0;
   int received;
-  char chunk[1024];
+  uint8_t *chunk = (uint8_t *)kmalloc(1024);
 
-  while ((received = tcp_receive(sock, (uint8_t *)chunk, sizeof(chunk) - 1)) >
-         0) {
+  while ((received = tcp_receive(sock, chunk, 1023)) > 0) {
+    http_log("[http] recv chunk=");
+    http_log_u32((uint32_t)received);
+    http_log("\n");
     if (total + received >= max_len - 1) {
       received = max_len - 1 - total;
     }
@@ -93,9 +144,14 @@ int http_get(const char *host, uint16_t port, const char *path, char *response,
       break;
   }
   response[total] = '\0';
+  kfree(chunk);
 
   // Close connection
+  http_log("[http] total bytes=");
+  http_log_u32(total);
+  http_log("\n");
   tcp_close(sock);
+  http_log("[http] tcp_close sent\n");
 
   // Skip HTTP headers (find \r\n\r\n)
   char *body = strstr(response, "\r\n\r\n");
@@ -104,8 +160,13 @@ int http_get(const char *host, uint16_t port, const char *path, char *response,
     // Move body to start of buffer
     int body_len = strlen(body);
     memmove(response, body, body_len + 1);
+    http_log("[http] body bytes=");
+    http_log_u32((uint32_t)body_len);
+    http_log("\n");
     return body_len;
   }
+
+  http_log("[http] header separator not found\n");
 
   return total;
 }
@@ -117,6 +178,7 @@ int http_get_url(const char *url, char *response, uint32_t max_len) {
   uint16_t port;
 
   if (http_parse_url(url, host, path, &port) < 0) {
+    http_log("[http] parse_url failed\n");
     return -1;
   }
 

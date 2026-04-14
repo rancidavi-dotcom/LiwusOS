@@ -18,3 +18,4 @@ sdk/tools/liw-builder
 .DS_Store
 *.swp
 *.bak
+.aider*
