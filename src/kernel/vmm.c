@@ -143,7 +143,7 @@ uint32_t sys_brk(uint32_t addr) {
       vmm_map_page(phys, (void *)p, 0x7);
       memset((void *)p, 0, 4096);
     }
-    current_task->heap_end = addr;
+    current_task->heap_end = end;
   }
   return current_task->heap_end;
 }

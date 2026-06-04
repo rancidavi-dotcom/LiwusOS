@@ -49,7 +49,7 @@ static uint32_t initrd_read(fs_node_t *node, uint32_t offset, uint32_t size, uin
 }
 
 static struct dirent *initrd_readdir(fs_node_t *node, uint32_t index) {
-    if (node->flags != FS_DIRECTORY) return NULL;
+    if (!(node->flags & FS_DIRECTORY)) return NULL;
 
     uint32_t address = initrd_location;
     uint32_t i = 0;
@@ -80,7 +80,7 @@ static struct dirent *initrd_readdir(fs_node_t *node, uint32_t index) {
 }
 
 static fs_node_t *initrd_finddir(fs_node_t *node, const char *name) {
-    if (node->flags != FS_DIRECTORY) return NULL;
+    if (!(node->flags & FS_DIRECTORY)) return NULL;
 
     // Caso especial para a pasta virtual house
     if (strcmp(name, "house") == 0 && strcmp(node->name, "initrd") == 0) {

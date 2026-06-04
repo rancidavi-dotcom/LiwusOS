@@ -28,7 +28,7 @@ static int input_ptr = 0;
 static char prompt_line[256] = "> ";
 static char output_text[8192] =
     "LiwusOS Shell (Wayland/LGX Port)\nDigite 'help'.\n";
-static char terminal_cwd[128] = "/house/localhost";
+static char terminal_cwd[128] = "/";
 
 char* terminal_get_cwd() {
   return terminal_cwd;
@@ -896,6 +896,7 @@ static void terminal_list_dir(const char *path) {
     if (file) kfree(file);
     i++;
   }
+  kfree(node);
 }
 
 // Helper to tokenize command
@@ -1007,7 +1008,7 @@ void exec_command_term(const char *cmd_raw) {
       kfree(node);
     }
   } else if (strcmp(cmd, "cd") == 0) {
-    const char *target = argc >= 2 ? args[1] : "/house/localhost";
+    const char *target = argc >= 2 ? args[1] : "/";
     terminal_join_filename(target, resolved_a, sizeof(resolved_a));
     
     fs_node_t *node = vfs_open(resolved_a);
@@ -1326,7 +1327,8 @@ void exec_command_term(const char *cmd_raw) {
   } else if (strcmp(cmd, "doomgeneric") == 0 || strcmp(cmd, "doom") == 0) {
     terminal_append_output("Iniciando doomgeneric...\n");
     terminal_redraw();
-    if (launch_initrd_program("doomgeneric") < 0) {
+    char *doom_argv[] = {"doomgeneric", "-iwad", "freedoom1.wad", NULL};
+    if (launch_initrd_program_argv("doomgeneric", doom_argv) < 0) {
       terminal_append_output("Falha ao iniciar doomgeneric: ");
       terminal_append_output(get_launch_last_error());
       terminal_append_output("\n");
@@ -1335,13 +1337,10 @@ void exec_command_term(const char *cmd_raw) {
     char *lua_argv[4] = {"lua", NULL, NULL, NULL};
 
     if (strcmp(cmd, "lua") == 0) {
-      if (argc < 2) {
-        terminal_append_output("Usage: lua <arquivo.lua>\n");
-        terminal_redraw();
-        return;
+      if (argc >= 2) {
+        terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
+        lua_argv[1] = resolved_a;
       }
-      terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
-      lua_argv[1] = resolved_a;
     } else {
       terminal_join_filename(cmd, resolved_a, sizeof(resolved_a));
       lua_argv[1] = resolved_a;

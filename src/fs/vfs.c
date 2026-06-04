@@ -62,13 +62,31 @@ fs_node_t* vfs_open(const char* path) {
         it = it->next;
     }
 
+    if (!best_match) {
+        it = mounts;
+        while (it) {
+            if (strcmp(it->path, "/") == 0) {
+                best_match = it;
+                max_len = 1;
+                break;
+            }
+            it = it->next;
+        }
+    }
+
     if (!best_match) return NULL;
 
     fs_node_t* current = best_match->root;
-    const char* remaining = path + max_len;
-    
+    const char* remaining;
+
+    if (strcmp(best_match->path, "/") == 0) {
+        remaining = (path[0] == '/') ? path + 1 : path;
+    } else {
+        remaining = path + max_len;
+        if (*remaining == '/') remaining++;
+    }
+
     // Se sobrar algo apos o mount point, navegamos recursivamente
-    if (*remaining == '/') remaining++;
     if (*remaining == '\0') return current;
 
     char part[128];

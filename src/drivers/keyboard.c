@@ -11,6 +11,17 @@ static char char_queue[256];
 static uint8_t char_read = 0;
 static uint8_t char_write = 0;
 
+static bool key_state[256];
+
+typedef struct {
+  uint8_t scancode;
+  int pressed;
+} key_event_t;
+
+static key_event_t event_queue[64];
+static uint8_t event_read = 0;
+static uint8_t event_write = 0;
+
 // Mapeamento ABNT2 (PS/2 Set 1) com inicializadores explícitos para precisão total
 static unsigned char kbd_abnt2[128] = {
     [0x01] = 27,   [0x02] = '1',  [0x03] = '2',  [0x04] = '3',  [0x05] = '4',
@@ -48,6 +59,15 @@ static void push_char(char ch) {
   }
 }
 
+static void push_event(uint8_t scancode, int pressed) {
+  uint8_t next = (uint8_t)(event_write + 1);
+  if (next != event_read) {
+    event_queue[event_write].scancode = scancode;
+    event_queue[event_write].pressed = pressed;
+    event_write = next;
+  }
+}
+
 void keyboard_handler() {
   uint8_t scancode = inb(0x60);
 
@@ -58,17 +78,25 @@ void keyboard_handler() {
 
   if (scancode & 0x80) { // Key Released
     uint8_t released = scancode & 0x7F;
+    key_state[released] = false;
     if (released == 0x2A || released == 0x36) shift_pressed = false;
     if (released == 0x38) altgr_pressed = false;
+    push_event(released, 0);
     extended = false;
   } else { // Key Pressed
+    key_state[scancode] = true;
+    if (extended) {
+      push_event(scancode | 0x80, 1);
+      extended = false;
+      return;
+    }
     if (scancode == 0x2A || scancode == 0x36) {
       shift_pressed = true;
     } else if (scancode == 0x38) {
       altgr_pressed = true;
     } else {
       char key = 0;
-      
+
       // Casos especiais de scancodes ABNT2 fixos
       if (scancode == 0x73) key = shift_pressed ? '?' : '/';
       else if (scancode == 0x56) key = shift_pressed ? '|' : '\\';
@@ -81,6 +109,7 @@ void keyboard_handler() {
         push_char(key);
       }
     }
+    push_event(scancode, 1);
     extended = false;
   }
 }
@@ -92,8 +121,17 @@ int keyboard_pop_char(char *out) {
   return 1;
 }
 
+int keyboard_get_event(void *ev) {
+  if (event_read == event_write) return 0;
+  key_event_t *e = (key_event_t *)ev;
+  e->scancode = event_queue[event_read].scancode;
+  e->pressed = event_queue[event_read].pressed;
+  event_read = (uint8_t)(event_read + 1);
+  return 1;
+}
+
 char get_last_key() { char k = last_key; last_key = 0; return k; }
 bool check_ctrl_c() { return false; }
 bool check_alt_f4() { return false; }
 bool check_win_key() { return false; }
-bool keyboard_is_pressed(uint8_t s) { (void)s; return false; }
+bool keyboard_is_pressed(uint8_t s) { return key_state[s]; }

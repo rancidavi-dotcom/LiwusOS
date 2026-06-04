@@ -11,6 +11,6 @@ bool check_ctrl_c(void);
 bool check_alt_f4(void);
 bool check_win_key(void);
 bool keyboard_is_pressed(uint8_t scancode);
-int keyboard_pop_event(uint8_t *scancode, bool *pressed);
+int keyboard_get_event(void *ev);
 
 #endif

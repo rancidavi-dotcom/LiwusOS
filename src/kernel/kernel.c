@@ -145,7 +145,7 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbi) {
   vga_init();
   vga_puts("LiwusOS Kernel Booting (Text Mode Only)...\n");
 
-  // init_video(mbi);
+  init_video(mbi);
 
   pci_init();
   net_init();

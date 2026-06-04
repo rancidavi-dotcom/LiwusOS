@@ -1,4 +1,5 @@
 #include <lvgl.h>
+#include <themes/lv_theme_private.h>
 
 static lv_theme_t lvgl_null_theme;
 static bool lvgl_null_theme_init = false;

@@ -74,11 +74,12 @@ void* sbrk(intptr_t increment) {
     }
     void* old_brk = current_brk;
     void* new_brk = (void*)((uintptr_t)current_brk + increment);
-    if (__liw_sys_brk(new_brk) == (void*)-1) {
+    void* kernel_brk = __liw_sys_brk(new_brk);
+    if (kernel_brk == (void*)-1 || (uintptr_t)kernel_brk < (uintptr_t)new_brk) {
         errno = ENOMEM;
         return (void*)-1;
     }
-    current_brk = new_brk;
+    current_brk = kernel_brk;
     return old_brk;
 }
 
@@ -102,5 +103,5 @@ void __liw_sys_get_fb_info(void* info) {
 }
 
 void __liw_sys_present_fb() {
-    __asm__ volatile ("int $0x80" : : "a"(13));
+    __asm__ volatile ("int $0x80" : : "a"(13), "b"(0), "c"(0), "d"(0), "S"(0), "D"(0));
 }

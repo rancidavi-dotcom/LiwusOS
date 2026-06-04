@@ -537,7 +537,7 @@ static struct dirent *fat32_readdir(fs_node_t *node, uint32_t index) {
   int entries;
   int current = 0;
 
-  if (!fat32_mounted || node->flags != FS_DIRECTORY) {
+  if (!fat32_mounted || !(node->flags & FS_DIRECTORY)) {
     return NULL;
   }
 

@@ -10,11 +10,38 @@ extern unsigned int __liw_sys_get_ticks(void);
 
 static struct lconv global_lconv = {"."};
 
-int setjmp(jmp_buf env) { return __builtin_setjmp(env); }
+__attribute__((naked)) int setjmp(jmp_buf env) {
+  (void)env;
+  __asm__ volatile(
+      "mov 4(%esp), %edx\n"
+      "mov %ebx, 0(%edx)\n"
+      "mov %esi, 4(%edx)\n"
+      "mov %edi, 8(%edx)\n"
+      "mov %ebp, 12(%edx)\n"
+      "lea 4(%esp), %ecx\n"
+      "mov %ecx, 16(%edx)\n"
+      "mov (%esp), %ecx\n"
+      "mov %ecx, 20(%edx)\n"
+      "xor %eax, %eax\n"
+      "ret\n");
+}
 
-void longjmp(jmp_buf env, int val) {
+__attribute__((naked)) void longjmp(jmp_buf env, int val) {
+  (void)env;
   (void)val;
-  __builtin_longjmp(env, 1);
+  __asm__ volatile(
+      "mov 4(%esp), %edx\n"
+      "mov 8(%esp), %eax\n"
+      "test %eax, %eax\n"
+      "jnz 1f\n"
+      "mov $1, %eax\n"
+      "1:\n"
+      "mov 0(%edx), %ebx\n"
+      "mov 4(%edx), %esi\n"
+      "mov 8(%edx), %edi\n"
+      "mov 12(%edx), %ebp\n"
+      "mov 16(%edx), %esp\n"
+      "jmp *20(%edx)\n");
 }
 
 char *setlocale(int category, const char *locale) {

@@ -10,12 +10,11 @@ OUTPUT_FILE="repo/${APP_NAME}.liwpkg"
 
 echo "Compilando $SOURCE_FILE para $OUTPUT_FILE..."
 
-# Usa o docker para rodar o compilador de 32 bits
-sudo docker run --rm -v "$(pwd)":/os-build liwus-builder bash -c "
+docker run --rm -v "$(pwd)":/os-build liwus-builder bash -c "
     i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra \
     -Isdk/include -Isdk/libc/include -nostdlib -static \
-    sdk/lib/crt0.s $SOURCE_FILE sdk/lib/libliwc.a \
-    -o $OUTPUT_FILE -lgcc
+    sdk/lib/crt0.s /os-build/$SOURCE_FILE sdk/lib/libliwc.a \
+    -o /os-build/$OUTPUT_FILE -lgcc
 "
 
 if [ $? -eq 0 ]; then

@@ -36,8 +36,7 @@ int main(int argc, char **argv) {
   int status;
 
   if (argc < 2 || !argv[1]) {
-    printf("LiwusOS Lua\n");
-    printf("uso: lua <arquivo.lua>\n");
+    printf("Usage: lua <arquivo.lua>\n");
     return 1;
   }
 

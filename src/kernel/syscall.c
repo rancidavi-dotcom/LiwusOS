@@ -3,17 +3,20 @@
 #include "initrd.h"
 #include "io.h"
 #include "kheap.h"
+#include "keyboard.h"
 #include "netstack.h"
 #include "serial.h"
 #include "string.h"
 #include "task.h"
 #include "tcp.h"
+#include "timer.h"
 #include "video.h"
 #include "vmm.h"
 #include "vfs.h"
 
 extern uint32_t elf_load_file(void *elf_data);
 extern int graphics_exclusive_active(void);
+extern void graphics_exclusive_acquire(int pid);
 extern void graphics_exclusive_release(int pid);
 extern task_t *current_task;
 
@@ -42,7 +45,6 @@ int sys_execve(const char *filename, char *const argv[], char *const envp[]) {
     return -1;
   }
 
-  // 1. Montar 64KB de stack em VA alta de userland (evita colisao com paginas do kernel)
   uint32_t stack_size = 64 * 1024;
   uint32_t stack_top = 0xC0000000;
   uint32_t stack_base = stack_top - stack_size;
@@ -52,7 +54,6 @@ int sys_execve(const char *filename, char *const argv[], char *const envp[]) {
     memset((void *)vaddr, 0, 4096);
   }
 
-  // 2. Preparar ponteiro da pilha (topo)
   uint8_t *esp_bytes = (uint8_t *)stack_top;
 
   int argc = 0;
@@ -60,7 +61,6 @@ int sys_execve(const char *filename, char *const argv[], char *const envp[]) {
     while (argv[argc] && argc < (int)max_args) argc++;
   }
 
-  // 3. Copiar strings dos argumentos para o topo da pilha
   uint32_t arg_ptrs[16];
   for (int i = 0; i < argc; i++) {
     size_t len = strlen(argv[i]) + 1;
@@ -69,23 +69,18 @@ int sys_execve(const char *filename, char *const argv[], char *const envp[]) {
     arg_ptrs[i] = (uint32_t)esp_bytes;
   }
 
-  // Alinhamento de 16 bytes (padrão ABI)
   uint32_t *esp = (uint32_t *)((uint32_t)esp_bytes & ~0xF);
 
-  // 4. Montar o array argv (ponteiros para as strings que acabamos de copiar)
-  esp--; *esp = 0; // NULL terminator
+  esp--; *esp = 0;
   for (int i = argc - 1; i >= 0; i--) {
     esp--; *esp = arg_ptrs[i];
   }
   uint32_t argv_ptr_addr = (uint32_t)esp;
 
-  // 5. Colocar argumentos para o main(int argc, char **argv)
-  // O crt0.s fará 'call main', então a pilha deve estar pronta para isso.
-  esp--; *esp = 0;            // envp (NULL)
-  esp--; *esp = argv_ptr_addr; // argv
-  esp--; *esp = (uint32_t)argc; // argc
+  esp--; *esp = 0;
+  esp--; *esp = argv_ptr_addr;
+  esp--; *esp = (uint32_t)argc;
 
-  // Debug Serial
   serial_print("EXEC: "); serial_print(filename);
   serial_print(" argc="); char nbuf[12]; itoa(argc, nbuf, 10); serial_print(nbuf);
   serial_print("\n");
@@ -117,9 +112,9 @@ int launch_initrd_program_argv(const char *filename, char *const argv[]) {
 
 typedef struct {
   int type;
-  uint32_t base_addr; 
-  uint32_t size;      
-  uint32_t offset;    
+  uint32_t base_addr;
+  uint32_t size;
+  uint32_t offset;
   int owned_buffer;
   void *socket_ptr;
 } kfile_t;
@@ -189,50 +184,111 @@ int sys_close(int fd) {
 
 int sys_lseek(int fd, int offset, int whence) {
   if (fd < 0 || fd >= 32 || fd_table[fd].type != FD_TYPE_FILE) return -1;
-  if (whence == 0) fd_table[fd].offset = offset;
-  else if (whence == 1) fd_table[fd].offset += offset;
+  kfile_t *f = &fd_table[fd];
+  int new_offset;
+
+  if (whence == 0) {
+    new_offset = offset;
+  } else if (whence == 1) {
+    new_offset = (int)f->offset + offset;
+  } else if (whence == 2) {
+    new_offset = (int)f->size + offset;
+  } else {
+    return -1;
+  }
+
+  if (new_offset < 0) return -1;
+  if ((uint32_t)new_offset > f->size) new_offset = (int)f->size;
+  f->offset = (uint32_t)new_offset;
   return fd_table[fd].offset;
 }
+
+static int sys_present_frame(const uint32_t *src, uint32_t src_w, uint32_t src_h,
+                             int dst_x, int dst_y) {
+  uint32_t scale_x;
+  uint32_t scale_y;
+  uint32_t scale;
+  uint32_t out_w;
+  uint32_t out_h;
+
+  if (!framebuffer || !src || src_w == 0 || src_h == 0 ||
+      screen_width == 0 || screen_height == 0) {
+    return -1;
+  }
+
+  scale_x = screen_width / src_w;
+  scale_y = screen_height / src_h;
+  scale = scale_x < scale_y ? scale_x : scale_y;
+  if (scale == 0) scale = 1;
+
+  out_w = src_w * scale;
+  out_h = src_h * scale;
+  if (dst_x < 0) dst_x = (int)(screen_width - out_w) / 2;
+  if (dst_y < 0) dst_y = (int)(screen_height - out_h) / 2;
+
+  memset32(framebuffer, 0, screen_width * screen_height);
+
+  for (uint32_t y = 0; y < out_h; y++) {
+    int py = dst_y + (int)y;
+    if (py < 0 || (uint32_t)py >= screen_height) continue;
+
+    uint32_t sy = y / scale;
+    for (uint32_t x = 0; x < out_w; x++) {
+      int px = dst_x + (int)x;
+      if (px < 0 || (uint32_t)px >= screen_width) continue;
+
+      uint32_t sx = x / scale;
+      framebuffer[(uint32_t)py * screen_width + (uint32_t)px] =
+          src[sy * src_w + sx];
+    }
+  }
+
+  return 0;
+}
+
+
 
 void syscall_handler(registers_t *regs) {
   uint32_t call_num = regs->eax;
   switch (call_num) {
     case 1: sys_exit(regs->ebx); break;
-    case 2: regs->eax = fork_process(regs); break;
+    case 2: regs->eax = sys_brk(regs->ebx); break;
     case 3: regs->eax = sys_read(regs->ebx, (void *)regs->ecx, regs->edx); break;
     case 4: regs->eax = sys_write(regs->ebx, (void *)regs->ecx, regs->edx); break;
     case 5: regs->eax = sys_open((char *)regs->ebx, regs->ecx); break;
     case 6: regs->eax = sys_close(regs->ebx); break;
-    case 7: regs->eax = sys_waitpid(regs->ebx, (int *)regs->ecx, regs->edx); break;
-    case 11: regs->eax = sys_execve((char *)regs->ebx, (char **)regs->ecx, (char **)regs->edx);
-             if (regs->eax != (uint32_t)-1) regs->esp = execve_new_esp;
-             break;
-    case 19: regs->eax = sys_lseek(regs->ebx, regs->ecx, regs->edx); break;
-    case 45: { // brk (gerenciamento de heap)
-        uint32_t new_brk = regs->ebx;
-        uint32_t old_brk = current_task->heap_end;
-
-        if (new_brk == 0) {
-            regs->eax = old_brk;
-        } else if (new_brk <= old_brk) {
-            // Apenas diminui o limite (ou mantém)
-            current_task->heap_end = new_brk;
-            regs->eax = new_brk;
-        } else {
-            // Aumenta o heap: mapeia novas páginas se necessário
-            uint32_t start_page = (old_brk + 0xFFF) & 0xFFFFF000;
-            uint32_t end_page = (new_brk + 0xFFF) & 0xFFFFF000;
-
-            for (uint32_t p = start_page; p < end_page; p += 4096) {
-                void *phys = kmalloc_a(4096); // Aloca frame físico
-                vmm_map_page(phys, (void *)p, 0x07); // User, RW, Present
-                memset((void*)p, 0, 4096);
-            }
-            current_task->heap_end = new_brk;
-            regs->eax = new_brk;
+    case 7: regs->eax = timer_ticks; break;
+    case 10: regs->eax = keyboard_get_event((void *)regs->ebx); break;
+    case 11: regs->eax = keyboard_is_pressed((uint8_t)regs->ebx); break;
+    case 12: {
+        uint32_t *info = (uint32_t *)regs->ebx;
+        if (!info || !framebuffer || screen_width == 0 || screen_height == 0) {
+          regs->eax = (uint32_t)-1;
+          break;
         }
+        if (current_task && current_task->user_mode) {
+          graphics_exclusive_acquire(current_task->id);
+        }
+        info[0] = (uint32_t)framebuffer;
+        info[1] = screen_width;
+        info[2] = screen_height;
+        info[3] = screen_width * 4;
+        info[4] = 32;
+        regs->eax = 0;
         break;
     }
+    case 13:
+      if (regs->ebx) {
+        regs->eax = sys_present_frame((const uint32_t *)regs->ebx, regs->ecx,
+                                      regs->edx, (int)regs->esi,
+                                      (int)regs->edi);
+      } else {
+        refresh_screen();
+        regs->eax = 0;
+      }
+      break;
+    case 19: regs->eax = sys_lseek(regs->ebx, regs->ecx, regs->edx); break;
+    case 45: regs->eax = sys_brk(regs->ebx); break;
     default: break;
   }
 }

@@ -60,6 +60,20 @@ void init_video(multiboot_info_t *mbi) {
   uint32_t map_start;
   uint32_t map_end;
 
+  if (!mbi || !(mbi->flags & (1 << 12)) || mbi->framebuffer_addr == 0 ||
+      mbi->framebuffer_width == 0 || mbi->framebuffer_height == 0 ||
+      mbi->framebuffer_bpp != 32) {
+    framebuffer = 0;
+    backbuffer = 0;
+    screen_width = 0;
+    screen_height = 0;
+    screen_size = 0;
+    target_buffer = 0;
+    target_width = 0;
+    target_height = 0;
+    return;
+  }
+
   framebuffer = (uint32_t *)((uint32_t)mbi->framebuffer_addr);
   screen_width = mbi->framebuffer_width;
   screen_height = mbi->framebuffer_height;
@@ -73,7 +87,7 @@ void init_video(multiboot_info_t *mbi) {
   map_start = fb_addr & 0xFFFFF000;
   map_end = (fb_addr + fb_size + 0xFFF) & 0xFFFFF000;
   for (uint32_t addr = map_start; addr < map_end; addr += 4096) {
-    vmm_map_page((void *)addr, (void *)addr, 0x3);
+    vmm_map_page((void *)addr, (void *)addr, 0x7);
   }
 
   backbuffer = (uint32_t *)kmalloc(screen_size * 4);

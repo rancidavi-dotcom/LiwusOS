@@ -1,0 +1,457 @@
+davidev@pop-os:~/LiwusOS$ ./run.sh
+[+] Building 1.2s (8/8) FINISHED                                                                                                                                      docker:desktop-linux
+ => [internal] load build definition from Dockerfile                                                                                                                                  0.0s
+ => => transferring dockerfile: 1.44kB                                                                                                                                                0.0s
+ => [internal] load metadata for docker.io/library/debian:bookworm                                                                                                                    0.6s
+ => [internal] load .dockerignore                                                                                                                                                     0.0s
+ => => transferring context: 2B                                                                                                                                                       0.0s
+ => [1/4] FROM docker.io/library/debian:bookworm@sha256:ed4fcc40bb1162b6d2d32e7bec15044d13963779abbe63f67f1cd62b06220519                                                              0.0s
+ => => resolve docker.io/library/debian:bookworm@sha256:ed4fcc40bb1162b6d2d32e7bec15044d13963779abbe63f67f1cd62b06220519                                                              0.0s
+ => CACHED [2/4] RUN apt-get update && apt-get install -y     build-essential     bison     ca-certificates     flex     libgmp3-dev     libmpc-dev     libmpfr-dev     texinfo       0.0s
+ => CACHED [3/4] RUN mkdir -p /build && cd /build &&     wget https://ftp.gnu.org/gnu/binutils/binutils-2.42.tar.gz &&     tar xf binutils-2.42.tar.gz &&     mkdir build-binutils &  0.0s
+ => CACHED [4/4] WORKDIR /os-build                                                                                                                                                    0.0s
+ => exporting to image                                                                                                                                                                0.2s
+ => => exporting layers                                                                                                                                                               0.0s
+ => => exporting manifest sha256:5b9c7cd921ca6a610c1fd065270eb068fd23c4c99ab29d29debb16d63447d306                                                                                     0.0s
+ => => exporting config sha256:7df89f84072a919dac55352342acd7046de0c8bd0a6f80f276b9c5e70c82a675                                                                                       0.0s
+ => => exporting attestation manifest sha256:f4cf926e9cdcc6b7d6bab42826d382bb661fe991922b5dbc03303ed76b0103fd                                                                         0.1s
+ => => exporting manifest list sha256:277df802b675be9a2ffc63ec7f4c8a75ea71320c02699fe78790bc4f93052f60                                                                                0.0s
+ => => naming to docker.io/library/liwus-builder:latest                                                                                                                               0.0s
+ => => unpacking to docker.io/library/liwus-builder:latest                                                                                                                            0.0s
+Using i686-elf-ar
+Using i686-elf-ranlib
+Using i686-elf-nm
+Building static library libz.a version 1.3.1 with i686-elf-gcc.
+Checking for size_t... Yes.
+Checking for off64_t... No.
+Checking for fseeko... No.
+Checking for strerror... No.
+Checking for unistd.h... Yes.
+Checking for stdarg.h... Yes.
+Checking whether to use vs[n]printf() or s[n]printf()... using vs[n]printf().
+Checking for vsnprintf() in stdio.h... No.
+  WARNING: vsnprintf() not found, falling back to vsprintf(). zlib
+  can build but will be open to possible buffer-overflow security
+  vulnerabilities.
+Checking for return value of vsprintf()... Yes.
+Checking for attribute(visibility) support... Yes.
+make[1]: Entering directory '/os-build/third_party/zlib'
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o adler32.o adler32.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o crc32.o crc32.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o deflate.o deflate.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o infback.o infback.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o inffast.o inffast.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o inflate.o inflate.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o inftrees.o inftrees.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o trees.o trees.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o zutil.o zutil.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o compress.o compress.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o uncompr.o uncompr.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o gzclose.o gzclose.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o gzlib.o gzlib.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o gzread.o gzread.c
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN  -c -o gzwrite.o gzwrite.c
+i686-elf-ar rc libz.a adler32.o crc32.o deflate.o infback.o inffast.o inflate.o inftrees.o trees.o zutil.o compress.o uncompr.o gzclose.o gzlib.o gzread.o gzwrite.o
+make[1]: Leaving directory '/os-build/third_party/zlib'
+checking for a BSD-compatible install... /usr/bin/install -c
+checking whether build environment is sane... yes
+checking for i686-elf-strip... i686-elf-strip
+checking for a race-free mkdir -p... /usr/bin/mkdir -p
+checking for gawk... no
+checking for mawk... mawk
+checking whether make sets $(MAKE)... yes
+checking whether make supports nested variables... yes
+checking whether to enable maintainer-specific portions of Makefiles... no
+checking for i686-elf-gcc... i686-elf-gcc
+checking whether the C compiler works... yes
+checking for C compiler default output file name... a.out
+checking for suffix of executables...
+checking whether we are cross compiling... yes
+checking for suffix of object files... o
+checking whether the compiler supports GNU C... yes
+checking whether i686-elf-gcc accepts -g... yes
+checking for i686-elf-gcc option to enable C11 features... unsupported
+checking for i686-elf-gcc option to enable C99 features... unsupported
+checking for i686-elf-gcc option to enable C89 features... none needed
+checking whether i686-elf-gcc understands -c and -o together... yes
+checking whether make supports the include directive... yes (GNU style)
+checking dependency style of i686-elf-gcc... gcc3
+checking dependency style of i686-elf-gcc... gcc3
+checking build system type... x86_64-pc-linux-gnu
+checking host system type... i686-pc-elf
+checking for a sed that does not truncate output... /usr/bin/sed
+checking for grep that handles long lines and -e... /usr/bin/grep
+checking for egrep... /usr/bin/grep -E
+checking for fgrep... /usr/bin/grep -F
+checking how to print strings... printf
+checking for ld used by i686-elf-gcc... /usr/local/i686-elf/bin/ld
+checking if the linker (/usr/local/i686-elf/bin/ld) is GNU ld... yes
+checking how to run the C preprocessor... i686-elf-gcc -E
+checking for gawk... (cached) mawk
+checking whether ln -s works... yes
+checking whether make sets $(MAKE)... (cached) yes
+checking for BSD- or MS-compatible name lister (nm)... /usr/local/bin/i686-elf-nm -B
+checking the name lister (/usr/local/bin/i686-elf-nm -B) interface... BSD nm
+checking the maximum length of command line arguments... 1572864
+checking how to convert x86_64-pc-linux-gnu file names to i686-pc-elf format... func_convert_file_noop
+checking how to convert x86_64-pc-linux-gnu file names to toolchain format... func_convert_file_noop
+checking for /usr/local/i686-elf/bin/ld option to reload object files... -r
+checking for i686-elf-file... no
+checking for file... no
+checking for i686-elf-objdump... i686-elf-objdump
+checking how to recognize dependent libraries... unknown
+checking for i686-elf-dlltool... no
+checking for dlltool... no
+checking how to associate runtime and link libraries... printf %s\n
+checking for i686-elf-ar... i686-elf-ar
+checking for archiver @FILE support... @
+checking for i686-elf-strip... (cached) i686-elf-strip
+checking for i686-elf-ranlib... i686-elf-ranlib
+checking command to parse /usr/local/bin/i686-elf-nm -B output from i686-elf-gcc object... ok
+checking for sysroot... no
+checking for a working dd... /usr/bin/dd
+checking how to truncate binary pipes... /usr/bin/dd bs=4096 count=1
+checking for i686-elf-mt... no
+checking for mt... no
+checking if : is a manifest tool... no
+checking for stdio.h... yes
+checking for stdlib.h... yes
+checking for string.h... yes
+checking for inttypes.h... yes
+checking for stdint.h... yes
+checking for strings.h... yes
+checking for sys/stat.h... yes
+checking for sys/types.h... yes
+checking for unistd.h... yes
+checking for dlfcn.h... no
+checking for objdir... .libs
+checking if i686-elf-gcc supports -fno-rtti -fno-exceptions... no
+checking for i686-elf-gcc option to produce PIC... -fPIC -DPIC
+checking if i686-elf-gcc PIC flag -fPIC -DPIC works... yes
+checking if i686-elf-gcc static flag -static works... yes
+checking if i686-elf-gcc supports -c -o file.o... yes
+checking if i686-elf-gcc supports -c -o file.o... (cached) yes
+checking whether the i686-elf-gcc linker (/usr/local/i686-elf/bin/ld) supports shared libraries... yes
+checking dynamic linker characteristics... no
+checking how to hardcode library paths into programs... immediate
+checking whether stripping libraries is possible... yes
+checking if libtool supports shared libraries... no
+checking whether to build shared libraries... no
+checking whether to build static libraries... yes
+checking if awk (mawk) works... yes
+checking if we need to force back C standard to C89... no
+checking whether struct tm is in sys/time.h or time.h... time.h
+checking for C/C++ restrict keyword... __restrict__
+checking for pow... yes
+checking for clock_gettime... no
+configure: WARNING: not building timepng
+checking for zlibVersion in -lz... (cached) yes
+checking for feenableexcept in -lm... no
+checking for feenableexcept... no
+checking if using Solaris linker... no
+checking if libraries can be versioned... yes
+checking for symbol prefix...
+configure: pkgconfig directory is ${libdir}/pkgconfig
+configure: Extra options for compiler:
+checking that generated files are newer than configure... done
+configure: creating ./config.status
+config.status: creating Makefile
+config.status: creating libpng.pc
+config.status: creating libpng-config
+config.status: creating config.h
+config.status: config.h is unchanged
+config.status: executing depfiles commands
+config.status: executing libtool commands
+make[1]: Entering directory '/os-build/third_party/libpng'
+depbase=`echo png.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT png.lo -MD -MP -MF $depbase.Tpo -c -o png.lo png.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT png.lo -MD -MP -MF .deps/png.Tpo -c png.c -o png.o
+png.c: In function 'png_ascii_from_fp':
+png.c:2982:24: warning: implicit declaration of function 'modf' [-Wimplicit-function-declaration]
+ 2982 |                   fp = modf(fp, &d);
+      |                        ^~~~
+png.c:15:1: note: include '<math.h>' or provide a declaration of 'modf'
+   14 | #include "pngpriv.h"
+  +++ |+#include <math.h>
+   15 |
+png.c:2982:24: warning: incompatible implicit declaration of built-in function 'modf' [-Wbuiltin-declaration-mismatch]
+ 2982 |                   fp = modf(fp, &d);
+      |                        ^~~~
+png.c:2982:24: note: include '<math.h>' or provide a declaration of 'modf'
+depbase=`echo pngerror.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngerror.lo -MD -MP -MF $depbase.Tpo -c -o pngerror.lo pngerror.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngerror.lo -MD -MP -MF .deps/pngerror.Tpo -c pngerror.c -o pngerror.o
+depbase=`echo pngget.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngget.lo -MD -MP -MF $depbase.Tpo -c -o pngget.lo pngget.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngget.lo -MD -MP -MF .deps/pngget.Tpo -c pngget.c -o pngget.o
+depbase=`echo pngmem.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngmem.lo -MD -MP -MF $depbase.Tpo -c -o pngmem.lo pngmem.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngmem.lo -MD -MP -MF .deps/pngmem.Tpo -c pngmem.c -o pngmem.o
+depbase=`echo pngpread.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngpread.lo -MD -MP -MF $depbase.Tpo -c -o pngpread.lo pngpread.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngpread.lo -MD -MP -MF .deps/pngpread.Tpo -c pngpread.c -o pngpread.o
+depbase=`echo pngread.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngread.lo -MD -MP -MF $depbase.Tpo -c -o pngread.lo pngread.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngread.lo -MD -MP -MF .deps/pngread.Tpo -c pngread.c -o pngread.o
+depbase=`echo pngrio.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngrio.lo -MD -MP -MF $depbase.Tpo -c -o pngrio.lo pngrio.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngrio.lo -MD -MP -MF .deps/pngrio.Tpo -c pngrio.c -o pngrio.o
+depbase=`echo pngrtran.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngrtran.lo -MD -MP -MF $depbase.Tpo -c -o pngrtran.lo pngrtran.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngrtran.lo -MD -MP -MF .deps/pngrtran.Tpo -c pngrtran.c -o pngrtran.o
+depbase=`echo pngrutil.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngrutil.lo -MD -MP -MF $depbase.Tpo -c -o pngrutil.lo pngrutil.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngrutil.lo -MD -MP -MF .deps/pngrutil.Tpo -c pngrutil.c -o pngrutil.o
+depbase=`echo pngset.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngset.lo -MD -MP -MF $depbase.Tpo -c -o pngset.lo pngset.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngset.lo -MD -MP -MF .deps/pngset.Tpo -c pngset.c -o pngset.o
+depbase=`echo pngtrans.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngtrans.lo -MD -MP -MF $depbase.Tpo -c -o pngtrans.lo pngtrans.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngtrans.lo -MD -MP -MF .deps/pngtrans.Tpo -c pngtrans.c -o pngtrans.o
+depbase=`echo pngwio.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngwio.lo -MD -MP -MF $depbase.Tpo -c -o pngwio.lo pngwio.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngwio.lo -MD -MP -MF .deps/pngwio.Tpo -c pngwio.c -o pngwio.o
+depbase=`echo pngwrite.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngwrite.lo -MD -MP -MF $depbase.Tpo -c -o pngwrite.lo pngwrite.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngwrite.lo -MD -MP -MF .deps/pngwrite.Tpo -c pngwrite.c -o pngwrite.o
+depbase=`echo pngwtran.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngwtran.lo -MD -MP -MF $depbase.Tpo -c -o pngwtran.lo pngwtran.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngwtran.lo -MD -MP -MF .deps/pngwtran.Tpo -c pngwtran.c -o pngwtran.o
+depbase=`echo pngwutil.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT pngwutil.lo -MD -MP -MF $depbase.Tpo -c -o pngwutil.lo pngwutil.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT pngwutil.lo -MD -MP -MF .deps/pngwutil.Tpo -c pngwutil.c -o pngwutil.o
+depbase=`echo mips/mips_init.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT mips/mips_init.lo -MD -MP -MF $depbase.Tpo -c -o mips/mips_init.lo mips/mips_init.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT mips/mips_init.lo -MD -MP -MF mips/.deps/mips_init.Tpo -c mips/mips_init.c -o mips/mips_init.o
+depbase=`echo mips/filter_msa_intrinsics.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT mips/filter_msa_intrinsics.lo -MD -MP -MF $depbase.Tpo -c -o mips/filter_msa_intrinsics.lo mips/filter_msa_intrinsics.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT mips/filter_msa_intrinsics.lo -MD -MP -MF mips/.deps/filter_msa_intrinsics.Tpo -c mips/filter_msa_intrinsics.c -o mips/filter_msa_intrinsics.o
+depbase=`echo mips/filter_mmi_inline_assembly.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT mips/filter_mmi_inline_assembly.lo -MD -MP -MF $depbase.Tpo -c -o mips/filter_mmi_inline_assembly.lo mips/filter_mmi_inline_assembly.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT mips/filter_mmi_inline_assembly.lo -MD -MP -MF mips/.deps/filter_mmi_inline_assembly.Tpo -c mips/filter_mmi_inline_assembly.c -o mips/filter_mmi_inline_assembly.o
+depbase=`echo intel/intel_init.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT intel/intel_init.lo -MD -MP -MF $depbase.Tpo -c -o intel/intel_init.lo intel/intel_init.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT intel/intel_init.lo -MD -MP -MF intel/.deps/intel_init.Tpo -c intel/intel_init.c -o intel/intel_init.o
+depbase=`echo intel/filter_sse2_intrinsics.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT intel/filter_sse2_intrinsics.lo -MD -MP -MF $depbase.Tpo -c -o intel/filter_sse2_intrinsics.lo intel/filter_sse2_intrinsics.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT intel/filter_sse2_intrinsics.lo -MD -MP -MF intel/.deps/filter_sse2_intrinsics.Tpo -c intel/filter_sse2_intrinsics.c -o intel/filter_sse2_intrinsics.o
+depbase=`echo powerpc/powerpc_init.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT powerpc/powerpc_init.lo -MD -MP -MF $depbase.Tpo -c -o powerpc/powerpc_init.lo powerpc/powerpc_init.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT powerpc/powerpc_init.lo -MD -MP -MF powerpc/.deps/powerpc_init.Tpo -c powerpc/powerpc_init.c -o powerpc/powerpc_init.o
+depbase=`echo powerpc/filter_vsx_intrinsics.lo | sed 's|[^/]*$|.deps/&|;s|\.lo$||'`;\
+/bin/bash ./libtool  --tag=CC   --mode=compile i686-elf-gcc -DHAVE_CONFIG_H -I.   -I/os-build/sdk/libc/include  -g -O2 -MT powerpc/filter_vsx_intrinsics.lo -MD -MP -MF $depbase.Tpo -c -o powerpc/filter_vsx_intrinsics.lo powerpc/filter_vsx_intrinsics.c &&\
+mv -f $depbase.Tpo $depbase.Plo
+libtool: compile:  i686-elf-gcc -DHAVE_CONFIG_H -I. -I/os-build/sdk/libc/include -g -O2 -MT powerpc/filter_vsx_intrinsics.lo -MD -MP -MF powerpc/.deps/filter_vsx_intrinsics.Tpo -c powerpc/filter_vsx_intrinsics.c -o powerpc/filter_vsx_intrinsics.o
+/bin/bash ./libtool  --tag=CC   --mode=link i686-elf-gcc  -g -O2 -no-undefined -export-dynamic -version-number 16:43:0  -Wl,--version-script=libpng.vers  -L/os-build/sdk/lib -nostdlib -o libpng16.la -rpath /os-build/sdk/lib png.lo pngerror.lo pngget.lo pngmem.lo pngpread.lo pngread.lo pngrio.lo pngrtran.lo pngrutil.lo pngset.lo pngtrans.lo pngwio.lo pngwrite.lo pngwtran.lo pngwutil.lo  mips/mips_init.lo mips/filter_msa_intrinsics.lo  mips/filter_mmi_inline_assembly.lo intel/intel_init.lo intel/filter_sse2_intrinsics.lo powerpc/powerpc_init.lo powerpc/filter_vsx_intrinsics.lo   -lz -l:libliwc.a -lgcc
+libtool: link: rm -fr  .libs/libpng16.a .libs/libpng16.la .libs/libpng16.lai
+libtool: link: i686-elf-ar cr .libs/libpng16.a  png.o pngerror.o pngget.o pngmem.o pngpread.o pngread.o pngrio.o pngrtran.o pngrutil.o pngset.o pngtrans.o pngwio.o pngwrite.o pngwtran.o pngwutil.o mips/mips_init.o mips/filter_msa_intrinsics.o mips/filter_mmi_inline_assembly.o intel/intel_init.o intel/filter_sse2_intrinsics.o powerpc/powerpc_init.o powerpc/filter_vsx_intrinsics.o
+libtool: link: i686-elf-ranlib .libs/libpng16.a
+libtool: link: ( cd ".libs" && rm -f "libpng16.la" && ln -s "../libpng16.la" "libpng16.la" )
+make[1]: Leaving directory '/os-build/third_party/libpng'
+checking build system type... x86_64-pc-linux-gnux32
+checking host system type... i686-pc-elf
+checking target system type... i686-pc-elf
+checking for a BSD-compatible install... /usr/bin/install -c
+checking whether build environment is sane... yes
+checking for i686-elf-strip... i686-elf-strip
+checking for a race-free mkdir -p... /usr/bin/mkdir -p
+checking for gawk... no
+checking for mawk... mawk
+checking whether make sets $(MAKE)... yes
+checking whether make supports nested variables... yes
+checking whether make supports nested variables... (cached) yes
+checking whether to enable maintainer-specific portions of Makefiles... no
+checking for i686-elf-gcc... i686-elf-gcc
+checking whether the C compiler works... yes
+checking for C compiler default output file name... a.out
+checking for suffix of executables...
+checking whether we are cross compiling... yes
+checking for suffix of object files... o
+checking whether the compiler supports GNU C... yes
+checking whether i686-elf-gcc accepts -g... yes
+checking for i686-elf-gcc option to enable C11 features... unsupported
+checking for i686-elf-gcc option to enable C99 features... unsupported
+checking for i686-elf-gcc option to enable C89 features... none needed
+checking whether i686-elf-gcc understands -c and -o together... yes
+checking whether make supports the include directive... yes (GNU style)
+checking dependency style of i686-elf-gcc... gcc3
+checking how to run the C preprocessor... i686-elf-gcc -E
+checking whether make sets $(MAKE)... (cached) yes
+checking whether ln -s works... yes
+checking for grep that handles long lines and -e... /usr/bin/grep
+checking for egrep... /usr/bin/grep -E
+checking for i686-elf-ar... i686-elf-ar
+checking the archiver (i686-elf-ar) interface... ar
+checking if LD -Wl,--version-script works... yes
+checking for function prototypes... yes
+checking for stdio.h... yes
+checking for stdlib.h... yes
+checking for string.h... yes
+checking for inttypes.h... yes
+checking for stdint.h... yes
+checking for strings.h... yes
+checking for sys/stat.h... yes
+checking for sys/types.h... yes
+checking for unistd.h... yes
+checking for stddef.h... yes
+checking for stdlib.h... (cached) yes
+checking for locale.h... yes
+checking for string.h... (cached) yes
+checking for size_t... yes
+checking for type unsigned char... yes
+checking for type unsigned short... yes
+checking for type void... yes
+checking for an ANSI C-conforming const... yes
+checking for inline... __inline__
+checking for broken incomplete types... ok
+checking for short external names... ok
+checking to see if char is signed... configure: WARNING: Assuming that char is signed on target machine.
+    If it is unsigned, this will be a little bit inefficient.
+checking to see if right shift is signed... Assuming that right shift is signed on target machine.
+checking to see if fopen accepts b spec... Assuming that it does.
+checking how to print strings... printf
+checking for a sed that does not truncate output... /usr/bin/sed
+checking for fgrep... /usr/bin/grep -F
+checking for ld used by i686-elf-gcc... /usr/local/i686-elf/bin/ld
+checking if the linker (/usr/local/i686-elf/bin/ld) is GNU ld... yes
+checking for BSD- or MS-compatible name lister (nm)... /usr/local/bin/i686-elf-nm -B
+checking the name lister (/usr/local/bin/i686-elf-nm -B) interface... BSD nm
+checking the maximum length of command line arguments... 1572864
+checking how to convert x86_64-pc-linux-gnux32 file names to i686-pc-elf format... func_convert_file_noop
+checking how to convert x86_64-pc-linux-gnux32 file names to toolchain format... func_convert_file_noop
+checking for /usr/local/i686-elf/bin/ld option to reload object files... -r
+checking for i686-elf-file... no
+checking for file... no
+checking for i686-elf-objdump... i686-elf-objdump
+checking how to recognize dependent libraries... unknown
+checking for i686-elf-dlltool... no
+checking for dlltool... no
+checking how to associate runtime and link libraries... printf %s\n
+checking for i686-elf-ar... (cached) i686-elf-ar
+checking for archiver @FILE support... @
+checking for i686-elf-strip... (cached) i686-elf-strip
+checking for i686-elf-ranlib... i686-elf-ranlib
+checking command to parse /usr/local/bin/i686-elf-nm -B output from i686-elf-gcc object... ok
+checking for sysroot... no
+checking for a working dd... /usr/bin/dd
+checking how to truncate binary pipes... /usr/bin/dd bs=4096 count=1
+checking for i686-elf-mt... no
+checking for mt... no
+checking if : is a manifest tool... no
+checking for dlfcn.h... no
+checking for objdir... .libs
+checking if i686-elf-gcc supports -fno-rtti -fno-exceptions... no
+checking for i686-elf-gcc option to produce PIC... -fPIC -DPIC
+checking if i686-elf-gcc PIC flag -fPIC -DPIC works... yes
+checking if i686-elf-gcc static flag -static works... yes
+checking if i686-elf-gcc supports -c -o file.o... yes
+checking if i686-elf-gcc supports -c -o file.o... (cached) yes
+checking whether the i686-elf-gcc linker (/usr/local/i686-elf/bin/ld) supports shared libraries... yes
+checking dynamic linker characteristics... no
+checking how to hardcode library paths into programs... immediate
+checking whether stripping libraries is possible... yes
+checking if libtool supports shared libraries... no
+checking whether to build shared libraries... no
+checking whether to build static libraries... yes
+checking libjpeg version number... 9.6.0
+checking that generated files are newer than configure... done
+configure: creating ./config.status
+config.status: creating Makefile
+config.status: creating libjpeg.pc
+config.status: creating jconfig.h
+config.status: jconfig.h is unchanged
+config.status: executing depfiles commands
+config.status: executing libtool commands
+make[1]: Entering directory '/os-build/third_party/libjpeg'
+make[1]: Leaving directory '/os-build/third_party/libjpeg'
+i686-elf-gcc -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -nostdlib -static sdk/lib/crt0.o apps/view/view.c sdk/lib/libpng.a sdk/lib/libjpeg.a sdk/lib/libz.a sdk/lib/libliwc.a -o apps/view/view.elf -lgcc
+apps/view/view.c: In function 'display_png':
+apps/view/view.c:69:63: warning: operand of '?:' changes signedness from 'int' to 'uint32_t' {aka 'unsigned int'} due to unsignedness of other operand [-Wsign-compare]
+   69 |     int display_w = (fb.width < (uint32_t)width) ? fb.width : width;
+      |                                                               ^~~~~
+apps/view/view.c:70:66: warning: operand of '?:' changes signedness from 'int' to 'uint32_t' {aka 'unsigned int'} due to unsignedness of other operand [-Wsign-compare]
+   70 |     int display_h = (fb.height < (uint32_t)height) ? fb.height : height;
+      |                                                                  ^~~~~~
+apps/view/view.c: In function 'display_jpg':
+apps/view/view.c:136:63: warning: operand of '?:' changes signedness from 'int' to 'uint32_t' {aka 'unsigned int'} due to unsignedness of other operand [-Wsign-compare]
+  136 |     int display_w = (fb.width < (uint32_t)width) ? fb.width : width;
+      |                                                               ^~~~~
+apps/view/view.c:137:66: warning: operand of '?:' changes signedness from 'int' to 'uint32_t' {aka 'unsigned int'} due to unsignedness of other operand [-Wsign-compare]
+  137 |     int display_h = (fb.height < (uint32_t)height) ? fb.height : height;
+      |                                                                  ^~~~~~
+gcc -Iinclude sdk/tools/liw-builder.c -o sdk/tools/liw-builder
+./sdk/tools/liw-builder src/boot/test.liw src/boot/test.elf src/boot/test_manifest.json
+Created src/boot/test.liw with ELF size 520
+grub-file --is-x86-multiboot kernel.bin
+mkdir -p repo
+# Gerar arquivos de imagem de teste automaticamente
+printf '\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90\x77\x53\xde\x00\x00\x00\x0c\x49\x44\x41\x54\x08\xd7\x63\xf8\xff\xff\x3f\x00\x05\xfe\x02\xfe\xdc\x44\x74\x8e\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82' > repo/teste.png
+printf '\xff\xd8\xff\xdb\x00\x43\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x14\x10\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00\x37\xff\xd9' > repo/teste.jpg
+if [ -f assets/LiwusOSlogo.png ]; then cp assets/LiwusOSlogo.png repo/logo.png; fi
+cp liw.elf repo/liw
+cp apps/hello/hello.elf repo/hello.liwpkg
+cp apps/doomprobe/doomprobe.elf repo/doomprobe.liwpkg
+cp apps/lua/lua.elf repo/lua
+cp apps/c4/crun.elf repo/crun
+cp apps/view/view.elf repo/view.liwpkg
+cp apps/lua/hello.lua repo/hello.lua
+cp apps/doomgeneric/doomgeneric.elf repo/doomgeneric
+if [ -f freedoom1.wad ]; then cp freedoom1.wad repo/freedoom1.wad; fi
+tar -cvf initrd.tar -C repo . --format=ustar
+./
+./crun
+./teste.jpg
+./view.liwpkg
+./freedoom1.wad
+./lua
+./hello.liwpkg
+./doomgeneric
+./logo.png
+./teste.png
+./doomprobe.liwpkg
+./hello.lua
+./liw
+mkdir -p isodir/boot/grub
+cp kernel.bin isodir/boot/kernel.bin
+cp src/boot/grub.cfg isodir/boot/grub/grub.cfg
+cp initrd.tar isodir/boot/initrd.tar
+grub-mkrescue -o liwusos.iso isodir
+xorriso 1.5.4 : RockRidge filesystem manipulator, libburnia project.
+
+Drive current: -outdev 'stdio:liwusos.iso'
+Media current: stdio file, overwriteable
+Media status : is blank
+Media summary: 0 sessions, 0 data blocks, 0 data,  107g free
+Added to ISO image: directory '/'='/tmp/grub.kP9QO6'
+xorriso : UPDATE :     335 files added in 1 seconds
+Added to ISO image: directory '/'='/os-build/isodir'
+xorriso : UPDATE :     340 files added in 1 seconds
+xorriso : NOTE : Copying to System Area: 512 bytes from file '/usr/lib/grub/i386-pc/boot_hybrid.img'
+xorriso : UPDATE :  62.59% done
+ISO image produced: 20400 sectors
+Written to medium : 20400 sectors at LBA 0
+Writing to 'stdio:liwusos.iso' completed successfully.
+
+qemu-system-i386: -net user,hostfwd=tcp::2222-:2222: Could not set up host forwarding rule 'tcp::2222-:2222'
+davidev@pop-os:~/LiwusOS$

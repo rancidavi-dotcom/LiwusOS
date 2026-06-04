@@ -46,7 +46,8 @@ LVGL_CORE_SRCS = $(shell find $(LVGL_DIR)/src/core -name '*.c')
 LVGL_DISPLAY_SRCS = $(shell find $(LVGL_DIR)/src/display -name '*.c')
 LVGL_DRAW_SRCS = $(shell find $(LVGL_DIR)/src/draw -maxdepth 1 -name '*.c') \
 		 $(shell find $(LVGL_DIR)/src/draw/sw -maxdepth 1 -name '*.c') \
-		 $(shell find $(LVGL_DIR)/src/draw/sw/blend -name '*.c')
+		 $(shell find $(LVGL_DIR)/src/draw/sw/blend -name '*.c') \
+		 $(shell find $(LVGL_DIR)/src/draw/convert -maxdepth 1 -name '*.c')
 LVGL_FONT_SRCS = $(shell find $(LVGL_DIR)/src/font -name '*.c')
 LVGL_INDEV_SRCS = $(shell find $(LVGL_DIR)/src/indev -name '*.c')
 LVGL_LAYOUT_SRCS = $(shell find $(LVGL_DIR)/src/layouts -name '*.c')
@@ -56,7 +57,8 @@ LVGL_STDLIB_SRCS = $(LVGL_DIR)/src/stdlib/lv_mem.c \
 LVGL_WIDGET_SRCS = $(LVGL_DIR)/src/widgets/button/lv_button.c \
 		   $(LVGL_DIR)/src/widgets/label/lv_label.c \
 		   $(LVGL_DIR)/src/widgets/textarea/lv_textarea.c
-LVGL_OSAL_SRCS = $(LVGL_DIR)/src/osal/lv_os_none.c
+LVGL_OSAL_SRCS = $(LVGL_DIR)/src/osal/lv_os.c \
+		 $(LVGL_DIR)/src/osal/lv_os_none.c
 LVGL_TICK_SRCS = $(LVGL_DIR)/src/tick/lv_tick.c
 LVGL_INIT_SRCS = $(LVGL_DIR)/src/lv_init.c
 LVGL_SRCS = $(LVGL_INIT_SRCS) $(LVGL_CORE_SRCS) $(LVGL_DISPLAY_SRCS) \
@@ -75,7 +77,7 @@ SDK_LIBC_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(SDK_LIBC_SRCS))
 SDK_LIB = sdk/lib/libliwc.a
 
 DOOM_DIR = third_party/doomgeneric/doomgeneric
-DOOMGENERIC_CFLAGS = $(USER_CFLAGS) -I$(DOOM_DIR) -DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200
+DOOMGENERIC_CFLAGS = $(USER_CFLAGS) -I$(DOOM_DIR) -Iapps/doomgeneric -DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200
 DOOM_ALL_SRCS = $(wildcard $(DOOM_DIR)/*.c)
 DOOM_EXCLUDE = $(DOOM_DIR)/doomgeneric_allegro.c $(DOOM_DIR)/doomgeneric_emscripten.c \
                $(DOOM_DIR)/doomgeneric_linuxvt.c $(DOOM_DIR)/doomgeneric_sdl.c \
@@ -83,7 +85,8 @@ DOOM_EXCLUDE = $(DOOM_DIR)/doomgeneric_allegro.c $(DOOM_DIR)/doomgeneric_emscrip
                $(DOOM_DIR)/doomgeneric_win.c $(DOOM_DIR)/doomgeneric_xlib.c \
                $(DOOM_DIR)/i_allegromusic.c $(DOOM_DIR)/i_allegrosound.c \
                $(DOOM_DIR)/i_sdlmusic.c $(DOOM_DIR)/i_sdlsound.c
-DOOM_SRCS = $(filter-out $(DOOM_EXCLUDE), $(DOOM_ALL_SRCS))
+DOOM_SRCS = $(filter-out $(DOOM_EXCLUDE), $(DOOM_ALL_SRCS)) \
+	    apps/doomgeneric/doomgeneric_liwus.c
 
 LUA_DIR = third_party/lua/src
 LUA_CFLAGS = $(USER_CFLAGS) -I$(LUA_DIR) -DLUA_USE_C89
