@@ -1,5 +1,5 @@
 #include "syscall.h"
-#include "fat32.h"
+#include "sdfs.h"
 #include "initrd.h"
 #include "io.h"
 #include "kheap.h"
@@ -33,7 +33,7 @@ int sys_execve(const char *filename, char *const argv[], char *const envp[]) {
   const uint32_t max_args = 16;
   uint32_t size = 0;
   void *addr = initrd_get_file(filename, &size);
-  if (!addr) addr = fat32_read_file_path(filename, &size);
+  if (!addr) addr = sdfs_read_file(filename, &size);
   if (!addr) {
     launch_last_error = "arquivo nao encontrado";
     return -1;
@@ -101,9 +101,16 @@ int launch_initrd_program_argv(const char *filename, char *const argv[]) {
   int ret = sys_execve(filename, argv, NULL);
   if (ret == -1) return -1;
   if (execve_new_esp == 0) return -1;
-  create_user_task_named((uint32_t)ret, execve_new_esp, filename);
+  int pid = create_user_task_named((uint32_t)ret, execve_new_esp, filename);
   execve_new_esp = 0;
-  return 0;
+  
+  serial_print("launch: returning pid=");
+  char nbuf[12];
+  itoa(pid, nbuf, 10);
+  serial_print(nbuf);
+  serial_print("\n");
+  
+  return pid;
 }
 
 #define FD_TYPE_FREE 0
@@ -145,6 +152,15 @@ int sys_open(const char *filename, int flags) {
 }
 
 int sys_read(int fd, void *buf, uint32_t count) {
+  if (fd == 0) {
+    if (count == 0) return 0;
+    char c;
+    while (!keyboard_pop_char(&c)) {
+        switch_task();
+    }
+    ((char *)buf)[0] = c;
+    return 1;
+  }
   if (fd < 0 || fd >= 32 || fd_table[fd].type != FD_TYPE_FILE) return -1;
   kfile_t *f = &fd_table[fd];
   if (f->socket_ptr) {
@@ -248,6 +264,8 @@ static int sys_present_frame(const uint32_t *src, uint32_t src_w, uint32_t src_h
 
 
 
+extern int sys_waitpid(int pid, int *status, int options);
+
 void syscall_handler(registers_t *regs) {
   uint32_t call_num = regs->eax;
   switch (call_num) {
@@ -257,7 +275,8 @@ void syscall_handler(registers_t *regs) {
     case 4: regs->eax = sys_write(regs->ebx, (void *)regs->ecx, regs->edx); break;
     case 5: regs->eax = sys_open((char *)regs->ebx, regs->ecx); break;
     case 6: regs->eax = sys_close(regs->ebx); break;
-    case 7: regs->eax = timer_ticks; break;
+    case 7: regs->eax = sys_waitpid((int)regs->ebx, (int *)regs->ecx, (int)regs->edx); break;
+    case 8: regs->eax = timer_ticks; break;
     case 10: regs->eax = keyboard_get_event((void *)regs->ebx); break;
     case 11: regs->eax = keyboard_is_pressed((uint8_t)regs->ebx); break;
     case 12: {
@@ -279,6 +298,9 @@ void syscall_handler(registers_t *regs) {
     }
     case 13:
       if (regs->ebx) {
+        if (current_task && current_task->user_mode) {
+          graphics_exclusive_acquire(current_task->id);
+        }
         regs->eax = sys_present_frame((const uint32_t *)regs->ebx, regs->ecx,
                                       regs->edx, (int)regs->esi,
                                       (int)regs->edi);
@@ -288,6 +310,18 @@ void syscall_handler(registers_t *regs) {
       }
       break;
     case 19: regs->eax = sys_lseek(regs->ebx, regs->ecx, regs->edx); break;
+    case 20: {
+        const char *name = (const char *)regs->ebx;
+        const void *buffer = (const void *)regs->ecx;
+        uint32_t size = regs->edx;
+        if (sdfs_is_mounted() && name && buffer) {
+            uint32_t w = sdfs_write_file(name, (uint8_t *)buffer, size);
+            regs->eax = (int)w;
+        } else {
+            regs->eax = -1;
+        }
+        break;
+    }
     case 45: regs->eax = sys_brk(regs->ebx); break;
     default: break;
   }

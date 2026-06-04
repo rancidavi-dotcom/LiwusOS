@@ -57,7 +57,7 @@ int __liw_sys_save_file(const char *name, void *buffer, uint32_t size) {
 // Syscalls extras necessárias para os apps existentes (Doom, etc)
 int __liw_sys_get_ticks() {
     int ret;
-    __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(7));
+    __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(8));
     return ret;
 }
 
@@ -84,7 +84,11 @@ void* sbrk(intptr_t increment) {
 }
 
 int fork() { return -1; }
-int waitpid(int pid, int *status, int options) { (void)pid; (void)status; (void)options; return -1; }
+int waitpid(int pid, int *status, int options) {
+    int ret;
+    __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(7), "b"(pid), "c"(status), "d"(options));
+    return ret;
+}
 
 int __liw_sys_get_key_event(void* ev) {
     int ret;
@@ -104,4 +108,8 @@ void __liw_sys_get_fb_info(void* info) {
 
 void __liw_sys_present_fb() {
     __asm__ volatile ("int $0x80" : : "a"(13), "b"(0), "c"(0), "d"(0), "S"(0), "D"(0));
+}
+
+void __liw_sys_present_frame(const void* buf, uint32_t w, uint32_t h, int x, int y) {
+    __asm__ volatile ("int $0x80" : : "a"(13), "b"(buf), "c"(w), "d"(h), "S"(x), "D"(y));
 }

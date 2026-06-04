@@ -175,6 +175,8 @@ void compositor_init() {
 }
 
 void compositor_repaint() {
+  if (graphics_exclusive_active()) return;
+  
   video_reset_target();
   clear_screen(SHELL_BG);
   draw_rect(0, 0, compositor.screen_width, 96, SHELL_BG_ALT);

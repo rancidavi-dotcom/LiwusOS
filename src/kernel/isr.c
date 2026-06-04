@@ -35,6 +35,13 @@ void isr_handler(registers_t *regs) {
     if ((regs->cs & 0x3) == 0x3 && current_task && current_task->user_mode) {
       serial_print("user task killed after exception\n");
       sys_exit_process(128 + (int)regs->int_no);
+    } else {
+      serial_print("KERNEL PANIC: Unhandled CPU exception in supervisor mode.\n");
+      serial_print("System Halted.\n");
+      asm volatile("cli");
+      while (1) {
+        asm volatile("hlt");
+      }
     }
   }
 }

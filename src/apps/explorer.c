@@ -1,5 +1,5 @@
 #include "explorer.h"
-#include "fat32.h"
+#include "sdfs.h"
 #include "initrd.h"
 #include "kheap.h"
 #include "string.h"
@@ -259,7 +259,7 @@ static void explorer_refresh_entries(void) {
     return;
   }
 
-  if (!fat32_is_mounted()) {
+  if (!sdfs_is_mounted()) {
     explorer_set_status("Disco FAT32 nao montado.");
     return;
   }
@@ -279,7 +279,7 @@ static void explorer_refresh_entries(void) {
     if (entry_count >= 32) {
       break;
     }
-    if (!fat32_list_dir_entry(current_disk_path, i, entries[entry_count].name,
+    if (!sdfs_list_dir_entry(current_disk_path, i, entries[entry_count].name,
                               &is_dir, &size)) {
       break;
     }
@@ -346,7 +346,7 @@ static void explorer_load_selected(void) {
   } else {
     explorer_disk_join_path(entries[selected_index].name, full_path,
                             sizeof(full_path));
-    data = fat32_read_file_path(full_path, &size);
+    data = sdfs_read_file(full_path, &size);
   }
 
   if (!data) {
@@ -371,7 +371,7 @@ static void explorer_save(void) {
     explorer_set_status("Arquivos do sistema sao somente leitura.");
     return;
   }
-  if (!fat32_is_mounted()) {
+  if (!sdfs_is_mounted()) {
     explorer_set_status("Disco FAT32 indisponivel.");
     return;
   }
@@ -381,8 +381,8 @@ static void explorer_save(void) {
   }
 
   explorer_disk_join_path(name_field, full_path, sizeof(full_path));
-  fat32_create_file_path(full_path);
-  fat32_write_file_path(full_path, (uint8_t *)editor_buffer,
+  sdfs_create_file(full_path);
+  sdfs_write_file(full_path, (uint8_t *)editor_buffer,
                         strlen(editor_buffer));
   strcpy(selected_name, name_field);
   explorer_refresh_entries();
@@ -402,7 +402,7 @@ static void explorer_delete(void) {
   }
 
   explorer_disk_join_path(selected_name, full_path, sizeof(full_path));
-  if (fat32_delete_path(full_path) == 0) {
+  if (sdfs_delete(full_path) == 0) {
     explorer_clear_editor();
     explorer_refresh_entries();
     explorer_set_status("Item excluido.");
@@ -430,7 +430,7 @@ static void explorer_rename(void) {
 
   explorer_disk_join_path(selected_name, old_path, sizeof(old_path));
   explorer_disk_join_path(name_field, new_path, sizeof(new_path));
-  if (fat32_rename_path(old_path, new_path) == 0) {
+  if (sdfs_rename(old_path, new_path) == 0) {
     strcpy(selected_name, name_field);
     explorer_refresh_entries();
     explorer_set_status("Item renomeado.");
@@ -457,7 +457,7 @@ static void explorer_new_folder(void) {
   }
 
   explorer_disk_join_path(folder_name, full_path, sizeof(full_path));
-  if (fat32_create_dir(full_path) == 0) {
+  if (sdfs_create_dir(full_path) == 0) {
     explorer_refresh_entries();
     explorer_set_status("Pasta criada.");
   } else {
@@ -580,7 +580,7 @@ static void explorer_draw_home(void) {
 
   draw_string(234, 184, "Dispositivos e unidades", EX_MUTED);
   explorer_draw_drive_card(234, 206, 350, 132, EXPLORER_SOURCE_DISK,
-                           fat32_is_mounted() ? "Pronto para uso"
+                           sdfs_is_mounted() ? "Pronto para uso"
                                               : "Disco indisponivel");
   explorer_draw_drive_card(602, 206, 350, 132, EXPLORER_SOURCE_INITRD,
                            "Imagem live do sistema");

@@ -60,27 +60,25 @@ void display_png(const char *filename) {
 
     png_read_image(png, row_pointers);
 
-    liw_fb_info_t fb;
-    liw_get_fb_info(&fb);
-    
-    int start_x = (fb.width > (uint32_t)width) ? (fb.width - width) / 2 : 0;
-    int start_y = (fb.height > (uint32_t)height) ? (fb.height - height) / 2 : 0;
+    uint32_t *img_buffer = liw_create_buffer(width, height);
+    if (!img_buffer) {
+        printf("view: erro de memoria ao criar buffer\n");
+        return;
+    }
 
-    int display_w = (fb.width < (uint32_t)width) ? fb.width : width;
-    int display_h = (fb.height < (uint32_t)height) ? fb.height : height;
+    printf("Renderizando PNG: %dx%d\n", width, height);
 
-    printf("Renderizando PNG: %dx%d no FB %dx%d\n", width, height, fb.width, fb.height);
-
-    for (int y = 0; y < display_h; y++) {
+    for (int y = 0; y < height; y++) {
         png_bytep row = row_pointers[y];
-        for (int x = 0; x < display_w; x++) {
+        for (int x = 0; x < width; x++) {
             png_bytep px = &(row[x * 4]);
-            uint32_t color = (0xFF << 24) | (px[0] << 16) | (px[1] << 8) | px[2];
-            liw_draw_pixel(start_x + x, start_y + y, color);
+            // Convert RGBA to ARGB/XRGB for LiwusOS
+            img_buffer[y * width + x] = (0xFF << 24) | (px[0] << 16) | (px[1] << 8) | px[2];
         }
     }
 
-    liw_present_fb();
+    liw_present_frame(img_buffer, width, height);
+    free(img_buffer);
 
     for (int y = 0; y < height; y++) free(row_pointers[y]);
     free(row_pointers);
@@ -127,40 +125,40 @@ void display_jpg(const char *filename) {
     int height = cinfo.output_height;
     int components = cinfo.output_components;
 
-    liw_fb_info_t fb;
-    liw_get_fb_info(&fb);
+    uint32_t *img_buffer = liw_create_buffer(width, height);
+    if (!img_buffer) {
+        printf("view: erro de memoria ao criar buffer\n");
+        jpeg_destroy_decompress(&cinfo);
+        fclose(fp);
+        return;
+    }
 
-    int start_x = (fb.width > (uint32_t)width) ? (fb.width - width) / 2 : 0;
-    int start_y = (fb.height > (uint32_t)height) ? (fb.height - height) / 2 : 0;
-
-    int display_w = (fb.width < (uint32_t)width) ? fb.width : width;
-    int display_h = (fb.height < (uint32_t)height) ? fb.height : height;
-
-    printf("Renderizando JPG: %dx%d no FB %dx%d\n", width, height, fb.width, fb.height);
+    printf("Renderizando JPG: %dx%d\n", width, height);
 
     JSAMPROW row_pointer[1];
-    unsigned char *buffer = malloc(width * components);
+    unsigned char *line_buffer = malloc(width * components);
 
-    while (cinfo.output_scanline < (uint32_t)display_h) {
-        row_pointer[0] = buffer;
+    while (cinfo.output_scanline < (uint32_t)height) {
+        row_pointer[0] = line_buffer;
+        int y = cinfo.output_scanline;
         jpeg_read_scanlines(&cinfo, row_pointer, 1);
-        int y = cinfo.output_scanline - 1;
-        for (int x = 0; x < display_w; x++) {
+        for (int x = 0; x < width; x++) {
             uint32_t color;
             if (components == 3) {
-                color = (0xFF << 24) | (buffer[x * 3] << 16) | (buffer[x * 3 + 1] << 8) | buffer[x * 3 + 2];
+                color = (0xFF << 24) | (line_buffer[x * 3] << 16) | (line_buffer[x * 3 + 1] << 8) | line_buffer[x * 3 + 2];
             } else if (components == 1) {
-                color = (0xFF << 24) | (buffer[x] << 16) | (buffer[x] << 8) | buffer[x];
+                color = (0xFF << 24) | (line_buffer[x] << 16) | (line_buffer[x] << 8) | line_buffer[x];
             } else {
                 color = 0;
             }
-            liw_draw_pixel(start_x + x, start_y + y, color);
+            img_buffer[y * width + x] = color;
         }
     }
 
-    liw_present_fb();
+    liw_present_frame(img_buffer, width, height);
 
-    free(buffer);
+    free(line_buffer);
+    free(img_buffer);
     jpeg_finish_decompress(&cinfo);
     jpeg_destroy_decompress(&cinfo);
     fclose(fp);

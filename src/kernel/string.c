@@ -114,10 +114,26 @@ void *memset32(void *dest, uint32_t val, size_t len) {
 }
 
 void *memcpy(void *dest, const void *src, size_t len) {
-  char *d = (char *)dest;
-  const char *s = (const char *)src;
-  while (len--)
-    *d++ = *s++;
+  uint32_t *d = (uint32_t *)dest;
+  const uint32_t *s = (const uint32_t *)src;
+  
+  // Se estiverem alinhados em 4 bytes, podemos usar cópia de 32 bits
+  if (((uintptr_t)dest % 4 == 0) && ((uintptr_t)src % 4 == 0)) {
+    size_t dwords = len >> 2;
+    size_t bytes = len & 3;
+    while (dwords--)
+      *d++ = *s++;
+    
+    char *d8 = (char *)d;
+    const char *s8 = (const char *)s;
+    while (bytes--)
+      *d8++ = *s8++;
+  } else {
+    char *d8 = (char *)dest;
+    const char *s8 = (const char *)src;
+    while (len--)
+      *d8++ = *s8++;
+  }
   return dest;
 }
 
@@ -125,6 +141,8 @@ void *memmove(void *dest, const void *src, size_t len) {
   char *d = (char *)dest;
   const char *s = (const char *)src;
   if (d < s) {
+    // Para d < s, o memcpy otimizado é seguro se não houver sobreposição crítica
+    // Mas por segurança usamos a lógica padrão
     while (len--)
       *d++ = *s++;
   } else {

@@ -12,7 +12,7 @@ volatile install_step_t step = STEP_WELCOME_DISK;
 volatile int install_progress = 0;
 static install_config_t config;
 
-extern int fat32_format(int *progress);
+extern int sdfs_format(void);
 
 void task_installer();
 
@@ -20,7 +20,7 @@ void start_installation() { create_task(task_installer); }
 
 void task_installer() {
   step = STEP_FORMATTING;
-  fat32_format((int *)&install_progress);
+  sdfs_format();
 
   step = STEP_COPYING;
   install_progress = 0;

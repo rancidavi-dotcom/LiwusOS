@@ -1,5 +1,5 @@
 #include "editor.h"
-#include "fat32.h"
+#include "sdfs.h"
 #include "kheap.h"
 #include "string.h"
 #include "timer.h"
@@ -145,7 +145,7 @@ static void editor_refresh_entries(void) {
   editor_entry_count    = 0;
   editor_selected_index = -1;
 
-  if (!fat32_is_mounted()) {
+  if (!sdfs_is_mounted()) {
     editor_set_status("Disco C:/ indisponivel.");
     return;
   }
@@ -159,7 +159,7 @@ static void editor_refresh_entries(void) {
   for (int i = 0; i < 40 && editor_entry_count < 40; i++) {
     int      is_dir = 0;
     uint32_t size   = 0;
-    if (!fat32_list_dir_entry(editor_path, i,
+    if (!sdfs_list_dir_entry(editor_path, i,
                               editor_entries[editor_entry_count].name,
                               &is_dir, &size))
       break;
@@ -203,7 +203,7 @@ static void editor_open_selected(void) {
   }
   editor_path_join(editor_entries[editor_selected_index].name, full_path,
                    sizeof(full_path));
-  data = fat32_read_file_path(full_path, &size);
+  data = sdfs_read_file(full_path, &size);
   if (!data) { editor_set_status("Falha ao abrir arquivo."); return; }
 
   strncpy(editor_name, editor_entries[editor_selected_index].name,
@@ -236,11 +236,11 @@ static void editor_new_file(void) {
 
 static void editor_save_file(void) {
   char full_path[160];
-  if (!fat32_is_mounted()) { editor_set_status("Disco C:/ indisponivel."); return; }
+  if (!sdfs_is_mounted()) { editor_set_status("Disco C:/ indisponivel."); return; }
   if (!editor_name[0])     { editor_set_status("Defina um nome para salvar."); return; }
   editor_path_join(editor_name, full_path, sizeof(full_path));
-  fat32_create_file_path(full_path);
-  fat32_write_file_path(full_path, (uint8_t *)editor_text, strlen(editor_text));
+  sdfs_create_file(full_path);
+  sdfs_write_file(full_path, (uint8_t *)editor_text, strlen(editor_text));
   strncpy(editor_current_file, editor_name, sizeof(editor_current_file) - 1);
   editor_current_file[sizeof(editor_current_file) - 1] = '\0';
   editor_refresh_entries();
@@ -669,7 +669,7 @@ void open_editor_with_file(const char *path) {
   if (!editor_win) init_editor();
 
   uint32_t size = 0;
-  void *data = fat32_read_file_path(path, &size);
+  void *data = sdfs_read_file(path, &size);
 
   // Limpa estado anterior
   editor_text[0] = '\0';

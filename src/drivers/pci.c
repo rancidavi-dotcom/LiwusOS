@@ -44,6 +44,17 @@ void pci_init() {
         d->class_id = (class_reg >> 24) & 0xFF;
         d->subclass_id = (class_reg >> 16) & 0xFF;
 
+        if (d->class_id == 0x0C && d->subclass_id == 0x03) {
+            uint8_t pi = (class_reg >> 8) & 0xFF;
+            serial_print("PCI: Found USB Controller (");
+            if (pi == 0x00) serial_print("UHCI");
+            else if (pi == 0x10) serial_print("OHCI");
+            else if (pi == 0x20) serial_print("EHCI");
+            else if (pi == 0x30) serial_print("xHCI");
+            else serial_print("Unknown");
+            serial_print(")\n");
+        }
+
         uint32_t int_reg = pci_read_config(bus, dev, 0, 0x3C);
         d->interrupt_line = int_reg & 0xFF;
 
@@ -91,6 +102,21 @@ pci_device_t *pci_get_wireless() {
     if (devices[i]->class_id == 0x02 &&
         (devices[i]->subclass_id == 0x80 || devices[i]->subclass_id == 0x11)) {
       return devices[i];
+    }
+  }
+  return (void *)0;
+}
+
+pci_device_t *pci_get_usb(uint8_t interface_type) {
+  for (int i = 0; i < pci_count; i++) {
+    // Class 0x0C (Serial Bus), Subclass 0x03 (USB)
+    if (devices[i]->class_id == 0x0C && devices[i]->subclass_id == 0x03) {
+      // Opcionalmente podemos filtrar por interface (UHCI=0x00, OHCI=0x10, EHCI=0x20, xHCI=0x30)
+      if (interface_type == 0xFF) return devices[i];
+      
+      uint32_t class_reg = pci_read_config(devices[i]->bus, devices[i]->device, devices[i]->function, 0x08);
+      uint8_t prog_if = (class_reg >> 8) & 0xFF;
+      if (prog_if == interface_type) return devices[i];
     }
   }
   return (void *)0;

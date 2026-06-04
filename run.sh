@@ -16,6 +16,7 @@ docker run --rm \
 
 # Roda o QEMU nativamente (fora do Docker)
 exec qemu-system-i386 \
+    -nodefaults \
     -cdrom liwusos.iso \
     -drive file=liwus_disk.img,format=raw,index=0,media=disk \
     -m 512M \
@@ -23,4 +24,5 @@ exec qemu-system-i386 \
     -vga std \
     -serial stdio \
     -net nic,model=rtl8139 \
-    -net user,hostfwd=tcp::2222-:2222
+    -net user,hostfwd=tcp::2222-:2222 \
+    -usb -device usb-ehci,id=ehci -device usb-kbd,bus=ehci.0 -device usb-mouse,bus=ehci.0

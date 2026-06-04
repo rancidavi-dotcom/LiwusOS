@@ -185,6 +185,8 @@ int netstack_ping(uint32_t dest_ip, uint32_t timeout_ticks) {
 }
 
 uint32_t netstack_get_my_ip(void) { return my_ip; }
+void netstack_set_my_ip(uint32_t ip) { my_ip = ip; }
+void netstack_set_gateway(uint32_t ip) { gateway_ip = ip; }
 
 static uint32_t netstack_next_hop(uint32_t dest_ip) {
   if ((dest_ip & 0x00FFFFFFU) == (my_ip & 0x00FFFFFFU)) {
@@ -355,6 +357,15 @@ void netstack_handle_packet(void *data, uint16_t len) {
     if (ip->proto == 1) { // ICMP
       icmp_packet_t *icmp =
           (icmp_packet_t *)((uintptr_t)data + sizeof(ethernet_frame_t) + 20);
+      serial_print("[net] icmp rx type=");
+      char tbuf[12]; itoa(icmp->type, tbuf, 10); serial_print(tbuf);
+      serial_print(" src="); 
+      char ipbuf[16];
+      itoa(ip->src_ip & 0xFF, ipbuf, 10); serial_print(ipbuf); serial_print(".");
+      itoa((ip->src_ip >> 8) & 0xFF, ipbuf, 10); serial_print(ipbuf); serial_print(".");
+      itoa((ip->src_ip >> 16) & 0xFF, ipbuf, 10); serial_print(ipbuf); serial_print(".");
+      itoa((ip->src_ip >> 24) & 0xFF, ipbuf, 10); serial_print(ipbuf); serial_print("\n");
+
       if (icmp->type == 8) { // Echo Request
         icmp->type = 0;      // Echo Reply
         icmp->checksum = 0;

@@ -43,6 +43,19 @@ void init_mouse() {
     mouse_x = 640; mouse_y = 360;
 }
 
+void mouse_handle_event(int x_rel, int y_rel, int buttons) {
+    left_clicked = (buttons & 0x01);
+    
+    // SENSIBILIDADE AUMENTADA: Multiplicamos por 3
+    mouse_x += (x_rel * 3);
+    mouse_y -= (y_rel * 3);
+
+    if (mouse_x < 0) mouse_x = 0;
+    if (mouse_y < 0) mouse_y = 0;
+    if (mouse_x >= 1024) mouse_x = 1023;
+    if (mouse_y >= 768) mouse_y = 767;
+}
+
 void mouse_handler() {
     uint8_t status = inb(0x64);
     // Verifica se há dados e se os dados são do mouse (bit 5)

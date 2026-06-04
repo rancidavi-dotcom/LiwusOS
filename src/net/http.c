@@ -113,9 +113,9 @@ int http_get(const char *host, uint16_t port, const char *path, char *response,
   char request[512];
   strcpy(request, "GET ");
   strcat(request, path);
-  strcat(request, " HTTP/1.0\r\nHost: ");
+  strcat(request, " HTTP/1.1\r\nHost: ");
   strcat(request, host);
-  strcat(request, "\r\nConnection: close\r\n\r\n");
+  strcat(request, "\r\nUser-Agent: LiwusOS/2.0\r\nConnection: close\r\n\r\n");
 
   http_log("[http] request bytes=");
   http_log_u32((uint32_t)strlen(request));
@@ -130,18 +130,28 @@ int http_get(const char *host, uint16_t port, const char *path, char *response,
   int received;
   uint8_t *chunk = (uint8_t *)kmalloc(1024);
 
-  while ((received = tcp_receive(sock, chunk, 1023)) > 0) {
-    http_log("[http] recv chunk=");
-    http_log_u32((uint32_t)received);
-    http_log("\n");
-    if (total + received >= max_len - 1) {
-      received = max_len - 1 - total;
+  // Loop com retries para dar tempo de pacotes chegarem da rede externa
+  int retries = 0;
+  while (total < max_len - 1 && retries < 100) {
+    received = tcp_receive(sock, chunk, 1023);
+    if (received > 0) {
+        http_log("[http] recv chunk=");
+        http_log_u32((uint32_t)received);
+        http_log("\n");
+        if (total + received >= max_len - 1) {
+          received = max_len - 1 - total;
+        }
+        memcpy(response + total, chunk, received);
+        total += received;
+        retries = 0; // Reset retries on data
+    } else if (received == 0) {
+        // Nada agora, espera um pouco
+        retries++;
+        for(int i=0; i<10; i++) switch_task();
+    } else {
+        // Erro ou conexão fechada pelo peer
+        break;
     }
-    memcpy(response + total, chunk, received);
-    total += received;
-
-    if (total >= max_len - 1)
-      break;
   }
   response[total] = '\0';
   kfree(chunk);

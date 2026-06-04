@@ -45,10 +45,10 @@ typedef struct {
 } task_info_t;
 
 void init_tasking();
-void create_task(void (*entry_point)());
-void create_task_named(void (*entry_point)(), const char *name);
-void create_user_task(uint32_t entry_point, uint32_t user_stack);
-void create_user_task_named(uint32_t entry_point, uint32_t user_stack,
+int create_task(void (*entry_point)());
+int create_task_named(void (*entry_point)(), const char *name);
+int create_user_task(uint32_t entry_point, uint32_t user_stack);
+int create_user_task_named(uint32_t entry_point, uint32_t user_stack,
                             const char *name);
 void switch_task();
 uint32_t schedule(uint32_t current_esp);

@@ -2,6 +2,7 @@
 #include "gdt.h" // TSS
 #include "isr.h" // registers_t
 #include "kheap.h"
+#include "serial.h"
 #include "string.h"
 #include "syscall.h"
 #include "vmm.h" // page_directory_t
@@ -13,6 +14,9 @@ extern page_directory_t *current_directory;
 
 static int next_pid = 1;
 static uint32_t global_switch_count = 0;
+
+// Helper function to convert int to string if not in string.h
+extern char *itoa(int value, char *str, int base);
 
 static void task_assign_name(task_t *task, const char *name, bool user_mode) {
   if (!task) {
@@ -41,15 +45,17 @@ void init_tasking() {
   task_list = current_task;
 }
 
-void create_task(void (*entry_point)()) {
-  create_task_named(entry_point, NULL);
+int create_task(void (*entry_point)()) {
+  return create_task_named(entry_point, NULL);
 }
 
-void create_task_named(void (*entry_point)(), const char *name) {
+int create_task_named(void (*entry_point)(), const char *name) {
   task_t *new_task = (task_t *)kmalloc(sizeof(task_t));
   memset(new_task, 0, sizeof(task_t));
   new_task->id = next_pid++;
+  int pid = new_task->id;
   new_task->state = TASK_READY;
+  new_task->parent = current_task;
   new_task->page_directory = current_directory;
   new_task->user_mode = false;
   task_assign_name(new_task, name, false);
@@ -78,13 +84,14 @@ void create_task_named(void (*entry_point)(), const char *name) {
 
   new_task->next = task_list->next;
   task_list->next = new_task;
+  return pid;
 }
 
-void create_user_task(uint32_t entry_point, uint32_t user_stack) {
-  create_user_task_named(entry_point, user_stack, NULL);
+int create_user_task(uint32_t entry_point, uint32_t user_stack) {
+  return create_user_task_named(entry_point, user_stack, NULL);
 }
 
-void create_user_task_named(uint32_t entry_point, uint32_t user_stack,
+int create_user_task_named(uint32_t entry_point, uint32_t user_stack,
                             const char *name) {
   task_t *new_task = (task_t *)kmalloc(sizeof(task_t));
   uint32_t stack;
@@ -92,7 +99,9 @@ void create_user_task_named(uint32_t entry_point, uint32_t user_stack,
 
   memset(new_task, 0, sizeof(task_t));
   new_task->id = next_pid++;
+  int pid = new_task->id;
   new_task->state = TASK_READY;
+  new_task->parent = current_task;
   new_task->page_directory = current_directory;
   new_task->user_mode = true;
   task_assign_name(new_task, name, true);
@@ -118,6 +127,7 @@ void create_user_task_named(uint32_t entry_point, uint32_t user_stack,
 
   new_task->next = task_list->next;
   task_list->next = new_task;
+  return pid;
 }
 
 void switch_task() { asm volatile("int $32"); }
@@ -269,6 +279,25 @@ int fork_process(registers_t *regs) {
 int sys_waitpid(int pid, int *status, int options) {
   (void)options;
   task_t *parent = current_task;
+  char nbuf[16];
+
+  serial_print("waitpid: parent="); serial_print(parent->name);
+  serial_print(" (pid="); itoa(parent->id, nbuf, 10); serial_print(nbuf);
+  serial_print(") waiting for pid="); itoa(pid, nbuf, 10); serial_print(nbuf);
+  serial_print("\n");
+
+  serial_print("waitpid: scanning task list...\n");
+  task_t *scan = task_list;
+  do {
+      serial_print("  task: name="); serial_print(scan->name);
+      serial_print(" pid="); itoa(scan->id, nbuf, 10); serial_print(nbuf);
+      serial_print(" parent_pid="); 
+      if (scan->parent) { itoa(scan->parent->id, nbuf, 10); serial_print(nbuf); }
+      else serial_print("NULL");
+      serial_print(" state="); serial_print(task_state_name(scan->state));
+      serial_print("\n");
+      scan = scan->next;
+  } while (scan != task_list);
 
   while (1) {
     task_t *t = task_list;
@@ -276,10 +305,11 @@ int sys_waitpid(int pid, int *status, int options) {
     bool any_child = false;
 
     do {
-      if (t->parent == parent) {
+      if (t->parent && t->parent->id == parent->id) {
         any_child = true;
         if (pid == -1 || t->id == pid) {
           if (t->state == TASK_ZOMBIE) {
+            serial_print("waitpid: found zombie child pid="); itoa(t->id, nbuf, 10); serial_print(nbuf); serial_print("\n");
             if (status)
               *status = t->exit_code;
             int child_id = t->id;
@@ -299,8 +329,10 @@ int sys_waitpid(int pid, int *status, int options) {
       t = t->next;
     } while (t != task_list);
 
-    if (!any_child || (pid != -1 && !found))
+    if (!any_child || (pid != -1 && !found)) {
+      serial_print("waitpid: no child found, returning -1\n");
       return -1;
+    }
 
     // Wait and reschedule
     parent->state = TASK_SLEEPING;

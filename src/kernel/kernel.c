@@ -1,5 +1,5 @@
 #include "ata.h"
-#include "fat32.h"
+#include "sdfs.h"
 #include "gdt.h"
 #include "idt.h"
 #include "initrd.h"
@@ -32,6 +32,7 @@
 #include <stdint.h>
 
 bool is_live_mode = true; // Definir global
+uint32_t memory_size = 0;
 
 extern uint32_t end;
 extern void refresh_screen();
@@ -72,22 +73,20 @@ void task_terminal_loop() {
   }
 }
 
-static void ensure_fat32_disk_ready(void) {
-  int format_progress = 0;
-
-  fs_node_t *fat_root = fat32_mount(ATA_PRIMARY, ATA_MASTER, 0);
-  if (!fat_root) {
-    serial_print("FAT32 mount failed, formatting disk...\n");
-    if (fat32_format(&format_progress) == 0) {
-      fat_root = fat32_mount(ATA_PRIMARY, ATA_MASTER, 0);
+static void ensure_disk_ready(void) {
+  fs_node_t *sdfs_root = sdfs_mount(ATA_PRIMARY, ATA_MASTER, 0);
+  if (!sdfs_root) {
+    serial_print("SDFS mount failed, formatting disk...\n");
+    if (sdfs_format() == 0) {
+      sdfs_root = sdfs_mount(ATA_PRIMARY, ATA_MASTER, 0);
     }
   }
 
-  if (fat_root) {
-    vfs_mount("/house/localhost", fat_root);
-    serial_print("FAT32 disk mounted at /house/localhost\n");
+  if (sdfs_root) {
+    vfs_mount("/house/localhost", sdfs_root);
+    serial_print("SDFS disk mounted at /house/localhost\n");
   } else {
-    serial_print("FAT32 disk unavailable\n");
+    serial_print("SDFS disk unavailable\n");
   }
 }
 
@@ -110,7 +109,7 @@ void init_fpu() {
 void kernel_main(uint32_t magic, multiboot_info_t *mbi) {
   (void)magic;
   uint32_t reserved_start = (uint32_t)&end + 0x1000;
-  uint32_t memory_size = mbi->mem_upper * 1024;
+  memory_size = mbi->mem_upper * 1024;
   uint32_t pmm_bitmap_bytes;
   uint32_t heap_start;
 
@@ -152,6 +151,9 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbi) {
   tcp_init();
   udp_init();
   dns_init();
+  
+  extern void usb_init();
+  usb_init();
 
   if (mbi->mods_count > 0) {
     multiboot_module_t *mods = (multiboot_module_t *)mbi->mods_addr;
@@ -172,11 +174,19 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbi) {
       serial_print("No ethernet device found\n");
     }
   }
-  ensure_fat32_disk_ready();
+  ensure_disk_ready();
 
   init_timer(100);
   init_tasking();
   init_syscalls();
+  
+  extern void dns_init();
+  extern void dhcp_init();
+  extern void dhcp_discover();
+  dns_init();
+  dhcp_init();
+  dhcp_discover();
+
   create_task_named(task_terminal_loop, "terminal");
 
   extern void liwshd_loop();

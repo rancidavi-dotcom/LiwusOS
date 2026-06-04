@@ -24,6 +24,12 @@ static uint32_t resolved_ip = 0;
 static uint16_t last_dns_id = 0;
 static bool dns_ready = false;
 
+static uint32_t dns_server_ip = DNS_SERVER_IP;
+
+void dns_set_server(uint32_t ip) {
+    dns_server_ip = ip;
+}
+
 static void dns_callback(uint32_t src_ip, uint16_t src_port, void *data, uint16_t len) {
     (void)src_ip; (void)src_port; (void)len;
     dns_header_t *hdr = (dns_header_t *)data;
@@ -112,7 +118,7 @@ uint32_t dns_resolve(const char *hostname) {
     serial_print(hostname);
     serial_print("\n");
 
-    udp_send(DNS_SERVER_IP, DNS_LOCAL_PORT, DNS_PORT, packet, total_len);
+    udp_send(dns_server_ip, DNS_LOCAL_PORT, DNS_PORT, packet, total_len);
 
     uint32_t start = timer_ticks;
     while (!dns_ready && (timer_ticks - start) < 500) {

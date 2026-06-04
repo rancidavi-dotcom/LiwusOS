@@ -1,6 +1,6 @@
 #include "terminal.h"
 #include "compositor.h"
-#include "fat32.h"
+#include "sdfs.h"
 #include "io.h"
 #include "kheap.h"
 #include "lvgl_shell.h"
@@ -120,13 +120,19 @@ static void terminal_trim_output(size_t incoming_len) {
     return;
   }
 
-  size_t drop = current_len / 2;
+  // Se precisar de espaço, removemos o suficiente para caber incoming_len + 1/4 do buffer de folga
+  size_t needed = incoming_len + (sizeof(output_text) / 4);
+  if (needed > current_len) needed = current_len;
+  
+  size_t drop = needed;
   while (drop < current_len && output_text[drop] != '\n') {
     drop++;
   }
   if (drop < current_len && output_text[drop] == '\n') {
     drop++;
   }
+
+  if (drop > current_len) drop = current_len;
 
   memmove(output_text, output_text + drop, current_len - drop + 1);
 }
@@ -158,15 +164,14 @@ void terminal_append_output_n(const char *text, int len) {
 
   size_t current_len = strlen(output_text);
   size_t available = sizeof(output_text) - current_len - 1;
-  size_t to_copy = (size_t)len < available ? (size_t)len : available;
+  size_t to_copy = (size_t)len;
+  if (to_copy > available) to_copy = available;
 
-  if (to_copy == 0) {
-    return;
+  if (to_copy > 0) {
+    memcpy(output_text + current_len, text, to_copy);
+    output_text[current_len + to_copy] = '\0';
+    terminal_output_dirty = true;
   }
-
-  memcpy(output_text + current_len, text, to_copy);
-  output_text[current_len + to_copy] = '\0';
-  terminal_output_dirty = true;
 }
 
 void terminal_append_output(const char *text) {
@@ -348,6 +353,32 @@ static void terminal_join_filename(const char *name, char *out, size_t out_size)
   terminal_normalize_path(name, out, out_size);
 }
 
+static void terminal_resolve_path(const char *name, char *out, size_t out_size) {
+  char tmp[192];
+  terminal_normalize_path(name, tmp, sizeof(tmp));
+  if (strncmp(tmp, "/house/localhost", 16) == 0) {
+    strncpy(out, tmp, out_size - 1);
+    out[out_size - 1] = 0;
+  } else {
+    // Se não começar com /house/localhost, forçamos o prefixo para operações SDFS
+    if (tmp[0] == '/') {
+        snprintf(out, out_size, "/house/localhost%s", tmp);
+    } else {
+        snprintf(out, out_size, "/house/localhost/%s", tmp);
+    }
+  }
+}
+
+// Retorna o caminho relativo ao root do SDFS ou NULL se não for um caminho SDFS
+static const char* terminal_get_sdfs_path(const char* full_path) {
+    if (strncmp(full_path, "/house/localhost", 16) == 0) {
+        const char* p = full_path + 16;
+        if (*p == '\0') return "/";
+        return p;
+    }
+    return NULL;
+}
+
 static void terminal_print_path(const char *path) {
   char label[160];
   terminal_build_path_label(path, label, sizeof(label));
@@ -361,17 +392,22 @@ static int terminal_copy_file(const char *src_path, const char *dst_path,
   int is_dir = 0;
   void *data;
 
-  if (!fat32_path_info(src_path, &is_dir, &size) || is_dir) {
+  const char *s_src = terminal_get_sdfs_path(src_path);
+  const char *s_dst = terminal_get_sdfs_path(dst_path);
+
+  if (!s_src || !s_dst) return -1;
+
+  if (!sdfs_path_info(s_src, &is_dir, &size) || is_dir) {
     return -1;
   }
 
-  data = fat32_read_file_path(src_path, &size);
+  data = sdfs_read_file(s_src, &size);
   if (!data) {
     return -1;
   }
 
-  fat32_create_file_path(dst_path);
-  if (fat32_write_file_path(dst_path, (uint8_t *)data, size) != size) {
+  sdfs_create_file(s_dst);
+  if (sdfs_write_file(s_dst, (uint8_t *)data, size) != size) {
     kfree(data);
     return -1;
   }
@@ -379,7 +415,7 @@ static int terminal_copy_file(const char *src_path, const char *dst_path,
   kfree(data);
 
   if (remove_source) {
-    if (fat32_delete_path(src_path) != 0) {
+    if (sdfs_delete(s_src) != 0) {
       return -1;
     }
   }
@@ -407,13 +443,15 @@ static void terminal_editor_open(const char *path) {
     editor_file_name[sizeof(editor_file_name) - 1] = '\0';
   }
 
+  const char* s_path = terminal_get_sdfs_path(path);
+
   editor_buffer[0] = '\0';
-  if (fat32_path_info(path, &is_dir, &size)) {
+  if (s_path && sdfs_path_info(s_path, &is_dir, &size)) {
     if (is_dir) {
       terminal_append_output("Nao e possivel editar um diretorio.\n");
       return;
     }
-    data = fat32_read_file_path(path, &size);
+    data = sdfs_read_file(s_path, &size);
     if (data) {
       if (size >= sizeof(editor_buffer)) {
         size = sizeof(editor_buffer) - 1;
@@ -437,8 +475,14 @@ static void terminal_editor_save(void) {
     return;
   }
 
-  fat32_create_file_path(editor_file_path);
-  fat32_write_file_path(editor_file_path, (uint8_t *)editor_buffer,
+  const char* s_path = terminal_get_sdfs_path(editor_file_path);
+  if (!s_path) {
+      terminal_append_output("Erro: Editor so pode salvar em /house/localhost.\n");
+      return;
+  }
+
+  sdfs_create_file(s_path);
+  sdfs_write_file(s_path, (uint8_t *)editor_buffer,
                         strlen(editor_buffer));
   terminal_append_output("Arquivo salvo.\n");
 }
@@ -458,6 +502,60 @@ static void terminal_open_top(void) {
   terminal_mode = TERM_MODE_TOP;
   terminal_live_last_tick = 0;
   terminal_output_dirty = true;
+}
+
+static uint32_t vga_palette[16] = {
+    0x00000000, 0x000000AA, 0x0000AA00, 0x0000AAAA,
+    0x00AA0000, 0x00AA00AA, 0x00AA5500, 0x00AAAAAA,
+    0x00555555, 0x005555FF, 0x0055FF55, 0x0055FFFF,
+    0x00FF5555, 0x00FF55FF, 0x00FFFF55, 0x00FFFFFF,
+};
+
+static void vga_text_to_fb() {
+    if (!backbuffer || screen_width == 0 || screen_height == 0) return;
+    video_reset_target();
+    clear_screen(0x00111111);
+
+    char *text = output_text;
+    int text_len = strlen(text);
+
+    int line_starts[64];
+    int line_count = 0;
+    int i = 0;
+
+    while (i < text_len && line_count < 64) {
+        line_starts[line_count++] = i;
+        while (i < text_len && text[i] != '\n') i++;
+        if (i < text_len && text[i] == '\n') i++;
+    }
+
+    int start_line = 0;
+    if (line_count > 24) start_line = line_count - 24;
+
+    int row = 0;
+    for (int l = start_line; l < line_count && row < 25; l++, row++) {
+        int pos = line_starts[l];
+        int col = 0;
+        while (pos < text_len && text[pos] != '\n' && col < 80) {
+            if (text[pos] >= 0x20)
+                draw_char(col * 8, row * 16, text[pos], 0x00AAAAAA);
+            col++;
+            pos++;
+        }
+    }
+
+    row = 24;
+    int col = 0;
+    for (int p = 0; prompt_line[p] && col < 80; p++) {
+        draw_char(col * 8, row * 16, prompt_line[p], 0x0000AA00);
+        col++;
+    }
+    for (int p = 0; input_buffer[p] && col < 80; p++) {
+        draw_char(col * 8, row * 16, input_buffer[p], 0x00AAAAAA);
+        col++;
+    }
+
+    refresh_screen();
 }
 
 static void terminal_redraw_vga() {
@@ -573,6 +671,7 @@ static void terminal_redraw_vga() {
         initial_redraw = false;
     }
   }
+  vga_text_to_fb();
 }
 
 static void terminal_redraw() {
@@ -762,24 +861,37 @@ static void terminal_redraw() {
     // 3. Desenhar Conteúdo
     int x = 10, y = 35;
     char *str = output_text;
-    while (*str) {
-      if (*str == '\n') {
-        x = 10;
-        y += 16;
-      } else {
-        draw_char(x, y, *str, 0xAAAAAA);
-        x += 8;
-      }
-      str++;
+    int line_count = 0;
+    
+    // Contar total de linhas
+    for (char *p = output_text; *p; p++) {
+        if (*p == '\n') line_count++;
+    }
+    
+    // Determinar quantas linhas cabem (aprox. 16 pixels por linha)
+    int max_visible_lines = (content_bottom - 35) / 16;
+    int start_line = 0;
+    if (line_count > max_visible_lines) {
+        start_line = line_count - max_visible_lines;
+    }
+    
+    // Pular linhas até start_line
+    int current_l = 0;
+    while (*str && current_l < start_line) {
+        if (*str == '\n') current_l++;
+        str++;
     }
 
+    // Desenhar apenas o que cabe
     while (*str) {
       if (*str == '\n') {
         x = 10;
         y += 16;
       } else {
-        draw_char(x, y, *str, 0xAAAAAA);
-        x += 8;
+        if (x < render_w - 10) {
+            draw_char(x, y, *str, 0xAAAAAA);
+            x += 8;
+        }
       }
       if (y > content_bottom - 16) {
         break;
@@ -901,8 +1013,9 @@ static void terminal_list_dir(const char *path) {
 
 // Helper to tokenize command
 void exec_command_term(const char *cmd_raw) {
-  char cmd_buf[128];
-  strcpy(cmd_buf, cmd_raw);
+  char cmd_buf[256];
+  strncpy(cmd_buf, cmd_raw, sizeof(cmd_buf) - 1);
+  cmd_buf[sizeof(cmd_buf) - 1] = '\0';
 
   char *args[10];
   int argc = 0;
@@ -945,19 +1058,11 @@ void exec_command_term(const char *cmd_raw) {
     terminal_append_output("  zip, unzip       - Comprimir\n");
     terminal_append_output("  view [imagem]    - Ver PNG/JPG\n");
     terminal_append_output("  free, df         - Memoria e Disco\n");
+    terminal_append_output("  ifconfig, ping   - Rede\n");
     terminal_append_output("  uname, whoami    - Sistema e Usuario\n");
     terminal_append_output("  uptime, date     - Tempo\n");
-    terminal_append_output("  lua, crun, edit  - Desenvolvimento\n");
+    terminal_append_output("  lua, crun        - Desenvolvimento\n");
     terminal_append_output("  clear, reboot    - Controle\n");
-  } else if (strcmp(cmd, "view") == 0) {
-    if (argc < 2) {
-      terminal_append_output("Usage: view <imagem.png/jpg>\n");
-    } else {
-      terminal_append_output("Visualizador: Renderizando ");
-      terminal_append_output(args[1]);
-      terminal_append_output("...\n");
-      // Aqui as libs PNG/JPEG que compilamos serao usadas futuramente
-    }
   } else if (strcmp(cmd, "uname") == 0) {
     terminal_append_output("LiwusOS 2.0-brabo (i686-elf)\n");
   } else if (strcmp(cmd, "whoami") == 0) {
@@ -983,7 +1088,7 @@ void exec_command_term(const char *cmd_raw) {
   } else if (strcmp(cmd, "df") == 0) {
     terminal_append_output("Filesystem      Size  Used  Avail Use%\n");
     terminal_append_output("initrd (/)      512K  512K     0  100%\n");
-    terminal_append_output("FAT32 (C:/)     100M   12K   99M    1%\n");
+    terminal_append_output("SDFS (C:/)      100M   12K   99M    1%\n");
   } else if (strcmp(cmd, "date") == 0) {
     terminal_append_output("Segunda, 13 de Abril de 2026\n");
   } else if (strcmp(cmd, "clear") == 0) {
@@ -1025,8 +1130,9 @@ void exec_command_term(const char *cmd_raw) {
       terminal_append_output("Usage: touch <arquivo>\n");
     } else {
       terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
-      if (fat32_create_file_path(resolved_a) == 0) {
-        fat32_write_file_path(resolved_a, (uint8_t *)"", 0);
+      const char* s_path = terminal_get_sdfs_path(resolved_a);
+      if (s_path && sdfs_create_file(s_path) == 0) {
+        sdfs_write_file(s_path, (uint8_t *)"", 0);
         terminal_append_output("Arquivo ");
         terminal_append_output(resolved_a);
         terminal_append_output(" criado.\n");
@@ -1039,30 +1145,35 @@ void exec_command_term(const char *cmd_raw) {
       terminal_append_output("Usage: create <file> \"content\"\n");
     } else {
       terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
-      char *content = "";
-      // Procura conteúdo após o nome do arquivo, lidando com aspas se houver
-      char *raw_cmd = (char *)cmd_raw;
-      char *ptr = strstr(raw_cmd, args[1]);
-      if (ptr) {
-        ptr += strlen(args[1]);
-        while (*ptr == ' ') ptr++;
-        if (*ptr == '"') {
-          ptr++;
-          content = ptr;
-          char *end = strchr(content, '"');
-          if (end) *end = '\0';
-        } else {
-          content = ptr;
-        }
-      }
-      
-      fat32_create_file_path(resolved_a);
-      if (fat32_write_file_path(resolved_a, (uint8_t *)content, strlen(content)) >= 0) {
-        terminal_append_output("Arquivo '");
-        terminal_append_output(args[1]);
-        terminal_append_output("' criado com sucesso.\n");
+      const char* s_path = terminal_get_sdfs_path(resolved_a);
+      if (!s_path) {
+          terminal_append_output("Erro: Escrita permitida apenas em /house/localhost.\n");
       } else {
-        terminal_append_output("Erro ao escrever arquivo.\n");
+          char *content = "";
+          // Procura conteúdo após o nome do arquivo, lidando com aspas se houver
+          char *raw_cmd = (char *)cmd_raw;
+          char *ptr = strstr(raw_cmd, args[1]);
+          if (ptr) {
+            ptr += strlen(args[1]);
+            while (*ptr == ' ') ptr++;
+            if (*ptr == '"') {
+              ptr++;
+              content = ptr;
+              char *end = strchr(content, '"');
+              if (end) *end = '\0';
+            } else {
+              content = ptr;
+            }
+          }
+          
+          sdfs_create_file(s_path);
+          if (sdfs_write_file(s_path, (uint8_t *)content, strlen(content)) >= 0) {
+            terminal_append_output("Arquivo '");
+            terminal_append_output(args[1]);
+            terminal_append_output("' criado com sucesso.\n");
+          } else {
+            terminal_append_output("Erro ao escrever arquivo.\n");
+          }
       }
     }
   } else if (strcmp(cmd, "mkdir") == 0) {
@@ -1070,10 +1181,11 @@ void exec_command_term(const char *cmd_raw) {
       terminal_append_output("Usage: mkdir <pasta>\n");
     } else {
       terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
-      if (fat32_create_dir(resolved_a) == 0) {
+      const char* s_path = terminal_get_sdfs_path(resolved_a);
+      if (s_path && sdfs_create_dir(s_path) == 0) {
         terminal_append_output("Pasta criada.\n");
       } else {
-        terminal_append_output("Falha ao criar pasta.\n");
+        terminal_append_output("Falha ao criar pasta: Verifique se o caminho esta em /house/localhost.\n");
       }
     }
   } else if (strcmp(cmd, "rm") == 0) {
@@ -1081,7 +1193,8 @@ void exec_command_term(const char *cmd_raw) {
       terminal_append_output("Usage: rm <arquivo>\n");
     } else {
       terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
-      if (fat32_delete_path(resolved_a) == 0) {
+      const char* s_path = terminal_get_sdfs_path(resolved_a);
+      if (s_path && sdfs_delete(s_path) == 0) {
         terminal_append_output("Item removido.\n");
       } else {
         terminal_append_output("Falha ao remover item.\n");
@@ -1096,7 +1209,7 @@ void exec_command_term(const char *cmd_raw) {
       if (terminal_copy_file(resolved_a, resolved_b, false) == 0) {
         terminal_append_output("Arquivo copiado.\n");
       } else {
-        terminal_append_output("Falha ao copiar arquivo.\n");
+        terminal_append_output("Falha ao copiar arquivo (apenas SDFS suportado).\n");
       }
     }
   } else if (strcmp(cmd, "mv") == 0) {
@@ -1105,8 +1218,11 @@ void exec_command_term(const char *cmd_raw) {
     } else {
       terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
       terminal_join_filename(args[2], resolved_b, sizeof(resolved_b));
-      if (fat32_rename_path(resolved_a, resolved_b) == 0 ||
-          terminal_copy_file(resolved_a, resolved_b, true) == 0) {
+      const char* s_a = terminal_get_sdfs_path(resolved_a);
+      const char* s_b = terminal_get_sdfs_path(resolved_b);
+      if (s_a && s_b && sdfs_rename(s_a, s_b) == 0) {
+          terminal_append_output("Item movido.\n");
+      } else if (terminal_copy_file(resolved_a, resolved_b, true) == 0) {
         terminal_append_output("Item movido.\n");
       } else {
         terminal_append_output("Falha ao mover item.\n");
@@ -1124,23 +1240,6 @@ void exec_command_term(const char *cmd_raw) {
       terminal_append_output("Usage: zip <saida.zip> <entrada>\n");
     } else {
       terminal_append_output("Compactando via Zlib...\n");
-    }
-  } else if (strcmp(cmd, "view") == 0) {
-    if (argc < 2) {
-      terminal_append_output("Usage: view <imagem.png>\n");
-    } else {
-      terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
-      char exec_cmd[256];
-      strcpy(exec_cmd, "exec view.liwpkg ");
-      strcat(exec_cmd, resolved_a);
-      exec_command_term(exec_cmd);
-    }
-  } else if (strcmp(cmd, "edit") == 0) {
-    if (argc < 2) {
-      terminal_append_output("Usage: edit <arquivo>\n");
-    } else {
-      terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
-      terminal_editor_open(resolved_a);
     }
   } else if (strcmp(cmd, "top") == 0) {
     terminal_open_top();
@@ -1251,11 +1350,16 @@ void exec_command_term(const char *cmd_raw) {
         terminal_append_output("Falha no download.\n");
       } else if (argc >= 3) {
         terminal_join_filename(args[2], resolved_a, sizeof(resolved_a));
-        fat32_create_file_path(resolved_a);
-        fat32_write_file_path(resolved_a, (uint8_t *)response, (uint32_t)got);
-        terminal_append_output("Salvo em ");
-        terminal_append_output(resolved_a);
-        terminal_append_output("\n");
+        const char* s_path = terminal_get_sdfs_path(resolved_a);
+        if (s_path) {
+            sdfs_create_file(s_path);
+            sdfs_write_file(s_path, (uint8_t *)response, (uint32_t)got);
+            terminal_append_output("Salvo em ");
+            terminal_append_output(resolved_a);
+            terminal_append_output("\n");
+        } else {
+            terminal_append_output("Erro: wget so pode salvar em /house/localhost.\n");
+        }
       } else {
         terminal_append_output("Download concluido: ");
         terminal_append_uint((uint32_t)got);
@@ -1317,9 +1421,8 @@ void exec_command_term(const char *cmd_raw) {
     }
   } else if (strcmp(cmd, "format") == 0) {
     int progress = 0;
-    terminal_append_output("Formatando disco C:/ (FAT32)...\n");
-    terminal_redraw();
-    if (fat32_format(&progress) == 0) {
+    terminal_append_output("Formatando disco C:/ (SDFS)...\n");
+    if (sdfs_format() == 0) {
       terminal_append_output("Disco formatado com sucesso! Reinicie para montar.\n");
     } else {
       terminal_append_output("Falha ao formatar disco.\n");
@@ -1330,6 +1433,20 @@ void exec_command_term(const char *cmd_raw) {
     char *doom_argv[] = {"doomgeneric", "-iwad", "freedoom1.wad", NULL};
     if (launch_initrd_program_argv("doomgeneric", doom_argv) < 0) {
       terminal_append_output("Falha ao iniciar doomgeneric: ");
+      terminal_append_output(get_launch_last_error());
+      terminal_append_output("\n");
+    }
+  } else if (strcmp(cmd, "editor") == 0) {
+    terminal_append_output("Iniciando editor...\n");
+    terminal_redraw();
+    char *editor_argv[16] = {"editor", NULL};
+    int editor_argc = 1;
+    for (int i = 1; i < argc && i < 15; i++) {
+      editor_argv[editor_argc++] = args[i];
+    }
+    editor_argv[editor_argc] = NULL;
+    if (launch_initrd_program_argv("editor", editor_argv) < 0) {
+      terminal_append_output("Falha ao iniciar editor: ");
       terminal_append_output(get_launch_last_error());
       terminal_append_output("\n");
     }
@@ -1357,15 +1474,22 @@ void exec_command_term(const char *cmd_raw) {
     if (argc < 2) {
       terminal_append_output("Usage: view <imagem.png/jpg>\n");
     } else {
+      terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
       terminal_append_output("Abrindo imagem ");
-      terminal_append_output(args[1]);
+      terminal_append_output(resolved_a);
       terminal_append_output("...\n");
       terminal_redraw();
-      char *view_argv[] = {"view.liwpkg", args[1], NULL};
-      if (launch_initrd_program_argv("view.liwpkg", view_argv) < 0) {
+      char *view_argv[] = {"view.liwpkg", resolved_a, NULL};
+      int pid = launch_initrd_program_argv("view.liwpkg", view_argv);
+      if (pid < 0) {
         terminal_append_output("Falha ao abrir imagem: ");
         terminal_append_output(get_launch_last_error());
         terminal_append_output("\n");
+      } else {
+        int status;
+        sys_waitpid(pid, &status, 0);
+        terminal_append_output("Visualizacao encerrada.\n");
+        terminal_redraw();
       }
     }
   } else if (strcmp(cmd, "crun") == 0) {
@@ -1577,6 +1701,11 @@ void update_terminal_key(char k) {
     if (k == 27) { editor_insert_mode = false; terminal_redraw(); return; }
     
     if (!editor_insert_mode) {
+      if (k == 17) k = 'k'; // UP
+      else if (k == 18) k = 'j'; // DOWN
+      else if (k == 19) k = 'h'; // LEFT
+      else if (k == 20) k = 'l'; // RIGHT
+
       if (editor_pending_cmd == 'd' && k == 'd') {
           // Deletar linha (dd)
           int start = terminal_editor_get_index(0, terminal_editor_cursor_y);
@@ -1696,12 +1825,32 @@ void update_terminal_key(char k) {
     // MODO INSERÇÃO
     int idx = terminal_editor_get_index(terminal_editor_cursor_x, terminal_editor_cursor_y);
     
-    if (k == '\t') {
-    terminal_autocomplete();
-    return;
-  }
-
-  if (k == '\b') { // Backspace
+    if (k == 17) { // UP
+        if (terminal_editor_cursor_y > 0) {
+            terminal_editor_cursor_y--;
+            int mx = terminal_editor_line_length(terminal_editor_cursor_y);
+            if (terminal_editor_cursor_x > mx) terminal_editor_cursor_x = mx;
+        }
+    } else if (k == 18) { // DOWN
+        if (terminal_editor_cursor_y < terminal_editor_count_lines() - 1) {
+            terminal_editor_cursor_y++;
+            int mx = terminal_editor_line_length(terminal_editor_cursor_y);
+            if (terminal_editor_cursor_x > mx) terminal_editor_cursor_x = mx;
+        }
+    } else if (k == 19) { // LEFT
+        if (terminal_editor_cursor_x > 0) terminal_editor_cursor_x--;
+        else if (terminal_editor_cursor_y > 0) {
+            terminal_editor_cursor_y--;
+            terminal_editor_cursor_x = terminal_editor_line_length(terminal_editor_cursor_y);
+        }
+    } else if (k == 20) { // RIGHT
+        if (terminal_editor_cursor_x < terminal_editor_line_length(terminal_editor_cursor_y)) {
+            terminal_editor_cursor_x++;
+        } else if (terminal_editor_cursor_y < terminal_editor_count_lines() - 1) {
+            terminal_editor_cursor_y++;
+            terminal_editor_cursor_x = 0;
+        }
+    } else if (k == '\b') { // Backspace
       if (idx > 0) {
         if (terminal_editor_cursor_x > 0) {
           terminal_editor_cursor_x--;
@@ -1726,6 +1875,12 @@ void update_terminal_key(char k) {
         terminal_editor_cursor_x++;
       }
     }
+    terminal_redraw();
+    return;
+  }
+
+  if (k == '\t') {
+    terminal_autocomplete();
     terminal_redraw();
     return;
   }
@@ -1760,8 +1915,9 @@ void update_terminal_key(char k) {
       input_ptr--;
       input_buffer[input_ptr] = '\0';
       if (terminal_console_mode) {
-        vga_putc('\b'); // Move cursor back and clear char
+        vga_putc('\b');
       }
+      terminal_output_dirty = true;
     }
   } else if ((unsigned char)k >= 32 && input_ptr < (int)sizeof(input_buffer) - 1) {
     input_buffer[input_ptr++] = k;
@@ -1769,6 +1925,7 @@ void update_terminal_key(char k) {
     if (terminal_console_mode) {
       vga_putc(k);
     }
+    terminal_output_dirty = true;
   }
 }
 

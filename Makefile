@@ -29,6 +29,7 @@ LUA_ELF = apps/lua/lua.elf
 DOOMGENERIC_ELF = apps/doomgeneric/doomgeneric.elf
 CRUN_ELF = apps/c4/crun.elf
 VIEW_ELF = apps/view/view.elf
+EDITOR_NANO_ELF = apps/editor_nano/editor_nano.elf
 
 TCC_DIR = third_party/tcc
 TCC_BIN = $(TCC_DIR)/tcc
@@ -185,6 +186,9 @@ $(LUA_ELF): $(LUA_SRCS) $(SDK_LIB) $(CRT0_OBJ)
 $(DOOMGENERIC_ELF): $(DOOM_SRCS) $(SDK_LIB) $(CRT0_OBJ)
 	$(CC) $(DOOMGENERIC_CFLAGS) -nostdlib -static $(CRT0_OBJ) $(DOOM_SRCS) $(SDK_LIB) -o $@ $(LIBGCC)
 
+$(EDITOR_NANO_ELF): apps/editor_nano/editor_nano.c apps/editor_nano/font.h $(SDK_LIB) $(CRT0_OBJ)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/editor_nano/editor_nano.c $(SDK_LIB) -o $@ $(LIBGCC)
+
 $(CRUN_ELF): apps/c4/c4.c $(SDK_LIB) $(CRT0_OBJ)
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/c4/c4.c $(SDK_LIB) -o $@ $(LIBGCC)
@@ -193,14 +197,13 @@ $(VIEW_ELF): apps/view/view.c $(SDK_LIB) $(CRT0_OBJ) zlib libpng libjpeg
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -I$(CURDIR)/sdk/libc/include -nostdlib -static $(CRT0_OBJ) apps/view/view.c $(PNG_LIB) $(JPEG_LIB) $(ZLIB_LIB) $(SDK_LIB) -o $@ $(LIBGCC)
 
-$(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(SDK_LIB) $(LIW_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(LUA_ELF) $(DOOMGENERIC_ELF) $(CRUN_ELF) $(VIEW_ELF)
+$(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(SDK_LIB) $(LIW_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(LUA_ELF) $(DOOMGENERIC_ELF) $(CRUN_ELF) $(VIEW_ELF) $(EDITOR_NANO_ELF)
 	$(HOSTCC) -Iinclude sdk/tools/liw-builder.c -o sdk/tools/liw-builder
+	$(HOSTCC) sdk/tools/img-gen.c -o sdk/tools/img-gen
 	./sdk/tools/liw-builder src/boot/test.liw src/boot/test.elf src/boot/test_manifest.json
 	grub-file --is-x86-multiboot $(KERNEL_BIN)
 	mkdir -p repo
-	# Gerar arquivos de imagem de teste automaticamente
-	printf '\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90\x77\x53\xde\x00\x00\x00\x0c\x49\x44\x41\x54\x08\xd7\x63\xf8\xff\xff\x3f\x00\x05\xfe\x02\xfe\xdc\x44\x74\x8e\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82' > repo/teste.png
-	printf '\xff\xd8\xff\xdb\x00\x43\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x14\x10\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00\x37\xff\xd9' > repo/teste.jpg
+	./sdk/tools/img-gen
 	if [ -f assets/LiwusOSlogo.png ]; then cp assets/LiwusOSlogo.png repo/logo.png; fi
 	cp $(LIW_ELF) repo/liw
 	cp $(HELLO_ELF) repo/hello.liwpkg
@@ -210,6 +213,7 @@ $(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(SDK_LIB) $(LIW_ELF) $(HELLO_E
 	cp $(VIEW_ELF) repo/view.liwpkg
 	cp apps/lua/hello.lua repo/hello.lua
 	cp $(DOOMGENERIC_ELF) repo/doomgeneric
+	cp $(EDITOR_NANO_ELF) repo/editor
 	if [ -f freedoom1.wad ]; then cp freedoom1.wad repo/freedoom1.wad; fi
 	tar -cvf initrd.tar -C repo . --format=ustar
 	mkdir -p isodir/boot/grub
@@ -223,5 +227,6 @@ $(BOOT_DIR)/test.elf: $(BOOT_DIR)/test.s
 
 clean:
 	rm -rf $(OBJ_DIR)
-	rm -f $(KERNEL_BIN) $(ISO_IMAGE) initrd.tar liwus_disk.img src/boot/test.elf src/boot/test.liw $(LIW_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(LUA_ELF) $(DOOMGENERIC_ELF) $(CRUN_ELF)
+	rm -f $(KERNEL_BIN) $(ISO_IMAGE) initrd.tar liwus_disk.img src/boot/test.elf src/boot/test.liw $(LIW_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(LUA_ELF) $(DOOMGENERIC_ELF) $(CRUN_ELF) $(EDITOR_NANO_ELF)
+	rm -f sdk/tools/liw-builder sdk/tools/img-gen
 	rm -rf isodir repo

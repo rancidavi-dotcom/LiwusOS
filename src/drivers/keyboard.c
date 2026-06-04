@@ -51,7 +51,7 @@ static unsigned char kbd_abnt2_shift[128] = {
     [0x35] = ':',  [0x39] = ' ',  [0x56] = '|',  [0x73] = '?'
 };
 
-static void push_char(char ch) {
+void push_char(char ch) {
   uint8_t next = (uint8_t)(char_write + 1);
   if (next != char_read) {
     char_queue[char_write] = ch;
@@ -60,7 +60,7 @@ static void push_char(char ch) {
 }
 
 static void push_event(uint8_t scancode, int pressed) {
-  uint8_t next = (uint8_t)(event_write + 1);
+  uint8_t next = (uint8_t)((event_write + 1) % 64);
   if (next != event_read) {
     event_queue[event_write].scancode = scancode;
     event_queue[event_write].pressed = pressed;
@@ -86,6 +86,16 @@ void keyboard_handler() {
   } else { // Key Pressed
     key_state[scancode] = true;
     if (extended) {
+      char key = 0;
+      if (scancode == 0x48) key = 17; // UP (Device Control 1)
+      else if (scancode == 0x50) key = 18; // DOWN (Device Control 2)
+      else if (scancode == 0x4B) key = 19; // LEFT (Device Control 3)
+      else if (scancode == 0x4D) key = 20; // RIGHT (Device Control 4)
+      
+      if (key) {
+        last_key = key;
+        push_char(key);
+      }
       push_event(scancode | 0x80, 1);
       extended = false;
       return;
@@ -126,7 +136,7 @@ int keyboard_get_event(void *ev) {
   key_event_t *e = (key_event_t *)ev;
   e->scancode = event_queue[event_read].scancode;
   e->pressed = event_queue[event_read].pressed;
-  event_read = (uint8_t)(event_read + 1);
+  event_read = (uint8_t)((event_read + 1) % 64);
   return 1;
 }
 

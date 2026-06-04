@@ -18,6 +18,10 @@ void liw_get_fb_info(liw_fb_info_t *info);
 void liw_present_fb(void);
 void liw_draw_pixel(int x, int y, uint32_t color);
 
+// API Grafica Avancada
+uint32_t *liw_create_buffer(uint32_t w, uint32_t h);
+void liw_present_frame(const uint32_t *buffer, uint32_t w, uint32_t h);
+
 // Teclado
 int liw_key_down(int key);
 int liw_get_key_event(void *ev);

@@ -26,10 +26,9 @@ static int initrd_name_equals(const char *a, const char *b) {
 
 static uint32_t get_size(const char *in) {
     uint32_t size = 0;
-    int count = 1;
-    for (int j = 10; j >= 0; j--) {
-        size += (in[j] - '0') * count;
-        count *= 8;
+    for (int j = 0; j < 11; j++) {
+        if (in[j] < '0' || in[j] > '7') continue;
+        size = size * 8 + (in[j] - '0');
     }
     return size;
 }
@@ -64,8 +63,7 @@ static struct dirent *initrd_readdir(fs_node_t *node, uint32_t index) {
         }
 
         uint32_t filesize = get_size(header->size);
-        address += ((filesize / 512) + 1) * 512;
-        if (filesize % 512) address += 512;
+        address += 512 + ((filesize + 511) & ~511);
         i++;
     }
 
@@ -146,8 +144,7 @@ char* initrd_list_files(int index) {
         if (current == index) return header->filename;
 
         uint32_t filesize = get_size(header->size);
-        address += ((filesize / 512) + 1) * 512;
-        if (filesize % 512) address += 512;
+        address += 512 + ((filesize + 511) & ~511);
         current++;
     }
     return NULL;
@@ -172,8 +169,7 @@ void* initrd_get_file(const char* name, uint32_t* size) {
             return (void*)(address + 512);
         }
 
-        address += ((filesize / 512) + 1) * 512;
-        if (filesize % 512) address += 512;
+        address += 512 + ((filesize + 511) & ~511);
     }
     serial_print("initrd: nenhum match encontrado\n");
     return NULL;

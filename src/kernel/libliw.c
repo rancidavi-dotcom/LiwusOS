@@ -37,9 +37,9 @@ int syscall_fork() {
 int syscall_waitpid(int pid, int *status, int options) {
   int a;
   asm volatile(
-      "mov $7, %%eax; mov %1, %%ebx; mov %2, %%ecx; mov %3, %%edx; int $0x80"
+      "int $0x80"
       : "=a"(a)
-      : "r"(pid), "r"(status), "r"(options));
+      : "a"(7), "b"(pid), "c"(status), "d"(options));
   return a;
 }
 

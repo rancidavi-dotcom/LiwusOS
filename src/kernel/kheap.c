@@ -16,7 +16,23 @@ void kheap_set_start(uint32_t start) {
   kheap_current = start;
 }
 
+// Helper function to convert int to string
+char *itoa(int value, char *str, int base);
+
+uint32_t push_interrupts() {
+    uint32_t eflags;
+    asm volatile("pushfl; pop %0; cli" : "=r"(eflags));
+    return eflags;
+}
+
+void pop_interrupts(uint32_t eflags) {
+    asm volatile("push %0; popfl" :: "r"(eflags));
+}
+
+extern uint32_t memory_size; // From kernel.c/pmm.c
+
 void *kmalloc(size_t size) {
+  uint32_t eflags = push_interrupts();
   if (kheap_start == 0) {
     kheap_set_start((uint32_t)&end + 0x1000);
   }
@@ -26,12 +42,19 @@ void *kmalloc(size_t size) {
     kheap_current += 4 - (kheap_current % 4);
   }
 
+  if (kheap_current + size >= memory_size) {
+      serial_print("KERNEL PANIC: Out of Memory in KHeap bump allocator!\n");
+      asm volatile("hlt");
+  }
+
   void *ptr = (void *)kheap_current;
   kheap_current += size;
+  pop_interrupts(eflags);
   return ptr;
 }
 
 void *kmalloc_a(size_t size) {
+  uint32_t eflags = push_interrupts();
   if (kheap_start == 0) {
     kheap_set_start((uint32_t)&end + 0x1000);
   }
@@ -41,8 +64,14 @@ void *kmalloc_a(size_t size) {
     kheap_current += 4096 - (kheap_current % 4096);
   }
 
+  if (kheap_current + size >= memory_size) {
+      serial_print("KERNEL PANIC: Out of Memory in KHeap bump allocator (aligned)!\n");
+      asm volatile("hlt");
+  }
+
   void *ptr = (void *)kheap_current;
   kheap_current += size;
+  pop_interrupts(eflags);
   return ptr;
 }
 
