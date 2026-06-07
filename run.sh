@@ -4,9 +4,9 @@ set -e
 # Build usando Docker (cross-compiler + ferramentas de ISO)
 docker build -t liwus-builder .
 
-# Cria disco se nao existir
+# Cria disco persistente se nao existir (agora 512MB para mais espaco)
 if [ ! -f liwus_disk.img ]; then
-    qemu-img create -f raw liwus_disk.img 100M
+    qemu-img create -f raw liwus_disk.img 512M
 fi
 
 # Compila tudo dentro do Docker e gera a ISO
@@ -15,14 +15,14 @@ docker run --rm \
     liwus-builder make all
 
 # Roda o QEMU nativamente (fora do Docker)
+# Disco ATA nativo (PIIX3/PATA) para persistencia + PS/2 para teclado/mouse
+# Sem USB: o chipset PIIX3 ja fornece controladora IDE e PS/2 nativamente
 exec qemu-system-i386 \
-    -nodefaults \
-    -cdrom liwusos.iso \
-    -drive file=liwus_disk.img,format=raw,index=0,media=disk \
     -m 512M \
-    -boot d \
+    -boot order=dc \
+    -drive file=liwusos.iso,format=raw,if=ide,index=2,media=cdrom \
+    -drive file=liwus_disk.img,format=raw,if=ide,index=0,media=disk \
     -vga std \
     -serial stdio \
     -net nic,model=rtl8139 \
-    -net user,hostfwd=tcp::2222-:2222 \
-    -usb -device usb-ehci,id=ehci -device usb-kbd,bus=ehci.0 -device usb-mouse,bus=ehci.0
+    -net user,hostfwd=tcp::2222-:2222

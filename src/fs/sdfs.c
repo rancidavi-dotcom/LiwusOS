@@ -32,15 +32,23 @@ static struct dirent sdfs_dirent;
 
 static void sdfs_read_block(uint32_t block, uint8_t *buffer) {
   uint32_t lba = block * SDFS_SECTORS_PER_BLOCK;
-  for (int i = 0; i < SDFS_SECTORS_PER_BLOCK; i++) {
-    ata_read_sector(ata_bus, ata_drive, lba + i, (uint16_t *)(buffer + i * SDFS_SECTOR_SIZE));
+  if (ata_bmide_available()) {
+    ata_bmide_read(lba, SDFS_SECTORS_PER_BLOCK, (uint16_t *)buffer);
+  } else {
+    for (int i = 0; i < SDFS_SECTORS_PER_BLOCK; i++) {
+      ata_read_sector(ata_bus, ata_drive, lba + i, (uint16_t *)(buffer + i * SDFS_SECTOR_SIZE));
+    }
   }
 }
 
 static void sdfs_write_block(uint32_t block, uint8_t *buffer) {
   uint32_t lba = block * SDFS_SECTORS_PER_BLOCK;
-  for (int i = 0; i < SDFS_SECTORS_PER_BLOCK; i++) {
-    ata_write_sector(ata_bus, ata_drive, lba + i, (uint16_t *)(buffer + i * SDFS_SECTOR_SIZE));
+  if (ata_bmide_available()) {
+    ata_bmide_write(lba, SDFS_SECTORS_PER_BLOCK, (uint16_t *)buffer);
+  } else {
+    for (int i = 0; i < SDFS_SECTORS_PER_BLOCK; i++) {
+      ata_write_sector(ata_bus, ata_drive, lba + i, (uint16_t *)(buffer + i * SDFS_SECTOR_SIZE));
+    }
   }
 }
 

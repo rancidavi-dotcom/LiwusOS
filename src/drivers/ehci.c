@@ -113,6 +113,11 @@ int ehci_register_interrupt(usb_device_t *dev, uint8_t endpoint, void *buffer, u
 }
 
 void ehci_init(pci_device_t *dev) {
+    // 0. Habilitar Memory Space e Bus Mastering no PCI
+    uint32_t pci_cmd = pci_read_config(dev->bus, dev->device, dev->function, 0x04);
+    pci_cmd |= (1 << 1) | (1 << 2); // Memory Space + Bus Master
+    pci_write_config(dev->bus, dev->device, dev->function, 0x04, pci_cmd);
+
     uint32_t bar = pci_read_config(dev->bus, dev->device, dev->function, 0x10) & ~0xF;
     
     // Mapear o BAR no VMM (Identity Mapping) para permitir acesso MMIO
@@ -127,56 +132,81 @@ void ehci_init(pci_device_t *dev) {
     serial_print(" Op Base at "); serial_print_hex(op_base);
     serial_print("\n");
 
-    // 1. Reset Host Controller
-    *(uint32_t*)(op_base + EHCI_USBCMD) |= (1 << 1);
+    // 1. Parar o controlador antes de resetar
+    *(uint32_t*)(op_base + EHCI_USBCMD) &= ~(1 << 0); // Stop
+    while (*(uint32_t*)(op_base + EHCI_USBSTS) & (1 << 12)) { // Wait until HCHalted is 1
+        asm volatile("pause");
+    }
+
+    // 2. Reset Host Controller
+    *(uint32_t*)(op_base + EHCI_USBCMD) |= (1 << 1); // Reset
     while (*(uint32_t*)(op_base + EHCI_USBCMD) & (1 << 1)) {
         asm volatile("pause");
     }
     serial_print("EHCI: Reset completed.\n");
 
-    // 2. Criar lista assíncrona (Queue Heads)
+    // 3. Limpar segmento de 64 bits (LiwusOS é 32-bit)
+    *(uint32_t*)(op_base + EHCI_CTRLDSSEG) = 0;
+
+    // 4. Criar lista assíncrona (Queue Heads)
     async_list = (ehci_qh_t *)kmalloc_a(sizeof(ehci_qh_t));
     memset(async_list, 0, sizeof(ehci_qh_t));
     
-    // QH estático para fechar o loop
-    async_list->horizontal_link = ((uint32_t)async_list) | 2; // Tipo QH (2)
-    async_list->endpoint_char = (1 << 15); // H (Head of reclamation list)
-    async_list->overlay.next_qtd = 1; // Terminado
-    async_list->overlay.alt_next_qtd = 1;
+    async_list->horizontal_link = ((uint32_t)async_list) | 2; 
+    async_list->endpoint_char = (1 << 15); // Head
+    async_list->overlay.next_qtd = 1; 
 
-    // 3. Configurar endereços no controlador
+    // 5. Configurar endereço da lista ANTES de habilitar o agendamento
     *(uint32_t*)(op_base + EHCI_ASYNCLIST) = (uint32_t)async_list;
 
-    // 4. Habilitar o controlador
+    // 6. Habilitar o controlador e o agendamento assíncrono
     uint32_t cmd = *(uint32_t*)(op_base + EHCI_USBCMD);
-    cmd |= (1 << 0); // RS (Run/Stop)
-    cmd |= (1 << 5); // ASE (Async Schedule Enable)
+    cmd |= (1 << 0); // RS (Run)
+    cmd |= (1 << 5); // ASE (Async Schedule)
     *(uint32_t*)(op_base + EHCI_USBCMD) = cmd;
 
-    // 5. Route all ports to EHCI
+    // 7. Route all ports to EHCI
     *(uint32_t*)(op_base + EHCI_CONFIGFLAG) = 1;
 
     serial_print("EHCI: Controller is RUNNING.\n");
 
-    // 6. Verificar portas
+    // 6. Alimentar e Verificar portas
     uint32_t hcsparams = *(uint32_t*)(bar + EHCI_HCSPARAMS);
     int n_ports = hcsparams & 0x0F;
+    serial_print("EHCI: n_ports="); char nps[4]; itoa(n_ports, nps, 10); serial_print(nps); serial_print("\n");
     
     for (int i = 0; i < n_ports; i++) {
-        uint32_t port_status = *(uint32_t*)(op_base + EHCI_PORTSC + (i * 4));
+        uint32_t *port_reg_ptr = (uint32_t*)(op_base + EHCI_PORTSC + (i * 4));
+        
+        // Liga Port Power (Bit 12)
+        *port_reg_ptr |= (1 << 12);
+        for(int j=0; j<10000; j++) asm volatile("pause");
+
+        uint32_t port_status = *port_reg_ptr;
         if (port_status & 1) { // Connect Status
             serial_print("EHCI: Device found on port ");
             char n[4]; itoa(i, n, 10); serial_print(n);
-            serial_print("\n");
+            serial_print(" status="); serial_print_hex(port_status);
             
-            // Reset Port
-            *(uint32_t*)(op_base + EHCI_PORTSC + (i * 4)) |= (1 << 8); // PR
-            for(int j=0; j<100000; j++) asm volatile("pause");
-            *(uint32_t*)(op_base + EHCI_PORTSC + (i * 4)) &= ~(1 << 8);
-            for(int j=0; j<100000; j++) asm volatile("pause");
+            // Verifica velocidade: Se não for High Speed, passa para o controlador companheiro (UHCI)
+            // Bit 10:11 (Line Status). Se for 01 (K-state) ou 10 (J-state), é Low/Full speed.
+            // Mas a forma mais garantida é tentar o reset e ver se o bit 1 (Enabled) sobe.
+            // No EHCI, se um dispositivo Low/Full speed é resetado, ele NÃO habilita.
+            
+            *port_reg_ptr |= (1 << 8); // Reset
+            for(int j=0; j<50000; j++) asm volatile("pause");
+            *port_reg_ptr &= ~(1 << 8);
+            for(int j=0; j<50000; j++) asm volatile("pause");
+            
+            if (!(*port_reg_ptr & (1 << 1))) { // Bit 1 (Enabled) continua 0
+                serial_print(" -> Low/Full speed, handing off to companion.\n");
+                *port_reg_ptr |= (1 << 13); // PO (Port Owner) = 1 -> Companion controller
+                continue;
+            }
 
-            extern void usb_enumerate(void *controller, uint8_t port);
-            usb_enumerate(dev, (uint8_t)i);
+            serial_print(" -> High Speed device.\n");
+            extern void usb_enumerate(void *controller, uint8_t port, int type);
+            usb_enumerate(dev, (uint8_t)i, 2); // 2 = EHCI
         }
     }
 }

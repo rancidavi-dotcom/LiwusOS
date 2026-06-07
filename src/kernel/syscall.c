@@ -32,8 +32,30 @@ int sys_execve(const char *filename, char *const argv[], char *const envp[]) {
   (void)envp;
   const uint32_t max_args = 16;
   uint32_t size = 0;
-  void *addr = initrd_get_file(filename, &size);
-  if (!addr) addr = sdfs_read_file(filename, &size);
+  void *addr = NULL;
+
+  /*
+   * Ordem de busca:
+   *   1. SDFS (disco persistente) — montado em /house/localhost
+   *      Caminho: "/" + filename (sys_execve já espera paths absolutos
+   *      sem o "/" inicial, então adicionamos um "/" na frente)
+   *   2. initrd (RAM) — montado na raiz do VFS, contém os system files
+   *      originais do tar que foi gerado na build
+   *
+   * Se SDFS não estiver montado (LIVECD mode), sdfs_read_file retorna
+   * NULL porque sdfs_mounted == 0, caindo no fallback do initrd.
+   */
+  char sdfs_path[256];
+  sdfs_path[0] = '/';
+  strncpy(sdfs_path + 1, filename, 254);
+  sdfs_path[255] = '\0';
+  addr = sdfs_read_file(sdfs_path, &size);
+
+  if (!addr) {
+    size = 0;
+    addr = initrd_get_file(filename, &size);
+  }
+
   if (!addr) {
     launch_last_error = "arquivo nao encontrado";
     return -1;

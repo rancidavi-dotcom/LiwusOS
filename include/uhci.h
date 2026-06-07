@@ -14,11 +14,28 @@
 #define UHCI_PORTSC1   0x10
 #define UHCI_PORTSC2   0x12
 
+typedef struct uhci_td {
+    uint32_t link;
+    uint32_t status;
+    uint32_t token;
+    uint32_t buffer;
+    // Padding para alinhar a 16 ou 32 bytes se necessário, 
+    // mas o hardware UHCI processa os 4 dwords acima.
+    uint32_t reserved[4]; 
+} __attribute__((packed, aligned(16))) uhci_td_t;
+
+typedef struct uhci_qh {
+    uint32_t head;
+    uint32_t element;
+} __attribute__((packed, aligned(16))) uhci_qh_t;
+
 typedef struct {
     uint32_t frame_list[1024];
     uint32_t io_base;
 } uhci_controller_t;
 
 void uhci_init(pci_device_t *dev);
+int uhci_send_control(pci_device_t *dev, uint8_t addr, void *setup, void *data, uint16_t len);
+int uhci_register_interrupt(pci_device_t *dev, uint8_t addr, uint8_t endpoint, void *buffer, uint16_t len);
 
 #endif

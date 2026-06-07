@@ -22,4 +22,10 @@ void ata_identify(uint16_t bus, uint8_t drive);
 int  ata_read_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffer);
 void ata_write_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffer);
 
+// BM-IDE DMA (PIIX3)
+int ata_bmide_init(void);
+int ata_bmide_available(void);
+int ata_bmide_read(uint32_t lba, uint8_t count, uint16_t *buffer);
+int ata_bmide_write(uint32_t lba, uint8_t count, uint16_t *buffer);
+
 #endif

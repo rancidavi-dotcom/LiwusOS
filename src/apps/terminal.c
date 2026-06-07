@@ -1,5 +1,6 @@
 #include "terminal.h"
 #include "compositor.h"
+#include "initrd.h"
 #include "sdfs.h"
 #include "io.h"
 #include "kheap.h"
@@ -28,7 +29,7 @@ static int input_ptr = 0;
 static char prompt_line[256] = "> ";
 static char output_text[8192] =
     "LiwusOS Shell (Wayland/LGX Port)\nDigite 'help'.\n";
-static char terminal_cwd[128] = "/";
+static char terminal_cwd[128] = "/house/localhost";
 
 char* terminal_get_cwd() {
   return terminal_cwd;
@@ -977,9 +978,8 @@ static void terminal_append_uint(uint32_t value) {
   terminal_append_output(num);
 }
 
-static void terminal_list_dir(const char *path) {
-  fs_node_t *node = vfs_open(path);
-  if (!node) {
+static void terminal_list_dir(fs_node_t *node) {
+  if (!node || !(node->flags & FS_DIRECTORY)) {
     terminal_append_output("Erro: Nao foi possível abrir o diretorio.\n");
     return;
   }
@@ -1008,7 +1008,6 @@ static void terminal_list_dir(const char *path) {
     if (file) kfree(file);
     i++;
   }
-  kfree(node);
 }
 
 // Helper to tokenize command
@@ -1063,6 +1062,7 @@ void exec_command_term(const char *cmd_raw) {
     terminal_append_output("  uptime, date     - Tempo\n");
     terminal_append_output("  lua, crun        - Desenvolvimento\n");
     terminal_append_output("  clear, reboot    - Controle\n");
+    terminal_append_output("  sysupdate        - Sincroniza system files do initrd pro disco\n");
   } else if (strcmp(cmd, "uname") == 0) {
     terminal_append_output("LiwusOS 2.0-brabo (i686-elf)\n");
   } else if (strcmp(cmd, "whoami") == 0) {
@@ -1088,7 +1088,7 @@ void exec_command_term(const char *cmd_raw) {
   } else if (strcmp(cmd, "df") == 0) {
     terminal_append_output("Filesystem      Size  Used  Avail Use%\n");
     terminal_append_output("initrd (/)      512K  512K     0  100%\n");
-    terminal_append_output("SDFS (C:/)      100M   12K   99M    1%\n");
+    terminal_append_output("SDFS (C:/)      512M   12K  511M    1%\n");
   } else if (strcmp(cmd, "date") == 0) {
     terminal_append_output("Segunda, 13 de Abril de 2026\n");
   } else if (strcmp(cmd, "clear") == 0) {
@@ -1109,8 +1109,7 @@ void exec_command_term(const char *cmd_raw) {
       terminal_append_output("Nao e um diretorio.\n");
       kfree(node);
     } else {
-      terminal_list_dir(resolved_a);
-      kfree(node);
+      terminal_list_dir(node);
     }
   } else if (strcmp(cmd, "cd") == 0) {
     const char *target = argc >= 2 ? args[1] : "/";
@@ -1131,8 +1130,14 @@ void exec_command_term(const char *cmd_raw) {
     } else {
       terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
       const char* s_path = terminal_get_sdfs_path(resolved_a);
-      if (s_path && sdfs_create_file(s_path) == 0) {
-        sdfs_write_file(s_path, (uint8_t *)"", 0);
+      if (s_path) {
+        // touch: cria se nao existir, ou apenas atualiza se ja existir
+        if (sdfs_create_file(s_path) != 0) {
+          // Arquivo ja existe — tudo bem, apenas atualiza conteudo
+          sdfs_write_file(s_path, (uint8_t *)"", 0);
+        } else {
+          sdfs_write_file(s_path, (uint8_t *)"", 0);
+        }
         terminal_append_output("Arquivo ");
         terminal_append_output(resolved_a);
         terminal_append_output(" criado.\n");
@@ -1373,6 +1378,10 @@ void exec_command_term(const char *cmd_raw) {
   } else if (strcmp(cmd, "liwfetch") == 0) {
     terminal_append_output(
         "LiwusOS Wayland Edition\nArchitecture: LGX Compositor\n");
+  } else if (strcmp(cmd, "sysupdate") == 0) {
+    terminal_append_output("Re-sincronizando system files do initrd para o SDFS...\n");
+    initrd_copy_to_sdfs(NULL);
+    terminal_append_output("System files atualizados.\n");
   } else if (strcmp(cmd, "reboot") == 0) {
     sys_reboot();
   } else if (strcmp(cmd, "cat") == 0) {

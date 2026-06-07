@@ -3,6 +3,7 @@
 #include "gdt.h"
 #include "idt.h"
 #include "initrd.h"
+#include "boot_anim.h"
 #include "io.h"
 #include "kheap.h"
 #include "keyboard.h"
@@ -73,6 +74,24 @@ void task_terminal_loop() {
   }
 }
 
+/*
+ * ensure_disk_ready: Monta o SDFS e copia os system files do initrd
+ *                    para o disco persistente no primeiro boot.
+ *
+ * Fluxo:
+ *   1. Tenta montar o SDFS do ATA primary master
+ *   2. Se falhar (disco sem formatação SDFS), formata via sdfs_format()
+ *   3. Monta o SDFS em /house/localhost no VFS
+ *   4. Verifica se existe /.system_installed (flag de first-boot)
+ *   5. Se não existir: copia todos os arquivos do initrd para o SDFS
+ *      com boot animation (initrd_copy_to_sdfs + boot_anim_update),
+ *      depois cria o flag /.system_installed
+ *   6. Se existir: apenas loga "system already installed"
+ *
+ * NOTA (LIVECD mode): Esta função está desabilitada para testes rápidos.
+ * O sistema inteiro roda do initrd (RAM). Para reativar o disco
+ * persistente, descomente a chamada ensure_disk_ready() em kernel_main().
+ */
 static void ensure_disk_ready(void) {
   fs_node_t *sdfs_root = sdfs_mount(ATA_PRIMARY, ATA_MASTER, 0);
   if (!sdfs_root) {
@@ -85,6 +104,33 @@ static void ensure_disk_ready(void) {
   if (sdfs_root) {
     vfs_mount("/house/localhost", sdfs_root);
     serial_print("SDFS disk mounted at /house/localhost\n");
+
+    // Primeira inicializacao? Copia system files do initrd para o SDFS
+    uint32_t installed_size = 0;
+    void *flag = sdfs_read_file("/.system_installed", &installed_size);
+    if (!flag) {
+      serial_print("First boot: copying system files to SDFS...\n");
+      /*
+       * Boot animation estilo PopOS/Mint:
+       *   init()  -> desenha fundo, logo "LiwusOS", barra de progresso vazia
+       *   update() -> preenche a barra conforme initrd_copy_to_sdfs progride
+       *   finish() -> completa 100%, mostra "Ready!"
+       *
+       * initrd_copy_to_sdfs itera o tar do initrd e escreve cada
+       * arquivo no SDFS via sdfs_create_file + sdfs_write_file.
+       * O DMA do PIIX3 BM-IDE acelera as escritas (~8 setores por
+       * chamada em vez de 1).
+       */
+      boot_anim_init();
+      initrd_copy_to_sdfs(boot_anim_update);
+      boot_anim_finish();
+      sdfs_create_file("/.system_installed");
+      sdfs_write_file("/.system_installed", (uint8_t *)"1", 1);
+      serial_print("System installed to SDFS.\n");
+    } else {
+      kfree(flag);
+      serial_print("SDFS: system already installed.\n");
+    }
   } else {
     serial_print("SDFS disk unavailable\n");
   }
@@ -147,6 +193,7 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbi) {
   init_video(mbi);
 
   pci_init();
+  ata_bmide_init(); /* BM-IDE DMA init (desnecessario em LIVECD, mas inofensivo) */
   net_init();
   tcp_init();
   udp_init();
@@ -174,7 +221,23 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbi) {
       serial_print("No ethernet device found\n");
     }
   }
-  ensure_disk_ready();
+  /* Monta SDFS para escrita de arquivos do usuario. System files
+     continuam no initrd (RAM) — sem copia de first-boot. */
+  {
+    fs_node_t *sdfs_root = sdfs_mount(ATA_PRIMARY, ATA_MASTER, 0);
+    if (!sdfs_root) {
+      serial_print("SDFS mount failed, formatting disk...\n");
+      if (sdfs_format() == 0) {
+        sdfs_root = sdfs_mount(ATA_PRIMARY, ATA_MASTER, 0);
+      }
+    }
+    if (sdfs_root) {
+      vfs_mount("/house/localhost", sdfs_root);
+      serial_print("SDFS disk mounted at /house/localhost (user files only)\n");
+    } else {
+      serial_print("SDFS disk unavailable\n");
+    }
+  }
 
   init_timer(100);
   init_tasking();

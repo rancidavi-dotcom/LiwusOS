@@ -287,17 +287,17 @@ static void h_key(int sc, int pressed) {
 
     if (sc == 0x1C) { ins_nl(); return; }
     if (sc == 0x0E) { bs_c(); return; }
-    if (sc == 0x53) { del_c(); return; }
+    if (sc == 0xD3) { del_c(); return; }
 
-    if (sc == 0x48) { if (cy > 0) { cy--; if (cx > (int)strlen(lines[cy])) cx = strlen(lines[cy]); } return; }
-    if (sc == 0x50) { if (cy < nlines - 1) { cy++; if (cx > (int)strlen(lines[cy])) cx = strlen(lines[cy]); } return; }
-    if (sc == 0x4B) { if (cx > 0) cx--; return; }
-    if (sc == 0x4D) { if (cx < (int)strlen(lines[cy])) cx++; return; }
+    if (sc == 0xC8) { if (cy > 0) { cy--; if (cx > (int)strlen(lines[cy])) cx = strlen(lines[cy]); } return; }
+    if (sc == 0xD0) { if (cy < nlines - 1) { cy++; if (cx > (int)strlen(lines[cy])) cx = strlen(lines[cy]); } return; }
+    if (sc == 0xCB) { if (cx > 0) cx--; return; }
+    if (sc == 0xCD) { if (cx < (int)strlen(lines[cy])) cx++; return; }
 
-    if (sc == 0x47) { cx = 0; return; }
-    if (sc == 0x4F) { cx = strlen(lines[cy]); return; }
-    if (sc == 0x49) { cy -= 20; if (cy < 0) cy = 0; return; }
-    if (sc == 0x51) { cy += 20; if (cy >= nlines) cy = nlines - 1; return; }
+    if (sc == 0xC7) { cx = 0; return; }
+    if (sc == 0xCF) { cx = strlen(lines[cy]); return; }
+    if (sc == 0xC9) { cy -= 20; if (cy < 0) cy = 0; return; }
+    if (sc == 0xD1) { cy += 20; if (cy >= nlines) cy = nlines - 1; return; }
     if (sc == 0x0F) { for (int i = 0; i < TAB_W; i++) ins_c(' '); return; }
 
     int ch = sc_to_c(sc, is_shift());
