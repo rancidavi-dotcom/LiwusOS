@@ -1,6 +1,4 @@
 #include "compositor.h"
-#include "book.h"
-#include "browser.h"
 #include "editor.h"
 #include "explorer.h"
 #include "gui.h"
@@ -9,7 +7,7 @@
 #include "settings.h"
 #include "string.h"
 #include "terminal.h"
-#include "timer.h" // Para relógio
+#include "timer.h"
 #include "video.h"
 
 static wl_surface_t *panel_surface = NULL;
@@ -102,22 +100,10 @@ static void on_editor_click(void *widget, void *surface) {
   open_editor();
 }
 
-static void on_browser_click(void *widget, void *surface) {
-  (void)widget;
-  (void)surface;
-  open_browser();
-}
-
 static void on_settings_click(void *widget, void *surface) {
   (void)widget;
   (void)surface;
   open_settings();
-}
-
-static void on_book_click(void *widget, void *surface) {
-  (void)widget;
-  (void)surface;
-  open_book();
 }
 
 static void on_task_click(void *widget, void *surface) {
@@ -151,10 +137,8 @@ static void panel_rebuild_widgets(void) {
   panel_set_widget(1, 80, 4, 72, 22, "Term", on_terminal_click, PANEL_BUTTON);
   panel_set_widget(2, 158, 4, 72, 22, "Files", on_explorer_click, PANEL_BUTTON);
   panel_set_widget(3, 236, 4, 72, 22, "Edit", on_editor_click, PANEL_BUTTON);
-  panel_set_widget(4, 314, 4, 72, 22, "Web", on_browser_click, PANEL_BUTTON);
-  panel_set_widget(5, 392, 4, 80, 22, "Config", on_settings_click,
+  panel_set_widget(4, 314, 4, 80, 22, "Config", on_settings_click,
                    PANEL_BUTTON);
-  panel_set_widget(6, 478, 4, 72, 22, "Book", on_book_click, PANEL_BUTTON);
 
   count = wl_list_taskbar_surfaces(surfaces, 8);
   for (int i = 0; i < count && i < 8; i++) {

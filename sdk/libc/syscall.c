@@ -83,7 +83,17 @@ void* sbrk(intptr_t increment) {
     return old_brk;
 }
 
-int fork() { return -1; }
+int fork() {
+    int ret;
+    __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(14));
+    return ret;
+}
+
+int execve(const char *filename, char *const argv[], char *const envp[]) {
+    int ret;
+    __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(15), "b"(filename), "c"(argv), "d"(envp));
+    return ret;
+}
 int waitpid(int pid, int *status, int options) {
     int ret;
     __asm__ volatile ("int $0x80" : "=a"(ret) : "a"(7), "b"(pid), "c"(status), "d"(options));

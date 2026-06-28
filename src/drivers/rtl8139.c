@@ -99,8 +99,7 @@ void init_rtl8139(pci_device_t *dev) {
 
   outb(io_base + 0x52, 0x00);
   outb(io_base + 0x37, 0x10);
-  while ((inb(io_base + 0x37) & 0x10) != 0) {
-  }
+  { volatile int rtl_timeout = 1000000; while (rtl_timeout-- && ((inb(io_base + 0x37) & 0x10) != 0)); }
 
   rx_buffer = (uint8_t *)kmalloc_ap(8192 + 16 + 1500, &rx_buffer_phys);
   memset(rx_buffer, 0, 8192 + 16 + 1500);

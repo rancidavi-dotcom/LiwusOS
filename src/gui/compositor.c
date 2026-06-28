@@ -1,6 +1,5 @@
 #include "compositor.h"
 #include "kheap.h"
-#include "lgx.h"
 #include "mouse.h"
 #include "string.h"
 #include "video.h"
@@ -153,25 +152,12 @@ static bool compositor_point_in_resize_handle(wl_surface_t *surface, int mx,
          my < surface->y + title_h + (int)surface->height;
 }
 
-/* --- LGX Integration --- */
-extern lg_device_t global_lg_device;
-extern lg_queue_t global_lg_queue;
-extern lg_command_pool_t global_lg_pool;
-extern lg_swapchain_t global_sw;
-static lg_command_buffer_t comp_cmd = NULL;
-
 void compositor_init() {
   extern uint32_t screen_width;
   extern uint32_t screen_height;
   compositor.screen_width = screen_width;
   compositor.screen_height = screen_height;
   compositor.surfaces_head = NULL;
-
-  /* Inicializa recursos LGX para o compositor se necessário */
-  if (global_lg_device && !comp_cmd) {
-    lg_command_buffer_allocate_info_t cb_info = {global_lg_pool, 1};
-    lg_allocate_command_buffers(global_lg_device, &cb_info, &comp_cmd);
-  }
 }
 
 void compositor_repaint() {
@@ -182,14 +168,6 @@ void compositor_repaint() {
   draw_rect(0, 0, compositor.screen_width, 96, SHELL_BG_ALT);
   draw_rect(0, compositor.screen_height - 120, compositor.screen_width, 120,
             0xFF0F151D);
-
-  if (!global_lg_device || !comp_cmd)
-    return;
-
-  lg_command_buffer_begin_info_t begin = {true};
-  lg_begin_command_buffer(comp_cmd, &begin);
-  lg_image_t sw_img = lg_get_swapchain_image(global_sw, 0);
-  (void)sw_img;
 
   // Render Surfaces (Back to Front)
   wl_surface_t *s = compositor.surfaces_tail;
@@ -247,15 +225,9 @@ void compositor_repaint() {
     s = s->prev;
   }
 
-  lg_end_command_buffer(comp_cmd);
-  lg_submit_info_t submit = {1, &comp_cmd};
-  lg_queue_submit(global_lg_queue, 1, &submit);
-
   int mx = get_mouse_x();
   int my = get_mouse_y();
   draw_mouse_cursor(mx, my, 0);
-
-  lg_queue_present(global_lg_queue, global_sw, 0);
 }
 
 wl_surface_t *wl_create_surface(uint32_t w, uint32_t h,

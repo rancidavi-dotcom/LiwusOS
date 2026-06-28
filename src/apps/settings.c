@@ -4,7 +4,6 @@
 #include "string.h"
 #include "rtl8139.h"
 #include "net.h"
-#include "wifi.h"
 
 typedef enum { TAB_INTERNET, TAB_SOUND, TAB_DISPLAY } settings_tab_t;
 static settings_tab_t current_tab = TAB_DISPLAY;
@@ -40,32 +39,11 @@ void draw_settings_content() {
             if (netif->type == NET_TYPE_ETHERNET) {
                 draw_string(cx + 20, cy + y_off, "Ethernet (RTL8139): Conectado", 0x008800);
                 y_off += 30;
-            } else if (netif->type == NET_TYPE_WIFI && wifi_is_available()) {
-                draw_string(cx + 20, cy + y_off, "Wi-Fi (Wireless Adapter):", 0x0000FF);
-                y_off += 25;
-                
-                wifi_network_t nets[3];
-                int count = wifi_scan(nets, 3);
-                if (count == 0) {
-                    draw_string(cx + 40, cy + y_off, "Nenhuma rede encontrada.", 0x777777);
-                    y_off += 20;
-                } else {
-                    for(int i=0; i<count; i++) {
-                        char net_str[64];
-                        strcpy(net_str, "  - ");
-                        strcat(net_str, nets[i].ssid);
-                        draw_string(cx + 20, cy + y_off, net_str, 0x333333);
-                        y_off += 20;
-                    }
-                }
-                draw_string(cx + 20, cy + y_off, "Status: ", 0x000000);
-                draw_string(cx + 100, cy + y_off, wifi_get_current_ssid(), 0x00AA00);
-                y_off += 40;
             }
             netif = netif->next;
         }
         
-        draw_button_visual(cx + 20, cy + 280, 200, 35, "Configurar IP", 0x444444);
+        draw_button_visual(cx + 20, cy + y_off + 20, 200, 35, "Configurar IP", 0x444444);
     }
     else if (current_tab == TAB_SOUND) {
         draw_string(cx + 20, cy + 20, "Configuracoes de Audio", 0x000000);

@@ -12,18 +12,18 @@
 # To install in $HOME instead of /usr/local, use:
 #    make install prefix=$HOME
 
-CC=i686-elf-gcc
+CC=gcc
 
-CFLAGS=-std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN
+CFLAGS=-std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -m32 -I/root/projetos/LiwusOS/sdk/libc/include -DNO_STRERROR -DHAVE_HIDDEN
 #CFLAGS=-O -DMAX_WBITS=14 -DMAX_MEM_LEVEL=7
 #CFLAGS=-g -DZLIB_DEBUG
 #CFLAGS=-O3 -Wall -Wwrite-strings -Wpointer-arith -Wconversion \
 #           -Wstrict-prototypes -Wmissing-prototypes
 
-SFLAGS=-std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -I/os-build/sdk/libc/include -fPIC -DNO_FSEEKO -DNO_STRERROR -DNO_vsnprintf -DHAVE_HIDDEN
+SFLAGS=-std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include -m32 -I/root/projetos/LiwusOS/sdk/libc/include -fPIC -DNO_STRERROR -DHAVE_HIDDEN
 LDFLAGS=
 TEST_LIBS=-L. libz.a
-LDSHARED=i686-elf-gcc
+LDSHARED=gcc
 CPP=
 
 STATICLIB=libz.a
@@ -32,16 +32,16 @@ SHAREDLIBV=
 SHAREDLIBM=
 LIBS=$(STATICLIB) $(SHAREDLIBV)
 
-AR=i686-elf-ar
+AR=ar
 ARFLAGS=rc
-RANLIB=i686-elf-ranlib
+RANLIB=ranlib
 LDCONFIG=ldconfig
 LDSHAREDLIBC=-lc
 TAR=tar
 SHELL=/bin/sh
 EXE=
 
-prefix =/os-build/sdk
+prefix =/root/projetos/LiwusOS/sdk
 exec_prefix =${prefix}
 libdir =${exec_prefix}/lib
 sharedlibdir =${libdir}

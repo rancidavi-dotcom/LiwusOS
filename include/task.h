@@ -19,7 +19,8 @@ typedef struct task {
   task_state_t state;
   int exit_code;
   uint32_t stack_top;    // saved ESP
-  uint32_t kernel_stack; // kernel stack base
+  uint32_t kernel_stack; // kernel stack top
+  uint32_t kernel_stack_size; // kernel stack size (for cleanup)
   struct task *parent;
   struct task *next;
   page_directory_t *page_directory;
@@ -58,10 +59,12 @@ const char *task_state_name(task_state_t state);
 uint32_t task_total_switches(void);
 
 /* Syscall Helpers */
-// Registers struct do isr.h
 #include "isr.h"
 int fork_process(registers_t *regs);
 int sys_waitpid(int pid, int *status, int options);
 void sys_exit_process(int status);
+void sys_kill_by_pid(int pid);
+
+extern int last_foreground_pid;
 
 #endif

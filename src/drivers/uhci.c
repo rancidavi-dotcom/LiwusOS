@@ -13,20 +13,26 @@
 
 static uint32_t uhci_io_base = 0;
 
-static void uhci_wait_td(uhci_td_t *td) {
-    int timeout = 1000000;
-    while (timeout--) {
-        uint32_t status = td->status;
-        if (!(status & (1 << 23))) return; // Active bit cleared
-        if (status & 0x00FF0000) { // Qualquer bit de erro entre 16-23
-            serial_print("UHCI: Transfer Error status=");
-            serial_print_hex(status);
-            serial_print("\n");
-            return;
-        }
-        asm volatile("pause");
+static uhci_td_t *interrupt_td = NULL;
+static void *interrupt_buffer = NULL;
+static int interrupt_len = 0;
+
+uhci_td_t *uhci_get_interrupt_td(void) {
+    return interrupt_td;
+}
+
+void *uhci_get_interrupt_buffer(void) {
+    return interrupt_buffer;
+}
+
+int uhci_get_interrupt_len(void) {
+    return interrupt_len;
+}
+
+void uhci_rearm_interrupt(void) {
+    if (interrupt_td) {
+        interrupt_td->status = (1 << 23) | (3 << 16);
     }
-    serial_print("UHCI: Transfer Timeout\n");
 }
 
 int uhci_send_control(pci_device_t *dev, uint8_t addr, void *setup, void *data, uint16_t len) {
@@ -39,54 +45,52 @@ int uhci_send_control(pci_device_t *dev, uint8_t addr, void *setup, void *data, 
     uhci_td_t *t_status = (uhci_td_t *)kmalloc_a(sizeof(uhci_td_t));
 
     memset(t_setup, 0, sizeof(uhci_td_t));
-    t_setup->link = 1; // Terminado
-    t_setup->status = (1 << 23) | (3 << 27); // Active, 3 retries
-    // Token: MaxLen (11 bits), DeviceAddr (7 bits), Endpoint (4 bits), DataToggle (1 bit), PID (8 bits)
-    // Setup PID = 0x2D
-    t_setup->token = ((8 - 1) << 21) | (0 << 15) | (addr << 8) | 0x2D;
+    t_setup->status = (1 << 23) | (3 << 16);
+    t_setup->token = ((8 - 1) << 21) | (0 << 20) | (0 << 15) | (addr << 8) | 0x2D;
     t_setup->buffer = (uint32_t)setup;
 
     if (len > 0) {
         t_data = (uhci_td_t *)kmalloc_a(sizeof(uhci_td_t));
         memset(t_data, 0, sizeof(uhci_td_t));
-        t_data->link = 1;
-        t_data->status = (1 << 23) | (3 << 27);
-        // IN PID = 0x69, OUT PID = 0xE1. Para descritores é IN.
-        uint8_t pid = 0x69; 
-        t_data->token = ((len - 1) << 21) | (1 << 19) | (0 << 15) | (addr << 8) | pid; // Data1
+        t_data->status = (1 << 23) | (3 << 16);
+        uint8_t pid = 0x69;
+        t_data->token = ((len - 1) << 21) | (1 << 20) | (0 << 15) | (addr << 8) | pid;
         t_data->buffer = (uint32_t)data;
-        t_setup->link = (uint32_t)t_data | 4; // Depth first
+        t_data->link = 1;
+        t_setup->link = (uint32_t)t_data | 4;
     }
 
     memset(t_status, 0, sizeof(uhci_td_t));
     t_status->link = 1;
-    t_status->status = (1 << 23) | (3 << 27);
-    // Status é OUT (0xE1) se recebemos dados, ou IN (0x69) se enviamos.
+    t_status->status = (1 << 23) | (3 << 16);
     uint8_t status_pid = (len > 0) ? 0xE1 : 0x69;
-    t_status->token = (0x7FF << 21) | (1 << 19) | (0 << 15) | (addr << 8) | status_pid;
+    t_status->token = (0x7FF << 21) | (1 << 20) | (0 << 15) | (addr << 8) | status_pid;
 
     if (t_data) t_data->link = (uint32_t)t_status | 4;
     else t_setup->link = (uint32_t)t_status | 4;
 
-    // 2. Colocar na Frame List (muito simplificado: colocamos no frame atual + 2)
+    // 2. Colocar na Frame List (sem QH - TD direto)
     uint16_t frame = inw(io_base + UHCI_FRNUM) & 0x03FF;
     uint32_t *frame_list = (uint32_t *)inl(io_base + UHCI_FRBASEADD);
 
-    // QH para o controle
-    uhci_qh_t *qh = (uhci_qh_t *)kmalloc_a(sizeof(uhci_qh_t));
-    qh->head = 1;
-    qh->element = (uint32_t)t_setup;
-
     uint16_t target_frame = (frame + 2) % 1024;
-    frame_list[target_frame] = (uint32_t)qh | 2; // Link para QH
+    frame_list[target_frame] = (uint32_t)t_setup; // TD direto (bit 1 = 0)
 
     // 3. Esperar
-    uhci_wait_td(t_status);
+    for (int timeout = 5000000; timeout > 0; timeout--) {
+        uint32_t s = t_status->status;
+        if (!(s & (1 << 23))) return 0;
+        if (s & 0x1D000000) break;
+        asm volatile("pause");
+    }
 
     // Limpar frame list
     frame_list[target_frame] = 1;
 
-    return 0;
+    serial_print("UHCI: send_control FAIL status=");
+    serial_print_hex(t_status->status);
+    serial_print("\n");
+    return -1;
 }
 
 // Registra polling de interrupção (HID)
@@ -94,29 +98,20 @@ int uhci_register_interrupt(pci_device_t *dev, uint8_t addr, uint8_t endpoint, v
     (void)dev;
     uint32_t io_base = uhci_io_base;
 
-    // 1. Criar TD de interrupção
     uhci_td_t *td = (uhci_td_t *)kmalloc_a(sizeof(uhci_td_t));
     memset(td, 0, sizeof(uhci_td_t));
-    td->link = 1; // Terminado
-    td->status = (1 << 23) | (3 << 27); // Active, 3 retries
-    // IN PID = 0x69
+    td->link = 1;
+    td->status = (1 << 23) | (3 << 16);
     td->token = ((len - 1) << 21) | ((endpoint & 0x0F) << 15) | (addr << 8) | 0x69;
     td->buffer = (uint32_t)buffer;
 
-    // 2. QH para este endpoint
-    uhci_qh_t *qh = (uhci_qh_t *)kmalloc_a(sizeof(uhci_qh_t));
-    qh->head = 1;
-    qh->element = (uint32_t)td;
+    interrupt_td = td;
+    interrupt_buffer = buffer;
+    interrupt_len = len;
 
-    // 3. Colocar na lista periódica (Frame List)
-    // Para simplificar, colocamos em todos os frames para polling de 1ms
     uint32_t *frame_list = (uint32_t *)inl(io_base + UHCI_FRBASEADD);
     for (int i = 0; i < 1024; i++) {
-        if (frame_list[i] & 1) { // Frame vazio
-            frame_list[i] = (uint32_t)qh | 2;
-        } else {
-            // Se já houver algo, deveríamos encadear, mas aqui simplificamos
-        }
+        frame_list[i] = (uint32_t)td;
     }
 
     return 0;
@@ -174,10 +169,24 @@ void uhci_init(pci_device_t *dev) {
             serial_print("\n");
 
             // Reset Port
-            outw(port_reg, status | 0x0200); // PR
-            for(int i=0; i<50000; i++) asm volatile("pause");
+            serial_print("UHCI: Resetting port...\n");
+            outw(port_reg, status | 0x0200); // PR (bit 9)
+            for(int i=0; i<100000; i++) asm volatile("pause");
             outw(port_reg, inw(port_reg) & ~0x0200);
-            for(int i=0; i<50000; i++) asm volatile("pause");
+            for(int i=0; i<500000; i++) asm volatile("pause");
+
+            // Verificar status pós-reset
+            uint16_t post_reset = inw(port_reg);
+            serial_print("UHCI: Post-reset status="); serial_print_hex(post_reset); serial_print("\n");
+
+            // Se porta não foi habilitada, habilitar manualmente
+            if (!(post_reset & 0x0004)) {
+                serial_print("UHCI: Enabling port manually...\n");
+                outw(port_reg, post_reset | 0x0004);
+                for(int i=0; i<10000; i++) asm volatile("pause");
+                uint16_t enabled = inw(port_reg);
+                serial_print("UHCI: After enable status="); serial_print_hex(enabled); serial_print("\n");
+            }
 
             extern void usb_enumerate(void *controller, uint8_t port, int type);
             usb_enumerate(dev, (uint8_t)p, 1); // 1 = UHCI

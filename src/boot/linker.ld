@@ -33,4 +33,10 @@ SECTIONS
 	}
 
     end = .;
+
+    /DISCARD/ : {
+        *(.note*)
+        *(.comment*)
+        *(.interp)
+    }
 }

@@ -5,7 +5,9 @@
 volatile char last_key = 0;
 static bool shift_pressed = false;
 static bool altgr_pressed = false;
+static bool ctrl_pressed = false;
 static bool extended = false;
+volatile bool ctrl_c_pending = false;
 
 static char char_queue[256];
 static uint8_t char_read = 0;
@@ -59,7 +61,7 @@ void push_char(char ch) {
   }
 }
 
-static void push_event(uint8_t scancode, int pressed) {
+void push_event(uint8_t scancode, int pressed) {
   uint8_t next = (uint8_t)((event_write + 1) % 64);
   if (next != event_read) {
     event_queue[event_write].scancode = scancode;
@@ -81,6 +83,7 @@ void keyboard_handler() {
     key_state[released] = false;
     if (released == 0x2A || released == 0x36) shift_pressed = false;
     if (released == 0x38) altgr_pressed = false;
+    if (released == 0x1D) ctrl_pressed = false;
     push_event(released, 0);
     extended = false;
   } else { // Key Pressed
@@ -100,10 +103,19 @@ void keyboard_handler() {
       extended = false;
       return;
     }
-    if (scancode == 0x2A || scancode == 0x36) {
+    if (scancode == 0x1D) {
+      ctrl_pressed = true;
+    } else if (scancode == 0x2A || scancode == 0x36) {
       shift_pressed = true;
     } else if (scancode == 0x38) {
       altgr_pressed = true;
+    } else if (scancode == 0x2E && ctrl_pressed) {
+      ctrl_c_pending = true;
+      last_key = 3;
+      push_char(3);
+      push_event(scancode, 1);
+      extended = false;
+      return;
     } else {
       char key = 0;
 
@@ -141,7 +153,17 @@ int keyboard_get_event(void *ev) {
 }
 
 char get_last_key() { char k = last_key; last_key = 0; return k; }
-bool check_ctrl_c() { return false; }
+bool check_ctrl_c() {
+  if (ctrl_c_pending) {
+    ctrl_c_pending = false;
+    return true;
+  }
+  return false;
+}
+
+void keyboard_set_ctrl_c(void) {
+  ctrl_c_pending = true;
+}
 bool check_alt_f4() { return false; }
 bool check_win_key() { return false; }
 bool keyboard_is_pressed(uint8_t s) { return key_state[s]; }

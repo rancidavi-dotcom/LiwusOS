@@ -52,7 +52,8 @@ void init_vmm(uint32_t memory_size) {
   memset(kernel_directory, 0, sizeof(page_directory_t));
 
   uint32_t phys_addr;
-  kernel_directory->physicalAddr = (uint32_t)kmalloc_ap(4096, &phys_addr);
+  kmalloc_ap(4096, &phys_addr);
+  kernel_directory->physicalAddr = phys_addr;
   memset((void *)kernel_directory->physicalAddr, 0, 4096);
 
   uint32_t *pd = (uint32_t *)kernel_directory->physicalAddr;
@@ -94,7 +95,8 @@ page_directory_t *vmm_create_directory() {
   page_directory_t *dir = (page_directory_t *)kmalloc(sizeof(page_directory_t));
   memset(dir, 0, sizeof(page_directory_t));
   uint32_t phys_addr;
-  dir->physicalAddr = (uint32_t)kmalloc_ap(4096, &phys_addr);
+  kmalloc_ap(4096, &phys_addr);
+  dir->physicalAddr = phys_addr;
   memset((void *)dir->physicalAddr, 0, 4096);
   for (int i = 0; i < 1024; i++) {
     if (kernel_directory->tablesVirtual[i]) {
@@ -134,6 +136,13 @@ page_directory_t *vmm_copy_directory(page_directory_t *src) {
 extern task_t *current_task;
 uint32_t sys_brk(uint32_t addr) {
   if (!current_task) return 0;
+  serial_print("DBG_BRK: pid=");
+  char _nb[16];
+  itoa(current_task->id, _nb, 10); serial_print(_nb);
+  serial_print(" req="); serial_print_hex(addr);
+  serial_print(" heap_start="); serial_print_hex(current_task->heap_start);
+  serial_print(" heap_end="); serial_print_hex(current_task->heap_end);
+  serial_print("\n");
   if (addr == 0 || addr < current_task->heap_start) return current_task->heap_end;
   if (addr > current_task->heap_end) {
     uint32_t start = (current_task->heap_end + 0xFFF) & 0xFFFFF000;

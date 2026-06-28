@@ -1,8 +1,6 @@
 #include "pci.h"
 #include "io.h"
-#include "kheap.h"
-#include "video.h" // Added for draw_string
-#include "virtio.h" // Added VirtIO support
+#include "serial.h"
 #include "serial.h" // Serial Log
 
 static pci_device_t *devices[32];
@@ -33,14 +31,23 @@ void pci_init() {
   for (uint16_t bus = 0; bus < 256; bus++) {
     for (uint16_t dev = 0; dev < 32; dev++) {
       uint32_t val = pci_read_config(bus, dev, 0, 0);
-      if ((val & 0xFFFF) != 0xFFFF) {
+      if ((val & 0xFFFF) == 0xFFFF) continue;
+
+      // Check header type for multi-function support (byte at offset 0x0E)
+      uint32_t htype_reg = pci_read_config(bus, dev, 0, 0x0C);
+      uint8_t funcs = (htype_reg & 0x800000) ? 8 : 1;
+
+      for (uint8_t fn = 0; fn < funcs; fn++) {
+        val = pci_read_config(bus, dev, fn, 0);
+        if ((val & 0xFFFF) == 0xFFFF) continue;
+
         pci_device_t *d = (pci_device_t *)kmalloc(sizeof(pci_device_t));
         d->bus = bus;
         d->device = dev;
-        d->function = 0;
+        d->function = fn;
         d->vendor_id = val & 0xFFFF;
         d->device_id = (val >> 16) & 0xFFFF;
-        uint32_t class_reg = pci_read_config(bus, dev, 0, 0x08);
+        uint32_t class_reg = pci_read_config(bus, dev, fn, 0x08);
         d->class_id = (class_reg >> 24) & 0xFF;
         d->subclass_id = (class_reg >> 16) & 0xFF;
 
@@ -55,10 +62,9 @@ void pci_init() {
             serial_print(")\n");
         }
 
-        uint32_t int_reg = pci_read_config(bus, dev, 0, 0x3C);
+        uint32_t int_reg = pci_read_config(bus, dev, fn, 0x3C);
         d->interrupt_line = int_reg & 0xFF;
 
-        // CHECK FOR VIRTIO GPU
         if (d->vendor_id == 0x1AF4) {
           serial_print("PCI: FOUND VIRTIO DEVICE!\n");
           if (d->device_id == 0x1050) {

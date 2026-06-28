@@ -14,6 +14,7 @@ typedef struct usb_device {
 } usb_device_t;
 
 void usb_init(void);
+void usb_start_polling(void);
 void usb_register_device(usb_device_t *dev);
 
 #endif

@@ -1,6 +1,4 @@
 #include "launcher.h"
-#include "book.h"
-#include "browser.h"
 #include "editor.h"
 #include "kheap.h"
 #include "string.h"
@@ -22,14 +20,12 @@ void on_app_item_click(void *widget, void *surface) {
 
   if (strstr(btn->text, "Terminal")) {
     open_terminal();
-  } else if (strstr(btn->text, "Book")) {
-    open_book();
-  } else if (strstr(btn->text, "Browser") || strstr(btn->text, "Web")) {
-    open_browser();
-  } else if (strstr(btn->text, "Liwim") || strstr(btn->text, "Editor")) {
+  } else if (strstr(btn->text, "Editor") || strstr(btn->text, "Liwim")) {
     open_editor();
   } else if (strstr(btn->text, "Doom")) {
     launch_program("doomgeneric");
+  } else if (strstr(btn->text, "Calc")) {
+    launch_program("calc");
   }
 
   launcher_win->visible = false;
@@ -44,19 +40,16 @@ widget_t *init_launcher(widget_t *all_apps[], int count) {
   launcher_win->visible = false;
   launcher_win->color = 0xEE1A1A1A; // Dark translucency feel
 
-  // Adiciona botões para os apps conhecidos
   add_widget(launcher_win,
              create_button("> Terminal", 10, 10, 380, 35, on_app_item_click));
-  add_widget(launcher_win, create_button("> Book Reader", 10, 50, 380, 35,
-                                         on_app_item_click));
   add_widget(launcher_win,
-             create_button("> Settings", 10, 90, 380, 35, on_app_item_click));
-  add_widget(launcher_win, create_button("> Web Browser", 10, 130, 380, 35,
-                                         on_app_item_click));
+             create_button("> Settings", 10, 50, 380, 35, on_app_item_click));
   add_widget(launcher_win,
-             create_button("> Liwim Editor", 10, 170, 380, 35, on_app_item_click));
+             create_button("> Liwim Editor", 10, 90, 380, 35, on_app_item_click));
   add_widget(launcher_win,
-             create_button("> Doom", 10, 210, 380, 35, on_app_item_click));
+             create_button("> Doom", 10, 130, 380, 35, on_app_item_click));
+  add_widget(launcher_win,
+             create_button("> Calculadora", 10, 170, 380, 35, on_app_item_click));
 
   return launcher_win;
 }

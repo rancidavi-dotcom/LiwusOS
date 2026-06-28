@@ -80,31 +80,37 @@ void usb_enumerate(void *controller, uint8_t port, int type) {
     }
 
     // 4. Get Config Descriptor
-    usb_config_descriptor_t *cfg = kmalloc(sizeof(usb_config_descriptor_t));
+    usb_config_descriptor_t cfg;
     setup.request_type = 0x80;
     setup.request = USB_REQ_GET_DESCRIPTOR;
     setup.value = (USB_DESC_CONFIG << 8);
     setup.index = 0;
     setup.length = sizeof(usb_config_descriptor_t);
 
-    ehci_send_control(addr, &setup, cfg, sizeof(usb_config_descriptor_t));
-    
+    if (type == 1)
+        uhci_send_control(pci_dev, addr, &setup, &cfg, sizeof(usb_config_descriptor_t));
+    else
+        ehci_send_control(addr, &setup, &cfg, sizeof(usb_config_descriptor_t));
+
     // Read full config (including interfaces and endpoints)
-    uint16_t total_len = cfg->total_length;
+    uint16_t total_len = cfg.total_length;
     uint8_t *full_cfg = kmalloc(total_len);
     setup.length = total_len;
-    ehci_send_control(addr, &setup, full_cfg, total_len);
+    if (type == 1)
+        uhci_send_control(pci_dev, addr, &setup, full_cfg, total_len);
+    else
+        ehci_send_control(addr, &setup, full_cfg, total_len);
 
     // 5. Set Configuration
     setup.request_type = 0x00;
     setup.request = USB_REQ_SET_CONFIG;
-    setup.value = cfg->config_value;
+    setup.value = cfg.config_value;
     setup.index = 0;
     setup.length = 0;
     if (type == 1) res = uhci_send_control(pci_dev, addr, &setup, NULL, 0);
     else if (type == 2) res = ehci_send_control(addr, &setup, NULL, 0);
 
-    serial_print("USB: Configured device. Parsing interfaces...\n");
+    serial_print("USB: Configured device.\n");
 
     // 6. Parse Interfaces
     uint8_t *ptr = full_cfg + sizeof(usb_config_descriptor_t);
@@ -153,39 +159,47 @@ void usb_enumerate(void *controller, uint8_t port, int type) {
     usb_register_device(usb_dev);
     
     kfree(desc);
-    kfree(cfg);
     kfree(full_cfg);
 }
 
 #include "ehci.h"
+#include "uhci.h"
 #include "task.h"
 
 extern void usb_hid_handle_report(usb_device_t *dev, uint8_t *data, int len);
 
 void usb_poll_task() {
     while (1) {
+        // Poll UHCI interrupt TD
+        uhci_td_t *utd = uhci_get_interrupt_td();
+        if (utd) {
+            if (!(utd->status & (1 << 23))) {
+                uint8_t *data = (uint8_t *)uhci_get_interrupt_buffer();
+                int len = uhci_get_interrupt_len();
+                usb_device_t *udev = usb_devices;
+                while (udev && udev->type != 1) udev = udev->next;
+                usb_hid_handle_report(udev, data, len);
+                uhci_rearm_interrupt();
+            }
+        }
+
+        // Poll EHCI devices
         usb_device_t *dev = usb_devices;
         while (dev) {
             if (dev->qh) {
                 ehci_qh_t *qh = (ehci_qh_t *)dev->qh;
-                // Se o motor do EHCI parou de executar o overlay (Active bit = 0)
                 if (!(qh->overlay.token & (1 << 7))) {
-                    // Dado recebido! (Buffer está no QH overlay buffer[0])
                     uint8_t *data = (uint8_t *)qh->overlay.buffer[0];
                     int len = (qh->overlay.token >> 16) & 0x7FFF;
                     int received = 8 - len; 
                     
                     usb_hid_handle_report(dev, data, received);
 
-                    // Re-armar o qTD/TD (Simplificado: apenas reativa o bit Active)
                     if (dev->qh) {
-                        if (dev->type == 1 || dev->type == 2) { // KBD/MOUSE
-                            // Para EHCI QH
+                        if (dev->type == 1 || dev->type == 2) {
                             ehci_qh_t *eqh = (ehci_qh_t *)dev->qh;
                             eqh->overlay.token |= (1 << 7);
                             eqh->overlay.token = (eqh->overlay.token & ~(0x7FFF << 16)) | (8 << 16);
-                            // Para UHCI, o TD já está na Frame List e o hardware limpa o bit Active.
-                            // Nota: A estrutura dev->qh precisaria ser adaptada para UHCI se quisermos polling perfeito.
                         }
                     }
                 }
@@ -213,6 +227,9 @@ void usb_init() {
         ehci_init(ehci);
     }
 
-    // Inicia thread de polling USB
+    // Não cria thread aqui — init_tasking ainda não foi chamado
+}
+
+void usb_start_polling() {
     create_task_named(usb_poll_task, "usb_poll");
 }

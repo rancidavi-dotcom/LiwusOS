@@ -82,7 +82,9 @@ typedef struct wl_compositor {
 /* --- Compositor API (Kernel Side) --- */
 
 void compositor_init();
-void compositor_repaint(); /* Chama o LGX para desenhar */
+void compositor_repaint();
+
+extern int graphics_exclusive_active(void);
 
 /* Gerenciamento de Superfícies */
 wl_surface_t *wl_create_surface(uint32_t w, uint32_t h, wl_surface_type_t type);

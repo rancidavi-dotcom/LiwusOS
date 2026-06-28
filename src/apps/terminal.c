@@ -4,7 +4,6 @@
 #include "sdfs.h"
 #include "io.h"
 #include "kheap.h"
-#include "lvgl_shell.h"
 #include "http.h"
 #include "net.h"
 #include "netstack.h"
@@ -138,20 +137,9 @@ static void terminal_trim_output(size_t incoming_len) {
   memmove(output_text, output_text + drop, current_len - drop + 1);
 }
 
-// Hook externo para o liwshd
-extern void remote_shell_print_n(const char* msg, int n);
-static bool remote_mirror_active = false;
-
 void terminal_append_output_n(const char *text, int len) {
   if (!text || len <= 0) {
     return;
-  }
-
-  // Trava de recursão para evitar loop infinito de rede
-  if (!remote_mirror_active) {
-      remote_mirror_active = true;
-      remote_shell_print_n(text, len);
-      remote_mirror_active = false;
   }
 
   for (int i = 0; i < len; i++) {
@@ -179,10 +167,6 @@ void terminal_append_output(const char *text) {
   if (!text) {
     return;
   }
-
-  // Redireciona para o "SSH" se houver cliente
-  extern void remote_shell_print(const char* msg);
-  remote_shell_print(text);
 
   terminal_append_output_n(text, (int)strlen(text));
 }
@@ -1542,8 +1526,24 @@ void exec_command_term(const char *cmd_raw) {
       terminal_append_output(get_launch_last_error());
       terminal_append_output("\n");
     }
+  } else if (strcmp(cmd, "calc") == 0) {
+    terminal_append_output("Iniciando calculadora...\n");
+    terminal_redraw();
+    if (launch_initrd_program_argv("calc", args) < 0) {
+      terminal_append_output("Falha ao iniciar calc: ");
+      terminal_append_output(get_launch_last_error());
+      terminal_append_output("\n");
+    }
   } else {
-    terminal_append_output("Comando desconhecido. Digite 'help'.\n");
+    // Tenta executar como programa do initrd
+    if (strchr(cmd, '/') || strchr(cmd, '.')) {
+      terminal_join_filename(cmd, resolved_a, sizeof(resolved_a));
+      if (launch_initrd_program(resolved_a) < 0) {
+        terminal_append_output("Comando desconhecido. Digite 'help'.\n");
+      }
+    } else {
+      terminal_append_output("Comando desconhecido. Digite 'help'.\n");
+    }
   }
 
   // Se o último caractere da saída não for um \n, adicionamos um para o prompt não ficar grudado
@@ -1562,13 +1562,6 @@ void init_terminal_app() {
     term_win = NULL;
     terminal_output_dirty = true;
     terminal_redraw();
-    return;
-  }
-
-  if (lvgl_shell_enabled()) {
-    term_surface = NULL;
-    term_win = NULL;
-    terminal_output_dirty = true;
     return;
   }
 
@@ -1592,10 +1585,6 @@ void init_terminal_app() {
 }
 
 void open_terminal() {
-  if (lvgl_shell_enabled()) {
-    lvgl_shell_show_terminal();
-    return;
-  }
   if (!term_win)
     init_terminal_app();
   term_win->visible = true;
@@ -1693,7 +1682,7 @@ static void terminal_autocomplete(void) {
 }
 
 void update_terminal_key(char k) {
-  if (!term_surface && !lvgl_shell_enabled() && !terminal_console_mode)
+  if (!term_surface && !terminal_console_mode)
     return;
 
   // Debug: Print scancode/char to serial
@@ -1900,6 +1889,18 @@ void update_terminal_key(char k) {
       terminal_append_output("top finalizado.\n");
       terminal_redraw();
     }
+    return;
+  }
+
+  if (k == 3) {
+    if (last_foreground_pid > 0) {
+      sys_kill_by_pid(last_foreground_pid);
+      last_foreground_pid = -1;
+    }
+    terminal_append_output("^C\n");
+    terminal_reset_input();
+    terminal_append_output(prompt_line);
+    terminal_redraw();
     return;
   }
 

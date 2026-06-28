@@ -38,4 +38,9 @@ void uhci_init(pci_device_t *dev);
 int uhci_send_control(pci_device_t *dev, uint8_t addr, void *setup, void *data, uint16_t len);
 int uhci_register_interrupt(pci_device_t *dev, uint8_t addr, uint8_t endpoint, void *buffer, uint16_t len);
 
+uhci_td_t *uhci_get_interrupt_td(void);
+void *uhci_get_interrupt_buffer(void);
+int uhci_get_interrupt_len(void);
+void uhci_rearm_interrupt(void);
+
 #endif

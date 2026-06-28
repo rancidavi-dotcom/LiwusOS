@@ -6,6 +6,7 @@
 #include "string.h"
 #include "syscall.h"
 #include "vmm.h" // page_directory_t
+#include "keyboard.h"
 #include <stddef.h>
 
 task_t *current_task = NULL;
@@ -14,6 +15,8 @@ extern page_directory_t *current_directory;
 
 static int next_pid = 1;
 static uint32_t global_switch_count = 0;
+
+int last_foreground_pid = -1;
 
 // Helper function to convert int to string if not in string.h
 extern char *itoa(int value, char *str, int base);
@@ -63,6 +66,7 @@ int create_task_named(void (*entry_point)(), const char *name) {
   uint32_t stack_size = 8192;
   uint32_t stack = (uint32_t)kmalloc(stack_size) + stack_size;
   new_task->kernel_stack = stack;
+  new_task->kernel_stack_size = stack_size;
 
   /* Prepara a pilha para o iret */
   registers_t *regs = (registers_t *)(stack - sizeof(registers_t));
@@ -109,6 +113,7 @@ int create_user_task_named(uint32_t entry_point, uint32_t user_stack,
   uint32_t stack_size = 8192;
   stack = (uint32_t)kmalloc(stack_size) + stack_size;
   new_task->kernel_stack = stack;
+  new_task->kernel_stack_size = stack_size;
 
   regs = (registers_t *)(stack - sizeof(registers_t));
   memset(regs, 0, sizeof(registers_t));
@@ -125,6 +130,16 @@ int create_user_task_named(uint32_t entry_point, uint32_t user_stack,
   new_task->heap_start = 0x40000000;
   new_task->heap_end = 0x40000000;
 
+  serial_print("DBG_TASK: pid=");
+  char nbuf[12];
+  itoa(pid, nbuf, 10); serial_print(nbuf);
+  serial_print(" name="); serial_print(name);
+  serial_print(" entry="); serial_print_hex(entry_point);
+  serial_print(" esp="); serial_print_hex(user_stack);
+  serial_print(" heap_start="); serial_print_hex(0x40000000);
+  serial_print(" page_dir="); serial_print_hex((uint32_t)current_directory);
+  serial_print("\n");
+
   new_task->next = task_list->next;
   task_list->next = new_task;
   return pid;
@@ -135,6 +150,22 @@ void switch_task() { asm volatile("int $32"); }
 uint32_t schedule(uint32_t current_esp) {
   if (!current_task)
     return current_esp;
+
+  if (check_ctrl_c() && last_foreground_pid > 0) {
+    task_t *fg = task_list;
+    do {
+      if (fg->id == last_foreground_pid && fg->user_mode) {
+        graphics_exclusive_release(fg->id);
+        fg->state = TASK_ZOMBIE;
+        fg->exit_code = 128 + 2;
+        if (fg->parent) {
+          fg->parent->state = TASK_RUNNING;
+        }
+        break;
+      }
+      fg = fg->next;
+    } while (fg != task_list);
+  }
 
   /* Salva a pilha da tarefa que estava rodando */
   current_task->stack_top = current_esp;
@@ -150,6 +181,14 @@ uint32_t schedule(uint32_t current_esp) {
   current_task = next;
   current_task->switch_count++;
   global_switch_count++;
+
+  //serial_print("DBG_SCHED: pid=");
+  //char _nb[12];
+  //itoa(current_task->id, _nb, 10); serial_print(_nb);
+  //serial_print(" name="); serial_print(current_task->name);
+  //serial_print(" eip="); serial_print_hex(current_task->stack_top ? ((registers_t*)current_task->stack_top)->eip : 0);
+  //serial_print(" page_dir="); serial_print_hex((uint32_t)current_task->page_directory);
+  //serial_print("\n");
 
   /* VMM Switch: Trocar CR3 se mudou de processo */
   if (current_task->page_directory != current_directory) {
@@ -255,6 +294,7 @@ int fork_process(registers_t *regs) {
   uint32_t kernel_stack_size = 4096;
   new_task->kernel_stack =
       (uint32_t)kmalloc(kernel_stack_size) + kernel_stack_size;
+  new_task->kernel_stack_size = kernel_stack_size;
 
   // Processor State
   uint32_t regs_size = sizeof(registers_t);
@@ -268,6 +308,7 @@ int fork_process(registers_t *regs) {
   // Copy heap limits
   new_task->heap_start = parent->heap_start;
   new_task->heap_end = parent->heap_end;
+  new_task->user_mode = parent->user_mode;
 
   new_task->next = task_list->next;
   task_list->next = new_task;
@@ -320,7 +361,13 @@ int sys_waitpid(int pid, int *status, int options) {
               prev = prev->next;
             prev->next = t->next;
 
-            // TODO: Free kernel stack and PCB
+            // Free kernel stack and PCB
+            if (t->kernel_stack && t->kernel_stack_size) {
+              void *stack_base = (void*)(t->kernel_stack - t->kernel_stack_size);
+              kfree(stack_base);
+            }
+            // TODO: free page directory via vmm
+            kfree(t);
             return child_id;
           }
           found = true;
@@ -340,10 +387,30 @@ int sys_waitpid(int pid, int *status, int options) {
   }
 }
 
-extern void graphics_exclusive_release(int pid);
+void sys_kill_by_pid(int pid) {
+  if (pid < 0) return;
+  asm volatile("cli");
+  task_t *t = task_list;
+  do {
+    if (t->id == pid) {
+      if (!t->user_mode) break;
+      graphics_exclusive_release(t->id);
+      t->state = TASK_ZOMBIE;
+      t->exit_code = 128 + 2;
+      if (t->parent) {
+        t->parent->state = TASK_RUNNING;
+      }
+      break;
+    }
+    t = t->next;
+  } while (t != task_list);
+  asm volatile("sti");
+}
 
 void sys_exit_process(int status) {
   asm volatile("cli");
+  if (current_task->id == last_foreground_pid)
+    last_foreground_pid = -1;
   graphics_exclusive_release(current_task->id);
   current_task->state = TASK_ZOMBIE;
   current_task->exit_code = status;

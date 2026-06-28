@@ -125,6 +125,7 @@ int launch_initrd_program_argv(const char *filename, char *const argv[]) {
   if (execve_new_esp == 0) return -1;
   int pid = create_user_task_named((uint32_t)ret, execve_new_esp, filename);
   execve_new_esp = 0;
+  last_foreground_pid = pid;
   
   serial_print("launch: returning pid=");
   char nbuf[12];
@@ -288,6 +289,69 @@ static int sys_present_frame(const uint32_t *src, uint32_t src_w, uint32_t src_h
 
 extern int sys_waitpid(int pid, int *status, int options);
 
+static int do_execve(registers_t *regs, const char *filename, char *const argv[], char *const envp[]) {
+  (void)envp;
+  uint32_t size = 0;
+  void *addr = NULL;
+  char fname_buf[256];
+
+  if (!filename) return -1;
+  strncpy(fname_buf, filename, 255);
+  fname_buf[255] = '\0';
+
+  char sdfs_path[256];
+  sdfs_path[0] = '/';
+  strncpy(sdfs_path + 1, fname_buf, 254);
+  sdfs_path[255] = '\0';
+  addr = sdfs_read_file(sdfs_path, &size);
+  if (!addr) {
+    size = 0;
+    addr = initrd_get_file(fname_buf, &size);
+  }
+  if (!addr) return -1;
+
+  uint32_t entry = elf_load_file(addr);
+  if (entry == 0) return -1;
+
+  uint32_t stack_size = 64 * 1024;
+  uint32_t stack_top = 0xC0000000;
+  uint32_t stack_base = stack_top - stack_size;
+  for (uint32_t vaddr = stack_base; vaddr < stack_top; vaddr += 4096) {
+    void *phys = kmalloc_a(4096);
+    vmm_map_page(phys, (void *)vaddr, 0x07);
+    memset((void *)vaddr, 0, 4096);
+  }
+
+  uint8_t *esp_bytes = (uint8_t *)stack_top;
+  int argc = 0;
+  const uint32_t max_args = 16;
+  if (argv) {
+    while (argv[argc] && argc < (int)max_args) argc++;
+  }
+
+  uint32_t arg_ptrs[16];
+  for (int i = 0; i < argc; i++) {
+    size_t len = strlen(argv[i]) + 1;
+    esp_bytes -= len;
+    memcpy(esp_bytes, argv[i], len);
+    arg_ptrs[i] = (uint32_t)esp_bytes;
+  }
+
+  uint32_t *esp = (uint32_t *)((uint32_t)esp_bytes & ~0xF);
+  esp--; *esp = 0;
+  for (int i = argc - 1; i >= 0; i--) {
+    esp--; *esp = arg_ptrs[i];
+  }
+  uint32_t argv_ptr_addr = (uint32_t)esp;
+  esp--; *esp = 0;
+  esp--; *esp = argv_ptr_addr;
+  esp--; *esp = (uint32_t)argc;
+
+  regs->eip = entry;
+  regs->useresp = (uint32_t)esp;
+  return 0;
+}
+
 void syscall_handler(registers_t *regs) {
   uint32_t call_num = regs->eax;
   switch (call_num) {
@@ -331,6 +395,12 @@ void syscall_handler(registers_t *regs) {
         regs->eax = 0;
       }
       break;
+    case 14: regs->eax = fork_process(regs); break;
+    case 15:
+      regs->eax = do_execve(regs, (const char *)regs->ebx,
+                            (char *const *)regs->ecx,
+                            (char *const *)regs->edx);
+      break;
     case 19: regs->eax = sys_lseek(regs->ebx, regs->ecx, regs->edx); break;
     case 20: {
         const char *name = (const char *)regs->ebx;
@@ -344,7 +414,6 @@ void syscall_handler(registers_t *regs) {
         }
         break;
     }
-    case 45: regs->eax = sys_brk(regs->ebx); break;
     default: break;
   }
 }

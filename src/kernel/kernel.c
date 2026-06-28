@@ -27,17 +27,31 @@
 #include "syscall.h"
 #include "vmm.h"
 #include "vga.h"
-#include "wifi.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-bool is_live_mode = true; // Definir global
+bool is_live_mode = true;
 uint32_t memory_size = 0;
 
 extern uint32_t end;
 extern void refresh_screen();
-extern int graphics_exclusive_active(void);
+
+static int graphics_exclusive_owner = -1;
+
+int graphics_exclusive_active(void) {
+    return graphics_exclusive_owner >= 0;
+}
+
+void graphics_exclusive_acquire(int pid) {
+    graphics_exclusive_owner = pid;
+}
+
+void graphics_exclusive_release(int pid) {
+    if (graphics_exclusive_owner == pid || pid < 0) {
+        graphics_exclusive_owner = -1;
+    }
+}
 
 void task_terminal_loop() {
   terminal_enable_console_mode();
@@ -182,7 +196,6 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbi) {
   heap_start = reserved_start + pmm_bitmap_bytes + 0x1000;
   kheap_set_start(heap_start);
   init_vmm(memory_size);
-  serial_print("VMM initialized\n");
 
   vfs_init();
   serial_print("VFS initialized\n");
@@ -193,7 +206,7 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbi) {
   init_video(mbi);
 
   pci_init();
-  ata_bmide_init(); /* BM-IDE DMA init (desnecessario em LIVECD, mas inofensivo) */
+  ata_bmide_init(); /* BM-IDE DMA init */
   net_init();
   tcp_init();
   udp_init();
@@ -242,18 +255,11 @@ void kernel_main(uint32_t magic, multiboot_info_t *mbi) {
   init_timer(100);
   init_tasking();
   init_syscalls();
-  
-  extern void dns_init();
-  extern void dhcp_init();
-  extern void dhcp_discover();
-  dns_init();
-  dhcp_init();
-  dhcp_discover();
+
+  extern void usb_start_polling(void);
+  usb_start_polling();
 
   create_task_named(task_terminal_loop, "terminal");
-
-  extern void liwshd_loop();
-  create_task_named(liwshd_loop, "liwshd");
 
   asm volatile("sti");
   while (1) {
