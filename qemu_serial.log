@@ -1,0 +1,218 @@
+LiwusOS Kernel Booting [Network + DNS Patch]...
+VFS initialized
+AHCI: Controller found!
+AHCI: ABAR=0x00000000FEBB1000
+AHCI: GHC=0x0000000080000000 PI=0x000000000000003F CAP=0x00000000C0141F05
+AHCI: port 0 ssts=0x0000000000000113 sig=0x0000000000000101 tfd=0x0000000000000050
+AHCI: SATA drive found on port 0
+AHCI: CLB=0x000000000012C400 FB=0x000000000012C000 bounce=0x000000000012D000
+AHCI: post-rebase CMD=0x000000000000C017 TFD=0x0000000000000050 SSTS=0x0000000000000113
+AHCI: port 1 ssts=0x0000000000000000 sig=0x00000000FFFF0101 tfd=0x0000000000000050
+AHCI: port 2 ssts=0x0000000000000000 sig=0x00000000FFFF0101 tfd=0x0000000000000050
+AHCI: port 3 ssts=0x0000000000000000 sig=0x00000000FFFF0101 tfd=0x0000000000000050
+AHCI: port 4 ssts=0x0000000000000000 sig=0x00000000FFFF0101 tfd=0x0000000000000050
+AHCI: port 5 ssts=0x0000000000000000 sig=0x00000000FFFF0101 tfd=0x0000000000000050
+ata: BAR4 not I/O space
+USB: Initializing USB Stack...
+initrd: copiado para heap do kernel
+Initrd loaded into memory (for first boot setup)
+RTL8139 ethernet initialized
+ata: no legacy PIO disk found
+No ATA disk found, trying AHCI...
+SDFS: Using AHCI port
+SDFS: Invalid superblock magic
+SDFS: No valid filesystem, formatting disk...
+SDFS: Formatted OK
+SDFS: Mounted
+[vfs] mounted sdfs_root at /
+SDFS disk mounted at /
+First boot: copying system files to SDFS...
+initrd: copying system files to SDFS...
+  copiando /calc
+  copiando /hello.liwpkg
+  copiando /lua
+  copiando /nano
+  copiando /tcc
+  copiando /teste.png
+  copiando /usr/include/alloca.h
+  copiando /usr/include/ar.h
+  copiando /usr/include/argz.h
+  copiando /usr/include/assert.h
+  copiando /usr/include/complex.h
+  copiando /usr/include/cpio.h
+  copiando /usr/include/ctype.h
+  copiando /usr/include/devctl.h
+  copiando /usr/include/dirent.h
+  copiando /usr/include/dlfcn.h
+  copiando /usr/include/elf.h
+  copiando /usr/include/envlock.h
+  copiando /usr/include/envz.h
+  copiando /usr/include/errno.h
+  copiando /usr/include/fastmath.h
+  copiando /usr/include/fcntl.h
+  copiando /usr/include/fenv.h
+  copiando /usr/include/fnmatch.h
+  copiando /usr/include/ftw.h
+  copiando /usr/include/getopt.h
+  copiando /usr/include/glob.h
+  copiando /usr/include/grp.h
+  copiando /usr/include/iconv.h
+  copiando /usr/include/ieeefp.h
+  copiando /usr/include/inttypes.h
+  copiando /usr/include/langinfo.h
+  copiando /usr/include/libgen.h
+  copiando /usr/include/libliw.h
+  copiando /usr/include/limits.h
+  copiando /usr/include/locale.h
+  copiando /usr/include/machine/ansi.h
+  copiando /usr/include/machine/endian.h
+  copiando /usr/include/machine/fastmath.h
+  copiando /usr/include/machine/ieee.h
+  copiando /usr/include/machine/ieeefp.h
+  copiando /usr/include/machine/malloc.h
+  copiando /usr/include/machine/param.h
+  copiando /usr/include/machine/setjmp-dj.h
+  copiando /usr/include/machine/setjmp.h
+  copiando /usr/include/machine/stdlib.h
+  copiando /usr/include/machine/termios.h
+  copiando /usr/include/machine/time.h
+  copiando /usr/include/machine/types.h
+  copiando /usr/include/machine/_arc4random.h
+  copiando /usr/include/machine/_default_types.h
+  copiando /usr/include/machine/_endian.h
+  copiando /usr/include/machine/_fpmath.h
+  copiando /usr/include/machine/_time.h
+  copiando /usr/include/machine/_types.h
+  copiando /usr/include/malloc.h
+  copiando /usr/include/math.h
+  copiando /usr/include/memory.h
+  copiando /usr/include/ndbm.h
+  copiando /usr/include/newlib.h
+  copiando /usr/include/paths.h
+  copiando /usr/include/pthread.h
+  copiando /usr/include/pwd.h
+  copiando /usr/include/reent.h
+  copiando /usr/include/regdef.h
+  copiando /usr/include/regex.h
+  copiando /usr/include/rpc/types.h
+  copiando /usr/include/rpc/xdr.h
+  copiando /usr/include/sched.h
+  copiando /usr/include/search.h
+  copiando /usr/include/setjmp.h
+  copiando /usr/include/signal.h
+  copiando /usr/include/spawn.h
+  copiando /usr/include/ssp/ssp.h
+  copiando /usr/include/ssp/stdio.h
+  copiando /usr/include/ssp/stdlib.h
+  copiando /usr/include/ssp/string.h
+  copiando /usr/include/ssp/strings.h
+  copiando /usr/include/ssp/unistd.h
+  copiando /usr/include/ssp/wchar.h
+  copiando /usr/include/stdatomic.h
+  copiando /usr/include/stdint.h
+  copiando /usr/include/stdio.h
+  copiando /usr/include/stdio_ext.h
+  copiando /usr/include/stdlib.h
+  copiando /usr/include/string.h
+  copiando /usr/include/strings.h
+  copiando /usr/include/sys/cdefs.h
+  copiando /usr/include/sys/config.h
+  copiando /usr/include/sys/custom_file.h
+  copiando /usr/include/sys/dir.h
+  copiando /usr/include/sys/dirent.h
+  copiando /usr/include/sys/endian.h
+  copiando /usr/include/sys/errno.h
+  copiando /usr/include/sys/fcntl.h
+  copiando /usr/include/sys/features.h
+  copiando /usr/include/sys/fenv.h
+  copiando /usr/include/sys/file.h
+  copiando /usr/include/sys/iconvnls.h
+  copiando /usr/include/sys/ioctl.h
+  copiando /usr/include/sys/lock.h
+  copiando /usr/include/sys/mman.h
+  copiando /usr/include/sys/param.h
+  copiando /usr/include/sys/queue.h
+  copiando /usr/include/sys/reent.h
+  copiando /usr/include/sys/resource.h
+  copiando /usr/include/sys/sched.h
+  copiando /usr/include/sys/select.h
+  copiando /usr/include/sys/signal.h
+  copiando /usr/include/sys/stat.h
+  copiando /usr/include/sys/stdio.h
+  copiando /usr/include/sys/string.h
+  copiando /usr/include/sys/syslimits.h
+  copiando /usr/include/sys/termios.h
+  copiando /usr/include/sys/time.h
+  copiando /usr/include/sys/timeb.h
+  copiando /usr/include/sys/times.h
+  copiando /usr/include/sys/timespec.h
+  copiando /usr/include/sys/tree.h
+  copiando /usr/include/sys/types.h
+  copiando /usr/include/sys/unistd.h
+  copiando /usr/include/sys/utime.h
+  copiando /usr/include/sys/wait.h
+  copiando /usr/include/sys/_default_fcntl.h
+  copiando /usr/include/sys/_intsup.h
+  copiando /usr/include/sys/_locale.h
+  copiando /usr/include/sys/_pthreadtypes.h
+  copiando /usr/include/sys/_sigset.h
+  copiando /usr/include/sys/_stdint.h
+  copiando /usr/include/sys/_timespec.h
+  copiando /usr/include/sys/_timeval.h
+  copiando /usr/include/sys/_types.h
+  copiando /usr/include/sys/_tz_structs.h
+  copiando /usr/include/tar.h
+  copiando /usr/include/termios.h
+  copiando /usr/include/tgmath.h
+  copiando /usr/include/threads.h
+  copiando /usr/include/time.h
+  copiando /usr/include/unctrl.h
+  copiando /usr/include/unistd.h
+  copiando /usr/include/utime.h
+  copiando /usr/include/utmp.h
+  copiando /usr/include/wchar.h
+  copiando /usr/include/wctype.h
+  copiando /usr/include/wordexp.h
+  copiando /usr/include/_ansi.h
+  copiando /usr/include/_newlib_version.h
+  copiando /usr/include/_syslist.h
+  copiando /usr/lib/crt0.o
+  copiando /usr/lib/libc.a
+  copiando /usr/lib/libgloss.a
+  copiando /usr/lib/libm.a
+  copiando /usr/lib/tcc/include/float.h
+  copiando /usr/lib/tcc/include/stdalign.h
+  copiando /usr/lib/tcc/include/stdarg.h
+  copiando /usr/lib/tcc/include/stdatomic.h
+  copiando /usr/lib/tcc/include/stdbool.h
+  copiando /usr/lib/tcc/include/stddef.h
+  copiando /usr/lib/tcc/include/stdnoreturn.h
+  copiando /usr/lib/tcc/include/tccdefs.h
+  copiando /usr/lib/tcc/include/tgmath.h
+  copiando /usr/lib/tcc/include/varargs.h
+  copiando /usr/lib/tcc/libtcc1.a
+initrd: copy complete
+System installed to disk.
+sti...
+EXEC: nano
+EXEC: ls
+EXEC: tcc
+EXEC: tcc argc=8 class=64
+DBG_TASK64: pid=3 name=tcc entry=0x0000000000401853 rsp=0x00000000BFFFFF50
+launch: returning pid=3
+EXEC: clear
+EXEC: nano
+EXEC: \nano
+EXEC: clear
+EXEC: touch a.c
+EXEC: ls
+EXEC: echo 'erro' > a.c
+EXEC: cat a;c
+EXEC: cat a.c
+EXEC: clear
+EXEC: ls
+EXEC: tcc a.c -o a
+EXEC: tcc argc=11 class=64
+DBG_TASK64: pid=4 name=tcc entry=0x0000000000401853 rsp=0x00000000BFFFFF38
+launch: returning pid=4
+EXEC: ls

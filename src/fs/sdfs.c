@@ -1,6 +1,7 @@
 #include "sdfs.h"
 #include "vfs.h"
 #include "ata.h"
+#include "ahci.h"
 #include "kheap.h"
 #include "serial.h"
 #include "string.h"
@@ -24,39 +25,84 @@ static uint32_t sdfs_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8
 static uint32_t sdfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 static struct dirent *sdfs_readdir(fs_node_t *node, uint32_t index);
 static fs_node_t *sdfs_finddir(fs_node_t *node, const char *name);
+static fs_node_t *sdfs_vfs_create(fs_node_t *dir_node, const char *name, uint32_t flags);
 static struct dirent sdfs_dirent;
 
 // ============================================================
 // Low-level block I/O
 // ============================================================
 
-static void sdfs_read_block(uint32_t block, uint8_t *buffer) {
-  uint32_t lba = block * SDFS_SECTORS_PER_BLOCK;
-  if (ata_bmide_available()) {
-    ata_bmide_read(lba, SDFS_SECTORS_PER_BLOCK, (uint16_t *)buffer);
-  } else {
-    for (int i = 0; i < SDFS_SECTORS_PER_BLOCK; i++) {
-      ata_read_sector(ata_bus, ata_drive, lba + i, (uint16_t *)(buffer + i * SDFS_SECTOR_SIZE));
+static uint8_t sdfs_ahci_port = 0xFF;
+
+static uint8_t *sdfs_ramdisk = NULL;
+
+void sdfs_enable_ramdisk(uint32_t mb) {
+    uint64_t bytes = mb * 1024 * 1024;
+    sdfs_ramdisk = (uint8_t *)kmalloc_a(bytes);
+    if (!sdfs_ramdisk) {
+        serial_print("SDFS: Failed to allocate ramdisk!\n");
+        return;
     }
-  }
+    disk_total_blocks = bytes / SDFS_BLOCK_SIZE;
+    serial_print("SDFS: Ramdisk enabled!\n");
 }
 
-static void sdfs_write_block(uint32_t block, uint8_t *buffer) {
-  uint32_t lba = block * SDFS_SECTORS_PER_BLOCK;
-  if (ata_bmide_available()) {
-    ata_bmide_write(lba, SDFS_SECTORS_PER_BLOCK, (uint16_t *)buffer);
-  } else {
-    for (int i = 0; i < SDFS_SECTORS_PER_BLOCK; i++) {
-      ata_write_sector(ata_bus, ata_drive, lba + i, (uint16_t *)(buffer + i * SDFS_SECTOR_SIZE));
+static void sdfs_check_ahci() {
+    if (sdfs_ramdisk) return;
+    if (sdfs_ahci_port == 0xFF) {
+        if (ahci_find_first(&sdfs_ahci_port) == 0) {
+            serial_print("SDFS: Using AHCI port\n");
+        }
     }
-  }
 }
 
-static void sdfs_zero_block(uint32_t block) {
+static int sdfs_read_block(uint32_t block, uint8_t *buffer) {
+  if (sdfs_ramdisk) {
+      if (block >= disk_total_blocks) return -1;
+      memcpy(buffer, sdfs_ramdisk + block * SDFS_BLOCK_SIZE, SDFS_BLOCK_SIZE);
+      return 0;
+  }
+  uint32_t lba = block * SDFS_SECTORS_PER_BLOCK;
+  if (sdfs_ahci_port != 0xFF) {
+      return ahci_read_sector(sdfs_ahci_port, lba, SDFS_SECTORS_PER_BLOCK, buffer) ? 0 : -1;
+  }
+  if (ata_bmide_available()) {
+    return ata_bmide_read(lba, SDFS_SECTORS_PER_BLOCK, (uint16_t *)buffer);
+  } else {
+    for (int i = 0; i < SDFS_SECTORS_PER_BLOCK; i++) {
+      if (ata_read_sector(ata_bus, ata_drive, lba + i, (uint16_t *)(buffer + i * SDFS_SECTOR_SIZE)) != 0) return -1;
+    }
+  }
+  return 0;
+}
+
+static int sdfs_write_block(uint32_t block, uint8_t *buffer) {
+  if (sdfs_ramdisk) {
+      if (block >= disk_total_blocks) return -1;
+      memcpy(sdfs_ramdisk + block * SDFS_BLOCK_SIZE, buffer, SDFS_BLOCK_SIZE);
+      return 0;
+  }
+  uint32_t lba = block * SDFS_SECTORS_PER_BLOCK;
+  if (sdfs_ahci_port != 0xFF) {
+      return ahci_write_sector(sdfs_ahci_port, lba, SDFS_SECTORS_PER_BLOCK, buffer) ? 0 : -1;
+  }
+  if (ata_bmide_available()) {
+    return ata_bmide_write(lba, SDFS_SECTORS_PER_BLOCK, (uint16_t *)buffer);
+  } else {
+    for (int i = 0; i < SDFS_SECTORS_PER_BLOCK; i++) {
+      if (ata_write_sector(ata_bus, ata_drive, lba + i, (uint16_t *)(buffer + i * SDFS_SECTOR_SIZE)) != 0) return -1;
+    }
+  }
+  return 0;
+}
+
+static int sdfs_zero_block(uint32_t block) {
   uint8_t *buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+  if (!buf) return -1;
   memset(buf, 0, SDFS_BLOCK_SIZE);
-  sdfs_write_block(block, buf);
+  int ret = sdfs_write_block(block, buf);
   kfree(buf);
+  return ret;
 }
 
 // ============================================================
@@ -68,7 +114,7 @@ static int sdfs_load_bitmap(void) {
   bitmap_bytes = disk_bitmap_blocks * SDFS_BLOCK_SIZE;
   bitmap_cache = (uint8_t *)kmalloc(bitmap_bytes);
   if (!bitmap_cache) return -1;
-  sdfs_read_block(disk_bitmap_block, bitmap_cache);
+  if (sdfs_read_block(disk_bitmap_block, bitmap_cache) != 0) return -1;
   return 0;
 }
 
@@ -102,7 +148,7 @@ static uint32_t sdfs_alloc_block(void) {
     if (!sdfs_bitmap_test(b)) {
       sdfs_bitmap_set(b, 1);
       sdfs_save_bitmap();
-      sdfs_zero_block(b);
+      if (sdfs_zero_block(b) != 0) return 0;
       return b;
     }
   }
@@ -120,18 +166,22 @@ static void sdfs_free_block(uint32_t block) {
 // ============================================================
 
 static uint32_t sdfs_get_next_block(uint32_t block) {
-  uint8_t buf[SDFS_BLOCK_SIZE];
+  uint8_t *buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+  if (!buf) return 0;
   sdfs_read_block(block, buf);
   uint32_t next;
   memcpy(&next, buf, 4);
+  kfree(buf);
   return next;
 }
 
 static void sdfs_set_next_block(uint32_t block, uint32_t next) {
-  uint8_t buf[SDFS_BLOCK_SIZE];
+  uint8_t *buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+  if (!buf) return;
   sdfs_read_block(block, buf);
   memcpy(buf, &next, 4);
   sdfs_write_block(block, buf);
+  kfree(buf);
 }
 
 static uint32_t sdfs_append_block(uint32_t chain_start) {
@@ -208,10 +258,11 @@ static int sdfs_dir_count_entries(uint32_t dir_block) {
   uint32_t cur = dir_block;
   int count = 0;
   while (cur != 0) {
-    uint8_t buf[SDFS_BLOCK_SIZE];
-    sdfs_read_block(cur, buf);
+    uint8_t *buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+    if (!buf) break;
+    if (sdfs_read_block(cur, buf) != 0) { kfree(buf); return -1; }
     sdfs_dir_block_t *db = (sdfs_dir_block_t *)buf;
-    if (db->entry_count == 0) break;
+    if (db->entry_count == 0) { kfree(buf); break; }
     uint8_t *pos = db->data;
     uint32_t remaining = 4090;
     for (int i = 0; i < db->entry_count; i++) {
@@ -221,7 +272,6 @@ static int sdfs_dir_count_entries(uint32_t dir_block) {
       uint32_t entry_size = 2 + name_len + 12;
       if (entry_size > remaining) break;
       if (type == SDFS_TYPE_FILE || type == SDFS_TYPE_DIR) {
-        // Check if name starts with valid char
         if (name_len > 0) {
           count++;
         }
@@ -230,6 +280,7 @@ static int sdfs_dir_count_entries(uint32_t dir_block) {
       remaining -= entry_size;
     }
     cur = db->next_block;
+    kfree(buf);
   }
   return count;
 }
@@ -238,12 +289,14 @@ static int sdfs_dir_count_entries(uint32_t dir_block) {
 static int sdfs_dir_find_entry(uint32_t dir_block, const char *name, sdfs_entry_t *out) {
   uint32_t cur = dir_block;
   while (cur != 0) {
-    uint8_t buf[SDFS_BLOCK_SIZE];
+    uint8_t *buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+    if (!buf) break;
     sdfs_read_block(cur, buf);
     sdfs_dir_block_t *db = (sdfs_dir_block_t *)buf;
-    if (db->entry_count == 0) break;
+    if (db->entry_count == 0) { kfree(buf); break; }
     uint8_t *pos = db->data;
     uint32_t remaining = 4090;
+    int found = 0;
     for (int i = 0; i < db->entry_count; i++) {
       if (remaining < 2) break;
       sdfs_entry_t e;
@@ -258,12 +311,15 @@ static int sdfs_dir_find_entry(uint32_t dir_block, const char *name, sdfs_entry_
       e.block_offset = (uint16_t)(pos - buf);
       if (strcmp(e.name, name) == 0) {
         *out = e;
-        return 1;
+        found = 1;
+        break;
       }
       pos += ret;
       remaining -= ret;
     }
     cur = db->next_block;
+    kfree(buf);
+    if (found) return 1;
   }
   return 0;
 }
@@ -273,10 +329,11 @@ static int sdfs_dir_find_by_index(uint32_t dir_block, int index, sdfs_entry_t *o
   uint32_t cur = dir_block;
   int count = 0;
   while (cur != 0) {
-    uint8_t buf[SDFS_BLOCK_SIZE];
+    uint8_t *buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+    if (!buf) break;
     sdfs_read_block(cur, buf);
     sdfs_dir_block_t *db = (sdfs_dir_block_t *)buf;
-    if (db->entry_count == 0) break;
+    if (db->entry_count == 0) { kfree(buf); break; }
     uint8_t *pos = db->data;
     uint32_t remaining = 4090;
     for (int i = 0; i < db->entry_count; i++) {
@@ -293,6 +350,7 @@ static int sdfs_dir_find_by_index(uint32_t dir_block, int index, sdfs_entry_t *o
         e.block = cur;
         e.block_offset = (uint16_t)(pos - buf);
         *out = e;
+        kfree(buf);
         return 1;
       }
       count++;
@@ -300,6 +358,7 @@ static int sdfs_dir_find_by_index(uint32_t dir_block, int index, sdfs_entry_t *o
       remaining -= ret;
     }
     cur = db->next_block;
+    kfree(buf);
   }
   return 0;
 }
@@ -314,7 +373,8 @@ static int sdfs_dir_name_exists(uint32_t dir_block, const char *name) {
 static int sdfs_dir_add_entry(uint32_t dir_block, sdfs_entry_t *e) {
   uint32_t cur = dir_block;
   while (1) {
-    uint8_t buf[SDFS_BLOCK_SIZE];
+    uint8_t *buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+    if (!buf) return -1;
     sdfs_read_block(cur, buf);
     sdfs_dir_block_t *db = (sdfs_dir_block_t *)buf;
     uint8_t *pos = db->data;
@@ -341,43 +401,43 @@ static int sdfs_dir_add_entry(uint32_t dir_block, sdfs_entry_t *e) {
     uint32_t entry_size_needed = 2 + e->name_len + 12;
 
     if (found_free) {
-      // Reuse the free slot
       int ret = sdfs_entry_serialize(pos, remaining, e);
-      if (ret < 0) return -1;
-      sdfs_write_block(cur, buf);
+      if (ret < 0) { kfree(buf); return -1; }
+      if (sdfs_write_block(cur, buf) != 0) { kfree(buf); return -1; }
+      kfree(buf);
       return 0;
     }
 
     if (remaining >= entry_size_needed) {
-      // Append at end
       int ret = sdfs_entry_serialize(pos, remaining, e);
-      if (ret < 0) return -1;
+      if (ret < 0) { kfree(buf); return -1; }
       db->entry_count = (uint16_t)(entry_count + 1);
       memcpy(buf, db, 6);
-      sdfs_write_block(cur, buf);
+      if (sdfs_write_block(cur, buf) != 0) { kfree(buf); return -1; }
+      kfree(buf);
       return 0;
     }
 
-    // Need a new block in the chain
     if (db->next_block == 0) {
       uint32_t new_block = sdfs_alloc_block();
-      if (new_block == 0) return -1;
+      if (new_block == 0) { kfree(buf); return -1; }
       db->next_block = new_block;
       memcpy(buf, db, 6);
-      sdfs_write_block(cur, buf);
+      if (sdfs_write_block(cur, buf) != 0) { kfree(buf); return -1; }
     }
     cur = db->next_block;
+    kfree(buf);
   }
 }
 
-// Remove an entry by name (mark as DEL)
 static int sdfs_dir_remove_entry(uint32_t dir_block, const char *name) {
   uint32_t cur = dir_block;
   while (cur != 0) {
-    uint8_t buf[SDFS_BLOCK_SIZE];
-    sdfs_read_block(cur, buf);
+    uint8_t *buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+    if (!buf) break;
+    if (sdfs_read_block(cur, buf) != 0) { kfree(buf); break; }
     sdfs_dir_block_t *db = (sdfs_dir_block_t *)buf;
-    if (db->entry_count == 0) break;
+    if (db->entry_count == 0) { kfree(buf); break; }
     uint8_t *pos = db->data;
     uint32_t remaining = 4090;
     for (int i = 0; i < db->entry_count; i++) {
@@ -387,7 +447,8 @@ static int sdfs_dir_remove_entry(uint32_t dir_block, const char *name) {
       if (ret < 0) break;
       if (ret > 1 && strcmp(e.name, name) == 0) {
         pos[0] = SDFS_TYPE_DEL;
-        sdfs_write_block(cur, buf);
+        if (sdfs_write_block(cur, buf) != 0) { kfree(buf); return -1; }
+        kfree(buf);
         return 0;
       }
       if (ret <= 1) { pos += 2; remaining -= 2; continue; }
@@ -395,6 +456,7 @@ static int sdfs_dir_remove_entry(uint32_t dir_block, const char *name) {
       remaining -= ret;
     }
     cur = db->next_block;
+    kfree(buf);
   }
   return -1;
 }
@@ -409,10 +471,10 @@ static int sdfs_dir_remove_entry(uint32_t dir_block, const char *name) {
 static int sdfs_resolve_parent(const char *path, uint32_t *parent_block_out, char *name_out) {
   if (!path || path[0] != '/' || !path[1]) return -1;
 
-  // Make a mutable copy
-  char tmp[512];
+  char *tmp = (char *)kmalloc(512);
+  if (!tmp) return -1;
   int plen = strlen(path);
-  if (plen >= 511) return -1;
+  if (plen >= 511) { kfree(tmp); return -1; }
   memcpy(tmp, path, plen + 1);
 
   // Find last '/'
@@ -420,10 +482,10 @@ static int sdfs_resolve_parent(const char *path, uint32_t *parent_block_out, cha
   for (char *p = tmp; *p; p++) {
     if (*p == '/') last_slash = p;
   }
-  if (!last_slash) return -1;
+  if (!last_slash) { kfree(tmp); return -1; }
 
   char *leaf = last_slash + 1;
-  if (*leaf == '\0') return -1;
+  if (*leaf == '\0') { kfree(tmp); return -1; }
 
   uint32_t cur_block = disk_root_block;
 
@@ -436,12 +498,11 @@ static int sdfs_resolve_parent(const char *path, uint32_t *parent_block_out, cha
     char saved = *next_slash;
     *next_slash = '\0';
 
-    // Look up this component in cur_block
     sdfs_entry_t e;
     if (!sdfs_dir_find_entry(cur_block, comp, &e)) {
-      return -1;
+      kfree(tmp); return -1;
     }
-    if (e.type != SDFS_TYPE_DIR) return -1;
+    if (e.type != SDFS_TYPE_DIR) { kfree(tmp); return -1; }
     cur_block = e.start_block;
 
     *next_slash = saved;
@@ -453,6 +514,7 @@ static int sdfs_resolve_parent(const char *path, uint32_t *parent_block_out, cha
   if (nlen > 255) nlen = 255;
   memcpy(name_out, leaf, nlen);
   name_out[nlen] = '\0';
+  kfree(tmp);
   return 0;
 }
 
@@ -469,21 +531,23 @@ static int sdfs_resolve_full(const char *path, sdfs_entry_t *out) {
 // ============================================================
 
 int sdfs_format(void) {
-  // Determine disk size by reading the superblock area first
-  // We'll assume the disk has at least enough sectors
-  // Use partition info from boot or hardcode...
-  // For now, read sector count from the ATA identify data
-  uint16_t identify[256];
-  ata_read_sector(ATA_PRIMARY, ATA_MASTER, 0, identify); // Doesn't work for identify; need IDENTIFY cmd
-  // Actually let's just use a default size. The disk image is ~100MB.
-  // Read the MBR sector to find partition size
-
-  ata_bus = ATA_PRIMARY;
-  ata_drive = ATA_MASTER;
+  sdfs_check_ahci();
+  if (sdfs_ahci_port == 0xFF && ata_probe(ata_bus, ata_drive) != 0) {
+    serial_print("SDFS: format refused, no ATA or AHCI disk selected\n");
+    return -1;
+  }
 
   // Read partition table from MBR (sector 0)
   uint16_t mbr_buf[256];
-  ata_read_sector(ata_bus, ata_drive, 0, mbr_buf);
+  if (sdfs_ahci_port != 0xFF) {
+      if (!ahci_read_sector(sdfs_ahci_port, 0, 1, (uint8_t*)mbr_buf)) {
+          serial_print("SDFS: format failed, cannot read sector 0 (AHCI)\n");
+          return -1;
+      }
+  } else if (ata_read_sector(ata_bus, ata_drive, 0, mbr_buf) != 0) {
+    serial_print("SDFS: format failed, cannot read sector 0\n");
+    return -1;
+  }
   uint8_t *mbr = (uint8_t *)mbr_buf;
 
   // First partition entry at offset 446
@@ -494,9 +558,18 @@ int sdfs_format(void) {
   }
 
   uint32_t total_sectors = part_sectors;
+  uint64_t ahci_sectors = 0;
+  if (sdfs_ahci_port != 0xFF) {
+      extern uint64_t ahci_identify(uint8_t portno);
+      ahci_sectors = ahci_identify(sdfs_ahci_port);
+      if (ahci_sectors > 0) {
+          total_sectors = (uint32_t)(ahci_sectors > 0xFFFFFFFF ? 0xFFFFFFFF : ahci_sectors);
+      }
+  }
+
   disk_total_blocks = total_sectors / SDFS_SECTORS_PER_BLOCK;
   if (disk_total_blocks < 10) disk_total_blocks = 25600; // fallback ~100MB
-
+  
   // Calculate bitmap size
   bitmap_bytes = (disk_total_blocks + 7) / 8;
   disk_bitmap_blocks = (bitmap_bytes + SDFS_BLOCK_SIZE - 1) / SDFS_BLOCK_SIZE;
@@ -513,16 +586,22 @@ int sdfs_format(void) {
   }
 
   // Write superblock
-  sdfs_super_t sb;
-  memset(&sb, 0, sizeof(sb));
-  memcpy(sb.magic, SDFS_MAGIC, 8);
-  sb.block_size = SDFS_BLOCK_SIZE;
-  sb.total_blocks = disk_total_blocks;
-  sb.bitmap_block = disk_bitmap_block;
-  sb.bitmap_blocks = disk_bitmap_blocks;
-  sb.root_dir_block = disk_root_block;
+  uint8_t *sb_buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+  memset(sb_buf, 0, SDFS_BLOCK_SIZE);
+  sdfs_super_t *sb = (sdfs_super_t *)sb_buf;
+  memcpy(sb->magic, SDFS_MAGIC, 8);
+  sb->block_size = SDFS_BLOCK_SIZE;
+  sb->total_blocks = disk_total_blocks;
+  sb->bitmap_block = disk_bitmap_block;
+  sb->bitmap_blocks = disk_bitmap_blocks;
+  sb->root_dir_block = disk_root_block;
 
-  sdfs_write_block(0, (uint8_t *)&sb);
+  if (sdfs_write_block(0, sb_buf) != 0) {
+    serial_print("SDFS: format failed, cannot write superblock\n");
+    kfree(sb_buf);
+    return -1;
+  }
+  kfree(sb_buf);
 
   // Initialize bitmap: mark superblock + bitmap blocks + root dir as used
   bitmap_cache = (uint8_t *)kmalloc(disk_bitmap_blocks * SDFS_BLOCK_SIZE);
@@ -535,7 +614,12 @@ int sdfs_format(void) {
   sdfs_save_bitmap();
 
   // Initialize root directory block
-  sdfs_zero_block(disk_root_block);
+  if (sdfs_zero_block(disk_root_block) != 0) {
+    serial_print("SDFS: format failed, cannot write root dir\n");
+    kfree(bitmap_cache);
+    bitmap_cache = NULL;
+    return -1;
+  }
 
   kfree(bitmap_cache);
   bitmap_cache = NULL;
@@ -550,9 +634,20 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
   ata_bus = bus;
   ata_drive = drive;
 
+  sdfs_check_ahci();
+  if (sdfs_ahci_port == 0xFF) {
+      if (ata_probe(ata_bus, ata_drive) != 0) {
+        serial_print("SDFS: no ATA disk at requested bus/drive\n");
+        return NULL;
+      }
+  }
+
   // Read superblock
   uint8_t sb_buf[SDFS_BLOCK_SIZE];
-  sdfs_read_block(0, sb_buf);
+  if (sdfs_read_block(0, sb_buf) != 0) {
+    serial_print("SDFS: failed to read superblock\n");
+    return NULL;
+  }
   sdfs_super_t *sb = (sdfs_super_t *)sb_buf;
 
   if (memcmp(sb->magic, SDFS_MAGIC, 8) != 0) {
@@ -580,6 +675,7 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
   root_node->close = sdfs_close;
   root_node->readdir = sdfs_readdir;
   root_node->finddir = sdfs_finddir;
+  root_node->create = sdfs_vfs_create;
 
   sdfs_mounted = 1;
   serial_print("SDFS: Mounted\n");
@@ -594,6 +690,11 @@ int sdfs_create_file(const char *path) {
   if (!sdfs_mounted || !path || path[0] != '/') return -1;
   // Root directory counts as existing
   if (strcmp(path, "/") == 0) return -1;
+  
+  // Bloqueia gravação na raiz do SDFS, exceto arquivos de sistema
+  if (strchr(path + 1, '/') == NULL && strcmp(path, "/.system_installed") != 0) {
+      return -1;
+  }
 
   uint32_t parent_block;
   char name[256];
@@ -658,15 +759,20 @@ uint32_t sdfs_write_file(const char *path, uint8_t *buffer, uint32_t size) {
     uint8_t *src = buffer;
 
     while (remaining > 0) {
-      uint8_t buf[SDFS_BLOCK_SIZE];
+      uint8_t *buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+      if (!buf) { sdfs_free_chain(start_block); return 0; }
       memset(buf, 0, SDFS_BLOCK_SIZE);
 
       uint32_t to_write = remaining;
       if (to_write > 4092) to_write = 4092;
 
       memcpy(buf + 4, src, to_write);
-      // Set next_block = 0 (already zeroed)
-      sdfs_write_block(cur_block, buf);
+      if (sdfs_write_block(cur_block, buf) != 0) {
+        kfree(buf);
+        sdfs_free_chain(start_block);
+        return 0;
+      }
+      kfree(buf);
 
       src += to_write;
       remaining -= to_write;
@@ -696,7 +802,10 @@ uint32_t sdfs_write_file(const char *path, uint8_t *buffer, uint32_t size) {
     // We need parent_block from above
     sdfs_dir_remove_entry(parent_block, name);
   }
-  sdfs_dir_add_entry(parent_block, &e);
+  if (sdfs_dir_add_entry(parent_block, &e) != 0) {
+    sdfs_free_chain(start_block);
+    return 0;
+  }
 
   return size;
 }
@@ -1011,7 +1120,37 @@ static fs_node_t *sdfs_finddir(fs_node_t *node, const char *name) {
   res->write = sdfs_write;
   res->readdir = sdfs_readdir;
   res->finddir = sdfs_finddir;
+  res->create = sdfs_vfs_create;
   res->open = sdfs_open;
   res->close = sdfs_close;
   return res;
+}
+
+static fs_node_t *sdfs_vfs_create(fs_node_t *dir_node, const char *name, uint32_t flags) {
+  (void)flags;
+  if (!dir_node || !(dir_node->flags & FS_DIRECTORY) || !name) return NULL;
+  uint32_t parent_block = dir_node->inode;
+
+  if (sdfs_dir_name_exists(parent_block, name)) return NULL;
+
+  uint32_t start_block = sdfs_alloc_block();
+  if (start_block == 0) return NULL;
+
+  sdfs_entry_t e;
+  memset(&e, 0, sizeof(e));
+  e.type = SDFS_TYPE_FILE;
+  e.name_len = strlen(name);
+  if (e.name_len > 255) e.name_len = 255;
+  memcpy(e.name, name, e.name_len);
+  e.name[e.name_len] = '\0';
+  e.start_block = start_block;
+  e.file_size = 0;
+  e.timestamp = 0;
+
+  if (sdfs_dir_add_entry(parent_block, &e) != 0) {
+    sdfs_free_block(start_block);
+    return NULL;
+  }
+
+  return sdfs_finddir(dir_node, name);
 }

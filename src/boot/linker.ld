@@ -1,42 +1,42 @@
-/* O ponto de entrada definido no boot.s */
+OUTPUT_FORMAT(elf64-x86-64)
 ENTRY(_start)
 
 SECTIONS
 {
-	/* O kernel começa em 1MB de memória física */
-	. = 1M;
+  . = 1M;
 
-	/* Primeiro coloque o cabeçalho multiboot, pois ele é obrigatório nos primeiros 8KB */
-	.text BLOCK(4K) : ALIGN(4K)
-	{
-		*(.multiboot)
-		*(.text)
-	}
+  .text ALIGN(4K) : {
+    *(.multiboot)
+    *(.boot.text)
+    *(.boot.data)
+    *(.text)
+    *(.text.*)
+  }
 
-	/* Dados somente leitura (strings, constantes) */
-	.rodata BLOCK(4K) : ALIGN(4K)
-	{
-		*(.rodata)
-	}
+  .rodata ALIGN(4K) : {
+    *(.rodata)
+    *(.rodata.*)
+    *(.eh_frame)
+    *(.eh_frame_hdr)
+  }
 
-	/* Dados inicializados de leitura e escrita */
-	.data BLOCK(4K) : ALIGN(4K)
-	{
-		*(.data)
-	}
+  .data ALIGN(4K) : {
+    *(.data)
+    *(.data.*)
+  }
 
-	/* Dados não inicializados (e a pilha) */
-	.bss BLOCK(4K) : ALIGN(4K)
-	{
-		*(COMMON)
-		*(.bss)
-	}
+  .bss ALIGN(4K) : {
+    *(COMMON)
+    *(.bss)
+    *(.bss.*)
+    *(.boot.bss)
+  }
 
-    end = .;
+  end = .;
 
-    /DISCARD/ : {
-        *(.note*)
-        *(.comment*)
-        *(.interp)
-    }
+  /DISCARD/ : {
+    *(.note*)
+    *(.comment*)
+    *(.interp)
+  }
 }

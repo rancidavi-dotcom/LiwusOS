@@ -3,8 +3,11 @@
 
 uint32_t timer_ticks = 0;
 
+extern void keyboard_update_mouse(void);
+
 void timer_handler() {
     timer_ticks++;
+    keyboard_update_mouse();
 }
 
 void init_timer(uint32_t frequency) {

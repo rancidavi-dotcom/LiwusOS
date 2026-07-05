@@ -10,11 +10,11 @@
 static uint32_t io_base;
 static uint8_t mac[6];
 static uint8_t *rx_buffer;
-static uint32_t rx_buffer_phys;
+static uint64_t rx_buffer_phys;
 static uint32_t rx_offset = 0;
 static net_interface_t rtl_netif;
 static uint8_t *tx_buffers[4];
-static uint32_t tx_buffer_phys[4];
+static uint64_t tx_buffer_phys[4];
 static uint8_t tx_next = 0;
 
 void rtl8139_send_packet_internal(net_interface_t *self, void *data,

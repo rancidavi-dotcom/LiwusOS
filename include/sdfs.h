@@ -65,3 +65,4 @@ int sdfs_list_dir_entry(const char *path, int index, char *name_out,
                         int *is_dir_out, uint32_t *size_out);
 
 #endif
+void sdfs_enable_ramdisk(uint32_t mb);

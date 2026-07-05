@@ -1,10 +1,10 @@
 #include "fat32.h"
 #include "ata.h"
 #include "kheap.h"
+#include "serial.h"
 #include "string.h"
 #include "task.h"
 #include "vfs.h"
-#include "video.h" // Para debug
 
 // Variáveis globais para o filesystem montado
 static fat32_boot_sector_t boot_sector;
@@ -61,7 +61,7 @@ fs_node_t *fat32_mount(uint16_t bus, uint8_t drive,
   uint16_t boot_sector_buffer[256];
   if (ata_read_sector(ata_bus, ata_drive, partition_lba_start,
                       boot_sector_buffer) != 0) {
-    draw_string(10, 100, "FAT32: Falha ao ler o setor de boot.", 0xFF0000);
+    serial_print("FAT32: Falha ao ler o setor de boot.\n");
     return NULL;
   }
 
@@ -69,7 +69,7 @@ fs_node_t *fat32_mount(uint16_t bus, uint8_t drive,
 
   // Verifica a assinatura "FAT32"
   if (strncmp((char *)boot_sector.BS_FilSysType, "FAT32   ", 8) != 0) {
-    draw_string(10, 110, "FAT32: Filesystem nao e FAT32.", 0xFF0000);
+    serial_print("FAT32: Filesystem nao e FAT32.\n");
     return NULL;
   }
 

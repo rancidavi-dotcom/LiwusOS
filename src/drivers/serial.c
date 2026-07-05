@@ -30,10 +30,10 @@ void serial_print(const char *str) {
 }
 
 // Simple helper for hex debug
-void serial_print_hex(uint32_t n) {
+void serial_print_hex(uint64_t n) {
     char *digits = "0123456789ABCDEF";
     serial_print("0x");
-    for (int i = 28; i >= 0; i -= 4) {
+    for (int i = 60; i >= 0; i -= 4) {
         write_serial(digits[(n >> i) & 0xF]);
     }
 }

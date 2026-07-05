@@ -1,6 +1,9 @@
 #include "io.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include "termios.h"
+
+extern struct termios kernel_termios;
 
 volatile char last_key = 0;
 static bool shift_pressed = false;
@@ -90,16 +93,26 @@ void keyboard_handler() {
     key_state[scancode] = true;
     if (extended) {
       char key = 0;
-      if (scancode == 0x48) key = 17; // UP (Device Control 1)
-      else if (scancode == 0x50) key = 18; // DOWN (Device Control 2)
-      else if (scancode == 0x4B) key = 19; // LEFT (Device Control 3)
-      else if (scancode == 0x4D) key = 20; // RIGHT (Device Control 4)
+      if (scancode == 0x48) key = 128; // UP
+      else if (scancode == 0x50) key = 129; // DOWN
+      else if (scancode == 0x4B) key = 130; // LEFT
+      else if (scancode == 0x4D) key = 131; // RIGHT
+      else if (scancode == 0x5B || scancode == 0x5C) {
+          extern bool win_key_pressed_edge;
+          win_key_pressed_edge = true;
+      }
       
       if (key) {
         last_key = key;
-        push_char(key);
+        extern bool lgx_app_menu_open;
+        if (!lgx_app_menu_open) {
+            push_char(key);
+        }
       }
-      push_event(scancode | 0x80, 1);
+      extern bool lgx_app_menu_open;
+      if (!lgx_app_menu_open || scancode == 0x5B || scancode == 0x5C) {
+          push_event(scancode | 0x80, 1);
+      }
       extended = false;
       return;
     }
@@ -109,29 +122,62 @@ void keyboard_handler() {
       shift_pressed = true;
     } else if (scancode == 0x38) {
       altgr_pressed = true;
-    } else if (scancode == 0x2E && ctrl_pressed) {
-      ctrl_c_pending = true;
-      last_key = 3;
-      push_char(3);
+    } else if (scancode == 0x0F) { // TAB
+      extern bool win_key_pressed_edge;
+      win_key_pressed_edge = true;
+      char key = '\t';
+      last_key = key;
+      push_char(key);
       push_event(scancode, 1);
       extended = false;
       return;
+    } else if (scancode == 0x2E && ctrl_pressed) {
+      if (kernel_termios.c_lflag & ISIG) {
+        ctrl_c_pending = true;
+        last_key = 3;
+        push_char(3);
+        push_event(scancode, 1);
+        extended = false;
+        return;
+      } else {
+        char key = 3;
+        last_key = key;
+        push_char(key);
+        push_event(scancode, 1);
+        extended = false;
+        return;
+      }
     } else {
       char key = 0;
 
-      // Casos especiais de scancodes ABNT2 fixos
+      // Casos especiais de scancodes ABNT2 fixos (sempre, mesmo com Ctrl)
       if (scancode == 0x73) key = shift_pressed ? '?' : '/';
       else if (scancode == 0x56) key = shift_pressed ? '|' : '\\';
-      else if (scancode < 128) {
+      else if (ctrl_pressed && scancode < 128) {
+        unsigned char base = shift_pressed ? kbd_abnt2_shift[scancode] : kbd_abnt2[scancode];
+        if (base >= 'a' && base <= 'z') {
+          key = base - 'a' + 1;
+        } else if (base >= 'A' && base <= 'Z') {
+          key = base - 'A' + 1;
+        } else {
+          key = base;
+        }
+      } else if (scancode < 128) {
         key = shift_pressed ? kbd_abnt2_shift[scancode] : kbd_abnt2[scancode];
       }
 
       if (key) {
         last_key = key;
-        push_char(key);
+        extern bool lgx_app_menu_open;
+        if (!lgx_app_menu_open) {
+            push_char(key);
+        }
       }
     }
-    push_event(scancode, 1);
+    extern bool lgx_app_menu_open;
+    if (!lgx_app_menu_open || scancode == 0x0F || scancode == 0x5B || scancode == 0x5C) {
+        push_event(scancode, 1);
+    }
     extended = false;
   }
 }
@@ -166,4 +212,20 @@ void keyboard_set_ctrl_c(void) {
 }
 bool check_alt_f4() { return false; }
 bool check_win_key() { return false; }
+
+bool win_key_pressed_edge = false;
+bool keyboard_consume_win_key() {
+    if (win_key_pressed_edge) {
+        win_key_pressed_edge = false;
+        return true;
+    }
+    return false;
+}
+
 bool keyboard_is_pressed(uint8_t s) { return key_state[s]; }
+
+extern void mouse_handle_event(int x_rel, int y_rel, int buttons);
+
+void keyboard_update_mouse(void) {
+    // Disabled keyboard mouse emulation by user request
+}

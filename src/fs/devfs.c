@@ -2,7 +2,6 @@
 #include "kheap.h"
 #include "string.h"
 #include "serial.h"
-#include "video.h"
 
 static uint32_t devfs_read_serial(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
     (void)node; (void)offset; (void)size; (void)buffer;
@@ -19,15 +18,6 @@ static uint32_t devfs_write_serial(fs_node_t *node, uint32_t offset, uint32_t si
     return size;
 }
 
-static uint32_t devfs_write_fb(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
-    extern uint32_t *framebuffer;
-    if (!framebuffer) return 0;
-    
-    uint32_t *dest = framebuffer + (offset / 4);
-    memcpy(dest, buffer, size);
-    return size;
-}
-
 fs_node_t* devfs_init() {
     fs_node_t* root = (fs_node_t*)kmalloc(sizeof(fs_node_t));
     memset(root, 0, sizeof(fs_node_t));
@@ -41,13 +31,6 @@ fs_node_t* devfs_init() {
     serial_node->flags = FS_FILE;
     serial_node->write = devfs_write_serial;
     serial_node->read = devfs_read_serial;
-
-    // Criar /dev/fb
-    fs_node_t* fb_node = (fs_node_t*)kmalloc(sizeof(fs_node_t));
-    memset(fb_node, 0, sizeof(fs_node_t));
-    strcpy(fb_node->name, "fb");
-    fb_node->flags = FS_FILE;
-    fb_node->write = devfs_write_fb;
 
     return root;
 }

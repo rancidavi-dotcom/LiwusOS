@@ -114,50 +114,78 @@ void usb_enumerate(void *controller, uint8_t port, int type) {
 
     // 6. Parse Interfaces
     uint8_t *ptr = full_cfg + sizeof(usb_config_descriptor_t);
-    usb_device_t *usb_dev = kmalloc(sizeof(usb_device_t));
-    memset(usb_dev, 0, sizeof(usb_device_t));
-    usb_dev->address = addr;
-    usb_dev->port = port;
-    usb_dev->controller = controller;
+    
+    int current_type = 0;
+    int current_interface = 0;
 
     while (ptr < full_cfg + total_len) {
         uint8_t len = ptr[0];
         uint8_t type_desc = ptr[1];
 
+        if (len == 0) break; // Evita loop infinito
+
         if (type_desc == USB_DESC_INTERFACE) {
             usb_interface_descriptor_t *iface = (usb_interface_descriptor_t *)ptr;
+            current_type = 0;
             if (iface->interface_class == 0x03) { // HID
                 if (iface->interface_protocol == 0x01) {
                     serial_print("USB: Found KEYBOARD interface\n");
-                    usb_dev->type = 1;
+                    current_type = 1;
                 } else if (iface->interface_protocol == 0x02) {
                     serial_print("USB: Found MOUSE interface\n");
-                    usb_dev->type = 2;
+                    current_type = 2;
+                }
+                current_interface = iface->interface_num;
+                
+                // Force Boot Protocol mode (SET_PROTOCOL request, value=0)
+                if (current_type != 0) {
+                    usb_setup_packet_t sp;
+                    sp.request_type = 0x21; // Host-to-device, Class, Interface
+                    sp.request = 0x0B;      // SET_PROTOCOL
+                    sp.value = 0;           // 0 = Boot Protocol
+                    sp.index = current_interface;
+                    sp.length = 0;
+                    if (type == 1) uhci_send_control(pci_dev, addr, &sp, NULL, 0);
+                    else if (type == 2) ehci_send_control(addr, &sp, NULL, 0);
+                    serial_print("USB: Set Boot Protocol OK\n");
                 }
             }
-        } else if (type_desc == USB_DESC_ENDPOINT && usb_dev->type != 0) {
+        } else if (type_desc == USB_DESC_ENDPOINT && current_type != 0) {
             usb_endpoint_descriptor_t *ep = (usb_endpoint_descriptor_t *)ptr;
             if (ep->endpoint_address & 0x80) { // IN endpoint
                 serial_print("USB: Setting up HID polling on EP ");
                 char estr[4]; itoa(ep->endpoint_address & 0x7F, estr, 10); serial_print(estr);
                 serial_print("\n");
                 
+                // Cria um novo device handler para cada endpoint HID
+                usb_device_t *usb_dev = kmalloc(sizeof(usb_device_t));
+                memset(usb_dev, 0, sizeof(usb_device_t));
+                usb_dev->address = addr;
+                usb_dev->port = port;
+                usb_dev->controller = controller;
+                usb_dev->type = current_type;
+                
                 uint8_t *report_buf = kmalloc(8);
                 if (type == 1) {
                     extern int uhci_register_interrupt(pci_device_t *pci_dev, uint8_t addr, uint8_t endpoint, void *buffer, uint16_t len);
-                    uhci_register_interrupt(pci_dev, addr, ep->endpoint_address & 0x0F, report_buf, 8);
+                    extern void uhci_set_int_dev_type(int slot, uint8_t type);
+                    int slot = uhci_register_interrupt(pci_dev, addr, ep->endpoint_address & 0x0F, report_buf, 8);
+                    if (slot >= 0) {
+                        uhci_set_int_dev_type(slot, usb_dev->type);
+                    }
                 } else {
                     extern int ehci_register_interrupt(usb_device_t *dev, uint8_t endpoint, void *buffer, uint16_t len);
                     ehci_register_interrupt(usb_dev, ep->endpoint_address & 0x0F, report_buf, 8);
                 }
-                break; 
+                usb_register_device(usb_dev);
+                
+                // Consumiu o IN endpoint desta interface, reseta para não pegar OUT
+                current_type = 0;
             }
         }
         ptr += len;
     }
 
-    usb_register_device(usb_dev);
-    
     kfree(desc);
     kfree(full_cfg);
 }
@@ -168,45 +196,57 @@ void usb_enumerate(void *controller, uint8_t port, int type) {
 
 extern void usb_hid_handle_report(usb_device_t *dev, uint8_t *data, int len);
 
-void usb_poll_task() {
-    while (1) {
-        // Poll UHCI interrupt TD
-        uhci_td_t *utd = uhci_get_interrupt_td();
-        if (utd) {
-            if (!(utd->status & (1 << 23))) {
-                uint8_t *data = (uint8_t *)uhci_get_interrupt_buffer();
-                int len = uhci_get_interrupt_len();
-                usb_device_t *udev = usb_devices;
-                while (udev && udev->type != 1) udev = udev->next;
-                usb_hid_handle_report(udev, data, len);
-                uhci_rearm_interrupt();
-            }
+static void usb_poll_uhci(void) {
+    extern int uhci_get_int_slot_count(void);
+    extern uhci_td_t *uhci_get_int_td(int slot);
+    extern void *uhci_get_int_buffer(int slot);
+    extern uint8_t uhci_get_int_dev_type(int slot);
+    extern void uhci_rearm_int(int slot);
+
+    int count = uhci_get_int_slot_count();
+    for (int s = 0; s < count; s++) {
+        uhci_td_t *utd = uhci_get_int_td(s);
+        if (!utd) continue;
+        if (utd->status & (1 << 23)) continue; // still active
+
+        uint8_t *data = (uint8_t *)uhci_get_int_buffer(s);
+        uint8_t dev_type = uhci_get_int_dev_type(s);
+
+        // Find a registered device matching the type
+        usb_device_t *udev = usb_devices;
+        while (udev && udev->type != dev_type) udev = udev->next;
+        if (udev) {
+            usb_hid_handle_report(udev, data, 8);
         }
+        uhci_rearm_int(s);
+    }
+}
 
-        // Poll EHCI devices
-        usb_device_t *dev = usb_devices;
-        while (dev) {
-            if (dev->qh) {
-                ehci_qh_t *qh = (ehci_qh_t *)dev->qh;
-                if (!(qh->overlay.token & (1 << 7))) {
-                    uint8_t *data = (uint8_t *)qh->overlay.buffer[0];
-                    int len = (qh->overlay.token >> 16) & 0x7FFF;
-                    int received = 8 - len; 
-                    
-                    usb_hid_handle_report(dev, data, received);
-
-                    if (dev->qh) {
-                        if (dev->type == 1 || dev->type == 2) {
-                            ehci_qh_t *eqh = (ehci_qh_t *)dev->qh;
-                            eqh->overlay.token |= (1 << 7);
-                            eqh->overlay.token = (eqh->overlay.token & ~(0x7FFF << 16)) | (8 << 16);
-                        }
-                    }
+static void usb_poll_ehci(void) {
+    usb_device_t *dev = usb_devices;
+    while (dev) {
+        if (dev->qh) {
+            ehci_qh_t *qh = (ehci_qh_t *)dev->qh;
+            if (!(qh->overlay.token & (1 << 7))) {
+                uint8_t *data = (uint8_t *)qh->overlay.buffer[0];
+                int len = (qh->overlay.token >> 16) & 0x7FFF;
+                int received = 8 - len;
+                usb_hid_handle_report(dev, data, received);
+                if (dev->type == 1 || dev->type == 2) {
+                    qh->overlay.token |= (1 << 7);
+                    qh->overlay.token = (qh->overlay.token & ~(0x7FFF << 16)) | (8 << 16);
                 }
             }
-            dev = dev->next;
         }
-        for(int i=0; i<10; i++) switch_task();
+        dev = dev->next;
+    }
+}
+
+void usb_poll_task() {
+    while (1) {
+        usb_poll_uhci();
+        usb_poll_ehci();
+        switch_task();
     }
 }
 

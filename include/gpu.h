@@ -22,13 +22,12 @@
 #define VBE_DISPI_ENABLED 0x01
 #define VBE_DISPI_LFB_ENABLED 0x40
 
-void init_gpu();
-void gpu_set_resolution(uint32_t width, uint32_t height);
-void gpu_swap_buffers(); // Hardware page flip if supported or blit
-uint32_t *gpu_get_lfb(); // Get Linear Framebuffer address
+void init_gpu(void);
+void gpu_setup_wc_mtrr(uint64_t fb_phys, uint64_t fb_size);
+uint16_t gpu_get_vendor(void);
+const char *gpu_get_vendor_name(void);
 
-// Hardware Accelerated 2D Ops (Simulated or Real BGA extensions)
-void gpu_fill_rect(int x, int y, int w, int h, uint32_t color);
-void gpu_blit(uint32_t *src, int x, int y, int w, int h); // Host to Device
+// SSE2 fast memcpy (non-temporal stores for VRAM)
+extern void fast_memcpy(void *dst, const void *src, uint64_t size);
 
 #endif

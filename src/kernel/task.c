@@ -63,42 +63,36 @@ int create_task_named(void (*entry_point)(), const char *name) {
   new_task->user_mode = false;
   task_assign_name(new_task, name, false);
 
-  uint32_t stack_size = 8192;
-  uint32_t stack = (uint32_t)kmalloc(stack_size) + stack_size;
+  uint64_t stack_size = 8192;
+  uint64_t stack = (uint64_t)kmalloc(stack_size) + stack_size;
   new_task->kernel_stack = stack;
-  new_task->kernel_stack_size = stack_size;
+  new_task->kernel_stack_size = (uint32_t)stack_size;
 
   /* Prepara a pilha para o iret */
-  registers_t *regs = (registers_t *)(stack - sizeof(registers_t));
+  registers_t *  regs = (registers_t *)(uint64_t)(stack - sizeof(registers_t));
+  memset(regs, 0, sizeof(registers_t));
 
-  regs->eflags = 0x202; /* Interrupções habilitadas */
+  regs->rflags = 0x202;
   regs->cs = 0x08;
-  regs->eip = (uint32_t)entry_point;
+  regs->rip = (uint64_t)entry_point;
+  regs->rsp = stack;
+  regs->ss = 0x10;
 
-  regs->ds = 0x10;
-  regs->eax = 0;
-  regs->ebx = 0;
-  regs->ecx = 0;
-  regs->edx = 0;
-  regs->esi = 0;
-  regs->edi = 0;
-  regs->ebp = 0;
-
-  new_task->stack_top = (uint32_t)regs;
+  new_task->stack_top = (uint64_t)regs;
 
   new_task->next = task_list->next;
   task_list->next = new_task;
   return pid;
 }
 
-int create_user_task(uint32_t entry_point, uint32_t user_stack) {
+int create_user_task(uint64_t entry_point, uint64_t user_stack) {
   return create_user_task_named(entry_point, user_stack, NULL);
 }
 
-int create_user_task_named(uint32_t entry_point, uint32_t user_stack,
+int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
                             const char *name) {
   task_t *new_task = (task_t *)kmalloc(sizeof(task_t));
-  uint32_t stack;
+  uint64_t stack;
   registers_t *regs;
 
   memset(new_task, 0, sizeof(task_t));
@@ -110,23 +104,21 @@ int create_user_task_named(uint32_t entry_point, uint32_t user_stack,
   new_task->user_mode = true;
   task_assign_name(new_task, name, true);
 
-  uint32_t stack_size = 8192;
-  stack = (uint32_t)kmalloc(stack_size) + stack_size;
+  uint64_t stack_size = 8192;
+  stack = (uint64_t)kmalloc(stack_size) + stack_size;
   new_task->kernel_stack = stack;
-  new_task->kernel_stack_size = stack_size;
+  new_task->kernel_stack_size = (uint32_t)stack_size;
 
-  regs = (registers_t *)(stack - sizeof(registers_t));
+  regs = (registers_t *)(uint64_t)(stack - sizeof(registers_t));
   memset(regs, 0, sizeof(registers_t));
 
-  regs->eflags = 0x202;
-  regs->cs = 0x1B;
-  regs->ds = 0x23;
-  regs->ss = 0x23;
-  regs->eip = entry_point;
-  regs->useresp = user_stack;
-  regs->esp = user_stack;
+  regs->rflags = 0x202;
+  regs->cs = 0x1B;   /* 32-bit compat user code */
+  regs->ss = 0x23;   /* 32-bit user data (DS/SS) */
+  regs->rip = entry_point;
+  regs->rsp = user_stack;
 
-  new_task->stack_top = (uint32_t)regs;
+  new_task->stack_top = (uint64_t)regs;
   new_task->heap_start = 0x40000000;
   new_task->heap_end = 0x40000000;
 
@@ -135,9 +127,55 @@ int create_user_task_named(uint32_t entry_point, uint32_t user_stack,
   itoa(pid, nbuf, 10); serial_print(nbuf);
   serial_print(" name="); serial_print(name);
   serial_print(" entry="); serial_print_hex(entry_point);
-  serial_print(" esp="); serial_print_hex(user_stack);
+  serial_print(" rsp="); serial_print_hex(user_stack);
   serial_print(" heap_start="); serial_print_hex(0x40000000);
-  serial_print(" page_dir="); serial_print_hex((uint32_t)current_directory);
+  serial_print(" page_dir="); serial_print_hex((uint64_t)current_directory);
+  serial_print("\n");
+
+  new_task->next = task_list->next;
+  task_list->next = new_task;
+  return pid;
+}
+
+int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
+                               const char *name) {
+  task_t *new_task = (task_t *)kmalloc(sizeof(task_t));
+  uint64_t stack;
+  registers_t *regs;
+
+  memset(new_task, 0, sizeof(task_t));
+  new_task->id = next_pid++;
+  int pid = new_task->id;
+  new_task->state = TASK_READY;
+  new_task->parent = current_task;
+  new_task->page_directory = current_directory;
+  new_task->user_mode = true;
+  task_assign_name(new_task, name, true);
+
+  uint64_t stack_size = 8192;
+  stack = (uint64_t)kmalloc(stack_size) + stack_size;
+  new_task->kernel_stack = stack;
+  new_task->kernel_stack_size = (uint32_t)stack_size;
+
+  regs = (registers_t *)(uint64_t)(stack - sizeof(registers_t));
+  memset(regs, 0, sizeof(registers_t));
+
+  regs->rflags = 0x202;
+  regs->cs = 0x2B;   /* 64-bit user code */
+  regs->ss = 0x33;   /* 64-bit user data */
+  regs->rip = entry_point;
+  regs->rsp = user_stack;
+
+  new_task->stack_top = (uint64_t)regs;
+  new_task->heap_start = 0x40000000;
+  new_task->heap_end = 0x40000000;
+
+  serial_print("DBG_TASK64: pid=");
+  char nbuf[12];
+  itoa(pid, nbuf, 10); serial_print(nbuf);
+  serial_print(" name="); serial_print(name);
+  serial_print(" entry="); serial_print_hex(entry_point);
+  serial_print(" rsp="); serial_print_hex(user_stack);
   serial_print("\n");
 
   new_task->next = task_list->next;
@@ -147,17 +185,17 @@ int create_user_task_named(uint32_t entry_point, uint32_t user_stack,
 
 void switch_task() { asm volatile("int $32"); }
 
-uint32_t schedule(uint32_t current_esp) {
+uint64_t schedule(uint64_t current_rsp) {
   if (!current_task)
-    return current_esp;
+    return current_rsp;
 
   if (check_ctrl_c() && last_foreground_pid > 0) {
     task_t *fg = task_list;
     do {
       if (fg->id == last_foreground_pid && fg->user_mode) {
-        graphics_exclusive_release(fg->id);
         fg->state = TASK_ZOMBIE;
         fg->exit_code = 128 + 2;
+        last_foreground_pid = -1;
         if (fg->parent) {
           fg->parent->state = TASK_RUNNING;
         }
@@ -168,27 +206,19 @@ uint32_t schedule(uint32_t current_esp) {
   }
 
   /* Salva a pilha da tarefa que estava rodando */
-  current_task->stack_top = current_esp;
+  current_task->stack_top = current_rsp;
   current_task->cpu_ticks++;
 
   /* Encontrar próxima tarefa que não esteja SLEEPING ou ZOMBIE */
   task_t *next = current_task->next;
   while (next->state == TASK_SLEEPING || next->state == TASK_ZOMBIE) {
     if (next == current_task)
-      break; // Todas as outras estão impedidas? Volta pra atual.
+      break;
     next = next->next;
   }
   current_task = next;
   current_task->switch_count++;
   global_switch_count++;
-
-  //serial_print("DBG_SCHED: pid=");
-  //char _nb[12];
-  //itoa(current_task->id, _nb, 10); serial_print(_nb);
-  //serial_print(" name="); serial_print(current_task->name);
-  //serial_print(" eip="); serial_print_hex(current_task->stack_top ? ((registers_t*)current_task->stack_top)->eip : 0);
-  //serial_print(" page_dir="); serial_print_hex((uint32_t)current_task->page_directory);
-  //serial_print("\n");
 
   /* VMM Switch: Trocar CR3 se mudou de processo */
   if (current_task->page_directory != current_directory) {
@@ -197,9 +227,8 @@ uint32_t schedule(uint32_t current_esp) {
 
   /* Atualiza TSS ESP0 para a pilha de kernel da nova tarefa */
   extern tss_entry_t tss_entry;
-  tss_entry.esp0 = current_task->kernel_stack;
+  tss_entry.rsp0 = current_task->kernel_stack;
 
-  /* Retorna a nova pilha para o Assembly carregar no ESP */
   return current_task->stack_top;
 }
 
@@ -253,8 +282,6 @@ const char *task_state_name(task_state_t state) {
 uint32_t task_total_switches(void) { return global_switch_count; }
 
 void move_to_user_mode() {
-  // Configura segmentos para user data (0x23 = 0x20 | 3) e user code (0x1B =
-  // 0x18 | 3)
   asm volatile("cli; \
          mov $0x23, %ax; \
          mov %ax, %ds; \
@@ -262,16 +289,16 @@ void move_to_user_mode() {
          mov %ax, %fs; \
          mov %ax, %gs; \
          \
-         mov %esp, %eax; \
-         pushl $0x23; \
-         pushl %eax; \
-         pushf; \
-         pop %eax; \
-         or $0x200, %eax; \
-         pushl %eax; \
-         pushl $0x1B; \
-         push $1f; \
-         iret; \
+         mov %rsp, %rax; \
+         pushq $0x23; \
+         pushq %rax; \
+         pushfq; \
+         pop %rax; \
+         or $0x200, %rax; \
+         pushq %rax; \
+         pushq $0x1B; \
+         pushq $1f; \
+         iretq; \
          1: \
          ");
 }
@@ -290,19 +317,17 @@ int fork_process(registers_t *regs) {
   // Real copy of user-space memory
   new_task->page_directory = vmm_copy_directory(parent->page_directory);
 
-  // Kernel Stack
   uint32_t kernel_stack_size = 4096;
   new_task->kernel_stack =
-      (uint32_t)kmalloc(kernel_stack_size) + kernel_stack_size;
+      (uint64_t)kmalloc(kernel_stack_size) + kernel_stack_size;
   new_task->kernel_stack_size = kernel_stack_size;
 
-  // Processor State
-  uint32_t regs_size = sizeof(registers_t);
-  uint32_t new_stack_ptr = new_task->kernel_stack - regs_size;
-  memcpy((void *)new_stack_ptr, regs, regs_size);
+  uint64_t regs_size = sizeof(registers_t);
+  uint64_t new_stack_ptr = new_task->kernel_stack - regs_size;
+  memcpy((void *)(uint64_t)new_stack_ptr, regs, (uint32_t)regs_size);
 
-  registers_t *new_regs = (registers_t *)new_stack_ptr;
-  new_regs->eax = 0; // Return 0 for child
+  registers_t *new_regs = (registers_t *)(uint64_t)new_stack_ptr;
+  new_regs->rax = 0;
   new_task->stack_top = new_stack_ptr;
 
   // Copy heap limits
@@ -320,25 +345,6 @@ int fork_process(registers_t *regs) {
 int sys_waitpid(int pid, int *status, int options) {
   (void)options;
   task_t *parent = current_task;
-  char nbuf[16];
-
-  serial_print("waitpid: parent="); serial_print(parent->name);
-  serial_print(" (pid="); itoa(parent->id, nbuf, 10); serial_print(nbuf);
-  serial_print(") waiting for pid="); itoa(pid, nbuf, 10); serial_print(nbuf);
-  serial_print("\n");
-
-  serial_print("waitpid: scanning task list...\n");
-  task_t *scan = task_list;
-  do {
-      serial_print("  task: name="); serial_print(scan->name);
-      serial_print(" pid="); itoa(scan->id, nbuf, 10); serial_print(nbuf);
-      serial_print(" parent_pid="); 
-      if (scan->parent) { itoa(scan->parent->id, nbuf, 10); serial_print(nbuf); }
-      else serial_print("NULL");
-      serial_print(" state="); serial_print(task_state_name(scan->state));
-      serial_print("\n");
-      scan = scan->next;
-  } while (scan != task_list);
 
   while (1) {
     task_t *t = task_list;
@@ -350,7 +356,6 @@ int sys_waitpid(int pid, int *status, int options) {
         any_child = true;
         if (pid == -1 || t->id == pid) {
           if (t->state == TASK_ZOMBIE) {
-            serial_print("waitpid: found zombie child pid="); itoa(t->id, nbuf, 10); serial_print(nbuf); serial_print("\n");
             if (status)
               *status = t->exit_code;
             int child_id = t->id;
@@ -377,7 +382,6 @@ int sys_waitpid(int pid, int *status, int options) {
     } while (t != task_list);
 
     if (!any_child || (pid != -1 && !found)) {
-      serial_print("waitpid: no child found, returning -1\n");
       return -1;
     }
 
@@ -394,7 +398,6 @@ void sys_kill_by_pid(int pid) {
   do {
     if (t->id == pid) {
       if (!t->user_mode) break;
-      graphics_exclusive_release(t->id);
       t->state = TASK_ZOMBIE;
       t->exit_code = 128 + 2;
       if (t->parent) {
@@ -411,7 +414,6 @@ void sys_exit_process(int status) {
   asm volatile("cli");
   if (current_task->id == last_foreground_pid)
     last_foreground_pid = -1;
-  graphics_exclusive_release(current_task->id);
   current_task->state = TASK_ZOMBIE;
   current_task->exit_code = status;
 

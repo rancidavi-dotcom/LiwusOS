@@ -1,0 +1,386 @@
+In file included from sdk/include/ssp/stdlib.h:4,
+                 from sdk/include/stdlib.h:342,
+                 from apps/tcc/tcc.h:29,
+                 from apps/tcc/tcc.c:25:
+sdk/include/ssp/stdlib.h: In function ‘wctomb’:
+sdk/include/ssp/ssp.h:50:43: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+   50 |         if (bos(buf) != (size_t)-1 && len > bos(buf)) \
+      |                                           ^
+sdk/include/ssp/stdlib.h:23:5: note: in expansion of macro ‘__ssp_check’
+   23 |     __ssp_check(__buf, MB_CUR_MAX, __ssp_bos);
+      |     ^~~~~~~~~~~
+apps/tcc/tcc.h: In function ‘dwarf_read_uleb128’:
+apps/tcc/tcc.h:1884:19: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 1884 |     for (i = 0; i < DWARF_MAX_128; i++) {
+      |                   ^
+apps/tcc/tcc.h: In function ‘dwarf_read_sleb128’:
+apps/tcc/tcc.h:1899:19: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 1899 |     for (i = 0; i < DWARF_MAX_128; i++) {
+      |                   ^
+In file included from apps/tcc/libtcc.c:26,
+                 from apps/tcc/tcc.c:27:
+apps/tcc/tccpp.c: In function ‘tok_str_add2’:
+apps/tcc/tccpp.c:1111:32: warning: comparison of integer expressions of different signedness: ‘size_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 1111 |             if (len + nb_words >= s->allocated_len)
+      |                                ^~
+apps/tcc/tccpp.c: In function ‘preprocess’:
+apps/tcc/tccpp.c:1951:27: warning: comparison of integer expressions of different signedness: ‘long int’ and ‘long unsigned int’ [-Wsign-compare]
+ 1951 |             if ((q - buf) < sizeof(buf) - 1)
+      |                           ^
+apps/tcc/tccpp.c: In function ‘parse_string’:
+apps/tcc/tccpp.c:2176:13: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 2176 |     if (len >= sizeof buf)
+      |             ^~
+apps/tcc/tccpp.c: In function ‘tcc_preprocess’:
+apps/tcc/tccpp.c:3940:22: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 3940 |             if (spcs < sizeof white - 1)
+      |                      ^
+In file included from apps/tcc/libtcc.c:27:
+apps/tcc/tccgen.c: In function ‘__sym_malloc’:
+apps/tcc/tccgen.c:636:18: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+  636 |     for(i = 0; i < SYM_POOL_NB; i++) {
+      |                  ^
+apps/tcc/tccgen.c: In function ‘tcc_debug_end_scope’:
+apps/tcc/tccgen.c:1733:45: warning: unused parameter ‘bounds’ [-Wunused-parameter]
+ 1733 | static void tcc_debug_end_scope(Sym *b, int bounds)
+      |                                         ~~~~^~~~~~
+apps/tcc/tccgen.c: In function ‘adjust_bf’:
+apps/tcc/tccgen.c:1828:38: warning: unused parameter ‘bit_pos’ [-Wunused-parameter]
+ 1828 | static int adjust_bf(SValue *sv, int bit_pos, int bit_size)
+      |                                  ~~~~^~~~~~~
+apps/tcc/tccgen.c:1828:51: warning: unused parameter ‘bit_size’ [-Wunused-parameter]
+ 1828 | static int adjust_bf(SValue *sv, int bit_pos, int bit_size)
+      |                                               ~~~~^~~~~~~~
+apps/tcc/tccgen.c: In function ‘gv’:
+apps/tcc/tccgen.c:1889:13: warning: missing initializer for field ‘local_offset’ of ‘init_params’ [-Wmissing-field-initializers]
+ 1889 |             init_params p = { rodata_section };
+      |             ^~~~~~~~~~~
+apps/tcc/tccgen.c:123:9: note: ‘local_offset’ declared here
+  123 |     int local_offset;
+      |         ^~~~~~~~~~~~
+apps/tcc/tccgen.c: In function ‘gen_opic’:
+apps/tcc/tccgen.c:2435:24: warning: comparison of integer expressions of different signedness: ‘uint64_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2435 |                    (l1 == -1 && op == TOK_SAR))) {
+      |                        ^~
+apps/tcc/tccgen.c:2440:33: warning: comparison of integer expressions of different signedness: ‘uint64_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2440 |                             (l2 == -1 || (l2 == 0xFFFFFFFF && t2 != VT_LLONG))) ||
+      |                                 ^~
+apps/tcc/tccgen.c:2454:33: warning: comparison of integer expressions of different signedness: ‘uint64_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 2454 |                             (l2 == -1 || (l2 == 0xFFFFFFFF && t2 != VT_LLONG))))) {
+      |                                 ^~
+apps/tcc/tccgen.c:2488:25: warning: comparison of integer expressions of different signedness: ‘int’ and ‘uint64_t’ {aka ‘long unsigned int’} [-Wsign-compare]
+ 2488 |             if ((int)l2 != l2)
+      |                         ^~
+apps/tcc/tccgen.c: In function ‘in_range’:
+apps/tcc/tccgen.c:4440:18: warning: comparison of integer expressions of different signedness: ‘long long int’ and ‘long long unsigned int’ [-Wsign-compare]
+ 4440 |         return n <= (m << 1) + 1;
+      |                  ^~
+apps/tcc/tccgen.c: In function ‘init_assert’:
+apps/tcc/tccgen.c:7598:43: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 7598 |     if (p->sec ? !NODATA_WANTED && offset > p->sec->data_offset
+      |                                           ^
+apps/tcc/tccgen.c: In function ‘decl_design_delrels’:
+apps/tcc/tccgen.c:7639:27: warning: comparison of integer expressions of different signedness: ‘Elf64_Addr’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 7639 |         if (rel->r_offset >= c && rel->r_offset < c + size) {
+      |                           ^~
+apps/tcc/tccgen.c:7639:49: warning: comparison of integer expressions of different signedness: ‘Elf64_Addr’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 7639 |         if (rel->r_offset >= c && rel->r_offset < c + size) {
+      |                                                 ^
+apps/tcc/tccgen.c: In function ‘decl_designator’:
+apps/tcc/tccgen.c:7757:47: warning: comparison of integer expressions of different signedness: ‘long unsigned int’ and ‘int’ [-Wsign-compare]
+ 7757 |     if (!(flags & DIF_SIZE_ONLY) && c - corig < al) {
+      |                                               ^
+apps/tcc/tccgen.c:7786:19: warning: comparison of integer expressions of different signedness: ‘long unsigned int’ and ‘int’ [-Wsign-compare]
+ 7786 |     if (c - corig > al)
+      |                   ^
+apps/tcc/tccgen.c: In function ‘decl_initializer’:
+apps/tcc/tccgen.c:8069:23: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 8069 |             if (size1 != (tok == TOK_STR ? 1 : sizeof(nwchar_t)))
+      |                       ^~
+In file included from apps/tcc/libtcc.c:28:
+apps/tcc/tccdbg.c: In function ‘tcc_debug_new’:
+apps/tcc/tccdbg.c:474:23: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+  474 |         for (i = 0; i < sizeof(debug)/sizeof(debug[0]); i++)
+      |                       ^
+apps/tcc/tccdbg.c: In function ‘put_stabs_r’:
+apps/tcc/tccdbg.c:535:55: warning: unused parameter ‘sec’ [-Wunused-parameter]
+  535 |                         unsigned long value, Section *sec, int sym_index)
+      |                                              ~~~~~~~~~^~~
+apps/tcc/tccdbg.c: In function ‘tcc_debug_start’:
+apps/tcc/tccdbg.c:1283:27: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 1283 |             for (i = 0; i < N_DEFAULT_DEBUG; i++)
+      |                           ^
+apps/tcc/tccdbg.c: In function ‘tcc_debug_find’:
+apps/tcc/tccdbg.c:1642:53: warning: unused parameter ‘dwarf’ [-Wunused-parameter]
+ 1642 | static int tcc_debug_find(TCCState *s1, Sym *t, int dwarf)
+      |                                                 ~~~~^~~~~
+apps/tcc/tccdbg.c: In function ‘tcc_debug_add’:
+apps/tcc/tccdbg.c:1733:60: warning: operand of ‘?:’ changes signedness from ‘int’ to ‘long unsigned int’ due to unsignedness of other operand [-Wsign-compare]
+ 1733 |     int offset = dwarf ? dwarf_info_section->data_offset : ++debug_next_type;
+      |                                                            ^
+apps/tcc/tccdbg.c: In function ‘tcc_get_debug_info’:
+apps/tcc/tccdbg.c:1872:41: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 1872 |         for (debug_type = 1; debug_type <= N_DEFAULT_DEBUG; debug_type++)
+      |                                         ^~
+apps/tcc/tccdbg.c:1875:24: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 1875 |         if (debug_type > N_DEFAULT_DEBUG)
+      |                        ^
+apps/tcc/tccdbg.c: In function ‘tcc_get_dwarf_info’:
+apps/tcc/tccdbg.c:2048:23: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 2048 |         for (i = 1; i <= N_DEFAULT_DEBUG; i++)
+      |                       ^~
+apps/tcc/tccdbg.c:2051:15: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 2051 |         if (i > N_DEFAULT_DEBUG)
+      |               ^
+In file included from apps/tcc/libtcc.c:29:
+apps/tcc/tccasm.c: In function ‘asm_get_prefix_name’:
+apps/tcc/tccasm.c:48:42: warning: unused parameter ‘s1’ [-Wunused-parameter]
+   48 | static int asm_get_prefix_name(TCCState *s1, const char *prefix, unsigned int n)
+      |                                ~~~~~~~~~~^~
+apps/tcc/tccasm.c: In function ‘asm_int_expr’:
+apps/tcc/tccasm.c:417:18: warning: comparison of integer expressions of different signedness: ‘int’ and ‘uint64_t’ {aka ‘long unsigned int’} [-Wsign-compare]
+  417 |     if ((int)e.v != e.v)
+      |                  ^~
+apps/tcc/tccasm.c: In function ‘asm_new_label1’:
+apps/tcc/tccasm.c:422:38: warning: unused parameter ‘s1’ [-Wunused-parameter]
+  422 | static Sym* asm_new_label1(TCCState *s1, int label, int is_local,
+      |                            ~~~~~~~~~~^~
+apps/tcc/tccasm.c: In function ‘use_section1’:
+apps/tcc/tccasm.c:481:36: warning: unused parameter ‘s1’ [-Wunused-parameter]
+  481 | static void use_section1(TCCState *s1, Section *sec)
+      |                          ~~~~~~~~~~^~
+apps/tcc/tccasm.c: In function ‘find_constraint’:
+apps/tcc/tccasm.c:1187:29: warning: comparison of integer expressions of different signedness: ‘unsigned int’ and ‘int’ [-Wsign-compare]
+ 1187 |         if ((unsigned)index >= nb_operands)
+      |                             ^~
+In file included from apps/tcc/libtcc.c:30:
+apps/tcc/tccelf.c: In function ‘tcc_get_symbol’:
+apps/tcc/tccelf.c:543:17: warning: comparison of integer expressions of different signedness: ‘Elf64_Addr’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+  543 |     return addr == -1 ? NULL : (void*)(uintptr_t)addr;
+      |                 ^~
+apps/tcc/tccelf.c: In function ‘update_gnu_hash’:
+apps/tcc/tccelf.c:1002:31: warning: comparison of integer expressions of different signedness: ‘long unsigned int’ and ‘long int’ [-Wsign-compare]
+ 1002 |     if (gnu_hash->data_offset != 4 * 4 +
+      |                               ^~
+apps/tcc/tccelf.c: In function ‘put_got_entry’:
+apps/tcc/tccelf.c:1401:17: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 1401 |         if (len > sizeof plt_name - 5)
+      |                 ^
+apps/tcc/tccelf.c: In function ‘set_global_sym’:
+apps/tcc/tccelf.c:1557:21: warning: comparison of integer expressions of different signedness: ‘Elf64_Addr’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 1557 |     if (sec && offs == -1)
+      |                     ^~
+apps/tcc/tccelf.c: In function ‘tcc_output_elf’:
+apps/tcc/tccelf.c:2720:19: warning: comparison of integer expressions of different signedness: ‘int’ and ‘Elf64_Off’ {aka ‘long unsigned int’} [-Wsign-compare]
+ 2720 |     while (offset < ehdr.e_shoff) {
+      |                   ^
+apps/tcc/tccelf.c:2749:27: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 2749 |             while (offset < s->sh_offset) {
+      |                           ^
+apps/tcc/tccelf.c: In function ‘tcc_output_binary’:
+apps/tcc/tccelf.c:2771:27: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 2771 |             while (offset < s->sh_offset) {
+      |                           ^
+apps/tcc/tccelf.c: In function ‘tcc_load_object_file’:
+apps/tcc/tccelf.c:3372:29: warning: comparison of integer expressions of different signedness: ‘Elf64_Word’ {aka ‘unsigned int’} and ‘int’ [-Wsign-compare]
+ 3372 |             if (sh->sh_type != s->sh_type
+      |                             ^~
+apps/tcc/tccelf.c:3407:30: warning: comparison of integer expressions of different signedness: ‘Elf64_Xword’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+ 3407 |         if (sh->sh_addralign > s->sh_addralign)
+      |                              ^
+apps/tcc/tccelf.c:3518:31: warning: comparison of integer expressions of different signedness: ‘unsigned int’ and ‘int’ [-Wsign-compare]
+ 3518 |                 if (sym_index >= nb_syms)
+      |                               ^~
+apps/tcc/tccelf.c: In function ‘new_undef_sym’:
+apps/tcc/tccelf.c:4105:23: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 4105 |     while (sym_offset < s1->symtab->data_offset) {
+      |                       ^
+In file included from apps/tcc/libtcc.c:31:
+apps/tcc/tccrun.c: In function ‘tcc_run’:
+apps/tcc/tccrun.c:268:29: warning: comparison of integer expressions of different signedness: ‘unsigned int’ and ‘int’ [-Wsign-compare]
+  268 |     } else if (RT_EXIT_ZERO == ret) {
+      |                             ^~
+apps/tcc/tccrun.c: In function ‘tcc_relocate_ex’:
+apps/tcc/tccrun.c:363:22: warning: comparison of integer expressions of different signedness: ‘unsigned int’ and ‘int’ [-Wsign-compare]
+  363 |         for(i = 1; i < s1->nb_sections; i++) {
+      |                      ^
+apps/tcc/tccrun.c:418:19: warning: comparison of unsigned expression in ‘>= 0’ is always true [-Wtype-limits]
+  418 |             if (f >= CONFIG_RUNMEM_RO) {
+      |                   ^~
+apps/tcc/tccrun.c: In function ‘bt_link’:
+apps/tcc/tccrun.c:530:31: warning: unused parameter ‘s1’ [-Wunused-parameter]
+  530 | static void bt_link(TCCState *s1)
+      |                     ~~~~~~~~~~^~
+apps/tcc/tccrun.c: In function ‘_tcc_setjmp’:
+apps/tcc/tccrun.c:588:66: warning: unused parameter ‘func’ [-Wunused-parameter]
+  588 | LIBTCCAPI void *_tcc_setjmp(TCCState *s1, void *p_jmp_buf, void *func, void *p_longjmp)
+      |                                                            ~~~~~~^~~~
+In file included from apps/tcc/libtcc.c:49:
+apps/tcc/x86_64-gen.c: In function ‘g’:
+apps/tcc/x86_64-gen.c:178:14: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+  178 |     if (ind1 > cur_text_section->data_allocated)
+      |              ^
+apps/tcc/x86_64-gen.c: In function ‘load’:
+apps/tcc/x86_64-gen.c:363:12: warning: comparison of integer expressions of different signedness: ‘int’ and ‘uint64_t’ {aka ‘long unsigned int’} [-Wsign-compare]
+  363 |     if (fc != sv->c.i && (fr & VT_SYM))
+      |            ^~
+apps/tcc/x86_64-gen.c:412:16: warning: comparison of integer expressions of different signedness: ‘int’ and ‘uint64_t’ {aka ‘long unsigned int’} [-Wsign-compare]
+  412 |         if (fc != sv->c.i) {
+      |                ^~
+apps/tcc/x86_64-gen.c: In function ‘store’:
+apps/tcc/x86_64-gen.c:584:12: warning: comparison of integer expressions of different signedness: ‘int’ and ‘uint64_t’ {aka ‘long unsigned int’} [-Wsign-compare]
+  584 |     if (fc != v->c.i && (fr & VT_SYM))
+      |            ^~
+apps/tcc/x86_64-gen.c: In function ‘gcall_or_jmp’:
+apps/tcc/x86_64-gen.c:668:46: warning: comparison of integer expressions of different signedness: ‘uint64_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+  668 |         ((vtop->r & VT_SYM) && (vtop->c.i-4) == (int)(vtop->c.i-4))) {
+      |                                              ^~
+apps/tcc/x86_64-gen.c: In function ‘gfunc_sret’:
+apps/tcc/x86_64-gen.c:1234:39: warning: unused parameter ‘variadic’ [-Wunused-parameter]
+ 1234 | ST_FUNC int gfunc_sret(CType *vt, int variadic, CType *ret, int *ret_align, int *regsize)
+      |                                   ~~~~^~~~~~~~
+apps/tcc/x86_64-gen.c: In function ‘gen_opi’:
+apps/tcc/x86_64-gen.c:1726:42: warning: comparison of integer expressions of different signedness: ‘int’ and ‘uint64_t’ {aka ‘long unsigned int’} [-Wsign-compare]
+ 1726 |         if (cc && (!ll || (int)vtop->c.i == vtop->c.i)) {
+      |                                          ^~
+apps/tcc/x86_64-gen.c: In function ‘gen_vla_alloc’:
+apps/tcc/x86_64-gen.c:2268:35: warning: unused parameter ‘type’ [-Wunused-parameter]
+ 2268 | ST_FUNC void gen_vla_alloc(CType *type, int align) {
+      |                            ~~~~~~~^~~~
+apps/tcc/x86_64-gen.c:2268:45: warning: unused parameter ‘align’ [-Wunused-parameter]
+ 2268 | ST_FUNC void gen_vla_alloc(CType *type, int align) {
+      |                                         ~~~~^~~~~
+In file included from apps/tcc/libtcc.c:50:
+apps/tcc/x86_64-link.c: In function ‘create_plt_entry’:
+apps/tcc/x86_64-link.c:114:87: warning: unused parameter ‘attr’ [-Wunused-parameter]
+  114 | ST_FUNC unsigned create_plt_entry(TCCState *s1, unsigned got_offset, struct sym_attr *attr)
+      |                                                                      ~~~~~~~~~~~~~~~~~^~~~
+apps/tcc/x86_64-link.c: In function ‘relocate’:
+apps/tcc/x86_64-link.c:226:67: warning: comparison of integer expressions of different signedness: ‘Elf64_Addr’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+  226 |             if ((type == R_X86_64_32 ? val != (unsigned)val : val != (int)val)
+      |                                                                   ^~
+apps/tcc/x86_64-link.c:390:45: warning: comparison of integer expressions of different signedness: ‘int’ and ‘Elf64_Addr’ {aka ‘long unsigned int’} [-Wsign-compare]
+  390 |                         if (s->sh_addralign > tls_align)
+      |                                             ^
+apps/tcc/x86_64-link.c:423:45: warning: comparison of integer expressions of different signedness: ‘int’ and ‘Elf64_Addr’ {aka ‘long unsigned int’} [-Wsign-compare]
+  423 |                         if (s->sh_addralign > tls_align)
+      |                                             ^
+In file included from apps/tcc/libtcc.c:51:
+apps/tcc/i386-asm.c: In function ‘parse_operand’:
+apps/tcc/i386-asm.c:425:25: warning: comparison of integer expressions of different signedness: ‘uint64_t’ {aka ‘long unsigned int’} and ‘signed char’ [-Wsign-compare]
+  425 |             if (op->e.v == (int8_t)op->e.v)
+      |                         ^~
+apps/tcc/i386-asm.c:430:25: warning: comparison of integer expressions of different signedness: ‘uint64_t’ {aka ‘long unsigned int’} and ‘int’ [-Wsign-compare]
+  430 |             if (op->e.v != (int32_t)op->e.v && op->e.v != (uint32_t)op->e.v)
+      |                         ^~
+apps/tcc/i386-asm.c: In function ‘asm_modrm’:
+apps/tcc/i386-asm.c:554:28: warning: comparison of integer expressions of different signedness: ‘uint64_t’ {aka ‘long unsigned int’} and ‘signed char’ [-Wsign-compare]
+  554 |         } else if (op->e.v == (int8_t)op->e.v && !op->e.sym) {
+      |                            ^~
+apps/tcc/i386-asm.c: In function ‘asm_compute_constraints’:
+apps/tcc/i386-asm.c:1286:29: warning: comparison of integer expressions of different signedness: ‘unsigned int’ and ‘int’ [-Wsign-compare]
+ 1286 |             if ((unsigned)k >= i || i < nb_outputs)
+      |                             ^~
+apps/tcc/i386-asm.c: In function ‘asm_gen_code’:
+apps/tcc/i386-asm.c:1650:22: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+ 1650 |         for(i = 0; i < sizeof(reg_saved)/sizeof(reg_saved[0]); i++) {
+      |                      ^
+In file included from apps/tcc/tcc.c:29:
+apps/tcc/tcctools.c: In function ‘tcc_tool_ar’:
+apps/tcc/tcctools.c:280:21: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+  280 |         if (istrlen >= sizeof(arhdro.ar_name))
+      |                     ^~
+apps/tcc/tccpp.c: In function ‘get_tok_str’:
+apps/tcc/tccpp.c:548:9: warning: this statement may fall through [-Wimplicit-fallthrough=]
+  548 |         cstr_ccat(&cstr_buf, 'L');
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~
+apps/tcc/tccpp.c:549:5: note: here
+  549 |     case TOK_CCHAR:
+      |     ^~~~
+apps/tcc/tccpp.c:559:9: warning: this statement may fall through [-Wimplicit-fallthrough=]
+  559 |         cstr_ccat(&cstr_buf, 'L');
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~
+apps/tcc/tccpp.c:560:5: note: here
+  560 |     case TOK_STR:
+      |     ^~~~
+apps/tcc/tccpp.c: In function ‘next_nomacro’:
+apps/tcc/tccpp.c:2653:10: warning: this statement may fall through [-Wimplicit-fallthrough=]
+ 2652 |         if (!(isidnum_table['$' - CH_EOF] & IS_ID)
+      |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 2653 |          || (parse_flags & PARSE_FLAG_ASM_FILE))
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+apps/tcc/tccpp.c:2656:5: note: here
+ 2656 |     case 'a': case 'b': case 'c': case 'd':
+      |     ^~~~
+apps/tcc/tccpp.c:2932:12: warning: this statement may fall through [-Wimplicit-fallthrough=]
+ 2932 |         if (p[1] == 0xBB && p[2] == 0xBF && p == file->buffer) {
+      |            ^
+apps/tcc/tccpp.c:2936:5: note: here
+ 2936 |     default:
+      |     ^~~~~~~
+apps/tcc/tccgen.c: In function ‘parse_builtin_params’:
+apps/tcc/tccgen.c:5430:24: warning: this statement may fall through [-Wimplicit-fallthrough=]
+ 5430 |                 type.t = VT_CONSTANT;
+apps/tcc/tccgen.c:5431:13: note: here
+ 5431 |             case 'v':
+      |             ^~~~
+apps/tcc/tccgen.c:5436:24: warning: this statement may fall through [-Wimplicit-fallthrough=]
+ 5436 |                 type.t = VT_CONSTANT;
+apps/tcc/tccgen.c:5437:13: note: here
+ 5437 |             case 's':
+      |             ^~~~
+apps/tcc/tccgen.c: In function ‘type_to_str’:
+apps/tcc/tccgen.c:2723:12: warning: this statement may fall through [-Wimplicit-fallthrough=]
+ 2723 |         if (!(t & VT_LONG))
+      |            ^
+apps/tcc/tccgen.c:2725:5: note: here
+ 2725 |     case VT_LDOUBLE:
+      |     ^~~~
+apps/tcc/libtcc.c: In function ‘ld_add_file_list’:
+apps/tcc/libtcc.c:1274:46: warning: ‘__builtin_snprintf’ output may be truncated before the last format character [-Wformat-truncation=]
+ 1274 |     return tcc_add_library_internal(s, "%s/%s", filename, flags,
+      |                                              ^
+In file included from sdk/include/stdio.h:804,
+                 from apps/tcc/tcc.h:30:
+In function ‘tcc_add_library_internal’,
+    inlined from ‘tcc_add_dll’ at apps/tcc/libtcc.c:1274:12,
+    inlined from ‘ld_add_file’ at apps/tcc/tccelf.c:4095:19,
+    inlined from ‘ld_add_file_list’ at apps/tcc/tccelf.c:4139:22:
+sdk/include/ssp/stdio.h:61:5: note: ‘__builtin_snprintf’ output 2 or more bytes (assuming 1025) into a destination of size 1024
+   61 |     __builtin___snprintf_chk(str, len, 0, __ssp_bos(str), __VA_ARGS__)
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+apps/tcc/libtcc.c:1260:9: note: in expansion of macro ‘snprintf’
+ 1260 |         snprintf(buf, sizeof(buf), fmt, paths[i], filename);
+      |         ^~~~~~~~
+/usr/bin/ld: warning: libc_a-memset.o: missing .note.GNU-stack section implies executable stack
+/usr/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker
+/usr/bin/ld: /tmp/ccPuR0Ld.o: in function `tcc_tool_cross':
+tcc.c:(.text+0x34bb): undefined reference to `execvp'
+/usr/bin/ld: /tmp/ccPuR0Ld.o: in function `search_cached_include':
+tcc.c:(.text+0x3c59): undefined reference to `realpath'
+/usr/bin/ld: tcc.c:(.text+0x3c6d): undefined reference to `realpath'
+/usr/bin/ld: /tmp/ccPuR0Ld.o: in function `tcc_tcov_block_begin':
+tcc.c:(.text+0xcca8): undefined reference to `getcwd'
+/usr/bin/ld: /tmp/ccPuR0Ld.o: in function `tcc_debug_start':
+tcc.c:(.text+0xdf3e): undefined reference to `getcwd'
+/usr/bin/ld: /tmp/ccPuR0Ld.o: in function `tcc_delete':
+tcc.c:(.text+0xf5e5): undefined reference to `dlclose'
+/usr/bin/ld: tcc.c:(.text+0xf638): undefined reference to `sysconf'
+/usr/bin/ld: tcc.c:(.text+0xf645): undefined reference to `sysconf'
+/usr/bin/ld: tcc.c:(.text+0xf665): undefined reference to `mprotect'
+/usr/bin/ld: /tmp/ccPuR0Ld.o: in function `relocate_syms':
+tcc.c:(.text+0x16c66): undefined reference to `dlsym'
+/usr/bin/ld: tcc.c:(.text+0x16d58): undefined reference to `dlsym'
+/usr/bin/ld: /tmp/ccPuR0Ld.o: in function `tcc_add_file_internal':
+tcc.c:(.text+0x33afd): undefined reference to `dlopen'
+/usr/bin/ld: /tmp/ccPuR0Ld.o: in function `tcc_relocate_ex':
+tcc.c:(.text+0x3472e): undefined reference to `sysconf'
+/usr/bin/ld: tcc.c:(.text+0x3475c): undefined reference to `mprotect'
+/usr/bin/ld: tcc.c:(.text+0x34850): undefined reference to `sysconf'
+/usr/bin/ld: tcc.c:(.text+0x34ac5): undefined reference to `sysconf'
+/usr/bin/ld: /tmp/ccPuR0Ld.o: in function `tcc_relocate':
+tcc.c:(.text+0x34b44): undefined reference to `sysconf'
+/usr/bin/ld: /tmp/ccPuR0Ld.o: in function `tcc_tcov_add_file.constprop.0':
+tcc.c:(.text+0x35c16): undefined reference to `getcwd'
+collect2: error: ld returned 1 exit status
+make: *** [Makefile:158: apps/tcc/tcc.elf] Error 1

@@ -1,25 +1,33 @@
-/* process.s */
+/* process.s — x86_64 task switching */
 
 .global switch_to_task
 switch_to_task:
-    /* Salva o contexto da tarefa atual */
-    push %ebp
-    push %ebx
-    push %esi
-    push %edi
+  /* Save context of current task */
+  push %rbp
+  push %rbx
+  push %rsi
+  push %rdi
+  push %r12
+  push %r13
+  push %r14
+  push %r15
 
-    /* Salva o ESP antigo na estrutura da tarefa */
-    mov 20(%esp), %eax      /* Primeiro argumento: &(old->stack_top) */
-    mov %esp, (%eax)
+  /* Save old stack pointer: arg1 = &(old->stack_top) */
+  mov 8(%rsp), %rdi     /* First argument is at rsp+8 after 8 pushes (64 bytes) */
+  mov %rsp, (%rdi)
 
-    /* Carrega o novo ESP da próxima tarefa */
-    mov 24(%esp), %eax      /* Segundo argumento: new_esp */
-    mov %eax, %esp
+  /* Load new stack pointer: arg2 = new_esp */
+  mov 16(%rsp), %rsi    /* Second argument */
+  mov %rsi, %rsp
 
-    /* Restaura o contexto da nova tarefa */
-    pop %edi
-    pop %esi
-    pop %ebx
-    pop %ebp
+  /* Restore context of new task */
+  pop %r15
+  pop %r14
+  pop %r13
+  pop %r12
+  pop %rdi
+  pop %rsi
+  pop %rbx
+  pop %rbp
 
-    ret                     /* Pula para o endereço que estiver no topo da nova pilha! */
+  ret

@@ -127,3 +127,16 @@ pci_device_t *pci_get_usb(uint8_t interface_type) {
   }
   return (void *)0;
 }
+
+pci_device_t *pci_get_ahci() {
+  for (int i = 0; i < pci_count; i++) {
+    if (devices[i]->class_id == 0x01 && devices[i]->subclass_id == 0x06) {
+      uint32_t class_reg = pci_read_config(devices[i]->bus, devices[i]->device, devices[i]->function, 0x08);
+      uint8_t prog_if = (class_reg >> 8) & 0xFF;
+      if (prog_if == 0x01) { // AHCI
+        return devices[i];
+      }
+    }
+  }
+  return (void *)0;
+}

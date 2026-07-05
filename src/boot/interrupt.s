@@ -1,16 +1,48 @@
-/* interrupt.s */
+/* interrupt.s — x86_64 interrupt handling */
 
-.global idt_flush
-idt_flush:
-    mov 4(%esp), %eax
-    lidt (%eax)
-    ret
+.section .text
+
+.macro PUSH_ALL
+  push %r15
+  push %r14
+  push %r13
+  push %r12
+  push %r11
+  push %r10
+  push %r9
+  push %r8
+  push %rdi
+  push %rsi
+  push %rbp
+  push %rbx
+  push %rdx
+  push %rcx
+  push %rax
+.endm
+
+.macro POP_ALL
+  pop %rax
+  pop %rcx
+  pop %rdx
+  pop %rbx
+  pop %rbp
+  pop %rsi
+  pop %rdi
+  pop %r8
+  pop %r9
+  pop %r10
+  pop %r11
+  pop %r12
+  pop %r13
+  pop %r14
+  pop %r15
+.endm
 
 .macro ISR_NOERRCODE num
   .global isr\num
   isr\num:
     cli
-    push $0
+    push $0          /* Dummy error code */
     push $\num
     jmp isr_common_stub
 .endm
@@ -24,7 +56,6 @@ idt_flush:
 .endm
 
 ISR_NOERRCODE 0
-/* ... (continuar com as outras 31 ISRs se necessário, mas vamos focar nas IRQs para o fix) ... */
 ISR_NOERRCODE 1
 ISR_NOERRCODE 2
 ISR_NOERRCODE 3
@@ -60,31 +91,20 @@ ISR_NOERRCODE 31
 .extern isr_handler
 .global isr_common_stub
 isr_common_stub:
-    pusha
-    mov %ds, %ax
-    push %eax
-    mov $0x10, %ax
-    mov %ax, %ds
-    mov %ax, %es
-    mov %ax, %fs
-    mov %ax, %gs
-    push %esp
-    call isr_handler
-    add $4, %esp
-    pop %eax
-    mov %ax, %ds
-    mov %ax, %es
-    mov %ax, %fs
-    mov %ax, %gs
-    popa
-    add $8, %esp
-    iret
+  PUSH_ALL
+
+  mov %rsp, %rdi         /* First arg: pointer to registers_t */
+  call isr_handler
+
+  POP_ALL
+  add $16, %rsp          /* Pop int_no and err_code (8 bytes each = 16) */
+  iretq
 
 .macro IRQ num, target
   .global irq\num
   irq\num:
     cli
-    push $0
+    push $0               /* Dummy error code */
     push $\target
     jmp irq_common_stub
 .endm
@@ -108,26 +128,26 @@ IRQ 15, 47
 
 .extern irq_handler
 irq_common_stub:
-    pusha                    /* Salva TUDO: EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI */
-    mov %ds, %ax
-    push %eax                /* Salva DS */
+  PUSH_ALL
 
-    mov $0x10, %ax           /* Carrega segmentos do Kernel */
-    mov %ax, %ds
-    mov %ax, %es
-    mov %ax, %fs
-    mov %ax, %gs
+  mov $0x10, %ax          /* Kernel data segment */
+  mov %ax, %ds
+  mov %ax, %es
+  mov %ax, %fs
+  mov %ax, %gs
 
-    push %esp                /* Passa o ponteiro da pilha atual para o C */
-    call irq_handler
-    mov %eax, %esp           /* A MAGIA: O C retorna o novo ESP, e nós mudamos de pilha aqui! */
+  mov %rsp, %rdi          /* First arg: pointer to registers_t */
+  call irq_handler
+  mov %rax, %rsp          /* Schedule() returns new stack pointer */
 
-    pop %eax                 /* Restaura DS da nova tarefa */
-    mov %ax, %ds
-    mov %ax, %es
-    mov %ax, %fs
-    mov %ax, %gs
+  POP_ALL
+  add $16, %rsp           /* Pop int_no and err_code */
+  iretq
 
-    popa                     /* Restaura registros da nova tarefa */
-    add $8, %esp
-    iret                     /* Retorna para a nova tarefa com EFLAGS/Interrupts restaurados! */
+/* Syscall interrupt handler */
+.global isr128
+isr128:
+  cli
+  push $0                 /* Dummy error code */
+  push $128               /* Interrupt number */
+  jmp isr_common_stub

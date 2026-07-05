@@ -33,5 +33,9 @@ void vga_puts(const char* str);
 void vga_clear(enum vga_color fg, enum vga_color bg);
 void vga_set_color(enum vga_color fg, enum vga_color bg);
 void vga_set_cursor(int x, int y);
+void vga_set_cursor_pos(int x, int y);
+void vga_show_cursor(int visible);
+void vga_clear_line(int row);
+void vga_clear_to_eol(void);
 
 #endif

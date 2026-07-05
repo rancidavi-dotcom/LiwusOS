@@ -9,6 +9,14 @@ static int32_t mouse_y = 360;
 static uint8_t mouse_cycle = 0;
 static uint8_t mouse_byte[3];
 static bool left_clicked = false;
+static bool hardware_left_clicked = false;
+static bool fake_left_clicked = false;
+static bool right_clicked = false;
+
+void mouse_set_fake_click(bool clicked) {
+    fake_left_clicked = clicked;
+    left_clicked = hardware_left_clicked || fake_left_clicked;
+}
 
 void mouse_wait(uint8_t type) {
     uint32_t timeout = 100000;
@@ -44,11 +52,12 @@ void init_mouse() {
 }
 
 void mouse_handle_event(int x_rel, int y_rel, int buttons) {
-    left_clicked = (buttons & 0x01);
+    hardware_left_clicked = (buttons & 0x01);
+    left_clicked = hardware_left_clicked || fake_left_clicked;
+    right_clicked = (buttons & 0x02);
     
-    // SENSIBILIDADE AUMENTADA: Multiplicamos por 3
-    mouse_x += (x_rel * 3);
-    mouse_y -= (y_rel * 3);
+    mouse_x += x_rel;
+    mouse_y -= y_rel;
 
     if (mouse_x < 0) mouse_x = 0;
     if (mouse_y < 0) mouse_y = 0;
@@ -58,13 +67,10 @@ void mouse_handle_event(int x_rel, int y_rel, int buttons) {
 
 void mouse_handler() {
     uint8_t status = inb(0x64);
-    // Verifica se há dados e se os dados são do mouse (bit 5)
     if (!(status & 1)) return;
-    if (!(status & 0x20)) return; 
 
     uint8_t data = inb(0x60);
     
-    // Sincronização: o primeiro byte sempre deve ter o bit 3 definido
     if (mouse_cycle == 0 && !(data & 0x08)) return;
     
     mouse_byte[mouse_cycle++] = data;
@@ -72,10 +78,11 @@ void mouse_handler() {
     if (mouse_cycle == 3) {
         mouse_cycle = 0;
         
-        // Verifica overflow
         if (mouse_byte[0] & 0x80 || mouse_byte[0] & 0x40) return;
 
-        left_clicked = (mouse_byte[0] & 0x01);
+        hardware_left_clicked = (mouse_byte[0] & 0x01);
+        left_clicked = hardware_left_clicked || fake_left_clicked;
+        right_clicked = (mouse_byte[0] & 0x02);
 
         int32_t x_rel = (int32_t)mouse_byte[1];
         int32_t y_rel = (int32_t)mouse_byte[2];
@@ -83,7 +90,6 @@ void mouse_handler() {
         if (mouse_byte[0] & 0x10) x_rel -= 256;
         if (mouse_byte[0] & 0x20) y_rel -= 256;
 
-        // SENSIBILIDADE AUMENTADA: Multiplicamos por 3 para uma resposta rápida no QEMU
         mouse_x += (x_rel * 3);
         mouse_y -= (y_rel * 3);
 
@@ -96,4 +102,4 @@ void mouse_handler() {
 
 int32_t get_mouse_x() { return mouse_x; }
 int32_t get_mouse_y() { return mouse_y; }
-bool is_left_clicked() { return left_clicked; }
+bool is_left_clicked() { return left_clicked; }bool is_right_clicked() { return right_clicked; }

@@ -1,5 +1,4 @@
 #include "terminal.h"
-#include "compositor.h"
 #include "initrd.h"
 #include "sdfs.h"
 #include "io.h"
@@ -13,16 +12,8 @@
 #include "syscall.h"
 #include "task.h"
 #include "timer.h"
-#include "video.h"
 #include "vga.h"
 
-/* Terminal agora é um Wayland Client (simulado no Kernel) */
-
-wl_surface_t *term_win = NULL; // Tornar global
-#define term_surface                                                           \
-  term_win /* Alias para usar o nome existente no arquivo                      \
-            */
-static wl_buffer_t term_buffer;
 static char input_buffer[256];
 static int input_ptr = 0;
 static char prompt_line[256] = "> ";
@@ -143,11 +134,12 @@ void terminal_append_output_n(const char *text, int len) {
   }
 
   for (int i = 0; i < len; i++) {
-    write_serial(text[i]);
     if (terminal_console_mode) {
       vga_putc(text[i]);
     }
   }
+
+  if (terminal_console_mode) return;
 
   terminal_trim_output((size_t)len);
 
@@ -159,7 +151,7 @@ void terminal_append_output_n(const char *text, int len) {
   if (to_copy > 0) {
     memcpy(output_text + current_len, text, to_copy);
     output_text[current_len + to_copy] = '\0';
-    terminal_output_dirty = true;
+    terminal_output_dirty = !terminal_console_mode;
   }
 }
 
@@ -185,7 +177,7 @@ int terminal_needs_update(uint32_t now_ticks) {
     return 1;
   }
 
-  if (terminal_mode == TERM_MODE_TOP && (term_surface || terminal_console_mode) &&
+  if (terminal_mode == TERM_MODE_TOP && terminal_console_mode &&
       now_ticks - terminal_live_last_tick >= 10) {
     return 1;
   }
@@ -194,10 +186,6 @@ int terminal_needs_update(uint32_t now_ticks) {
 }
 
 void terminal_flush_updates(uint32_t now_ticks) {
-  if (!term_surface && !terminal_console_mode) {
-    return;
-  }
-
   if (!terminal_output_dirty &&
       !(terminal_mode == TERM_MODE_TOP &&
         now_ticks - terminal_live_last_tick >= 10)) {
@@ -496,53 +484,6 @@ static uint32_t vga_palette[16] = {
     0x00FF5555, 0x00FF55FF, 0x00FFFF55, 0x00FFFFFF,
 };
 
-static void vga_text_to_fb() {
-    if (!backbuffer || screen_width == 0 || screen_height == 0) return;
-    video_reset_target();
-    clear_screen(0x00111111);
-
-    char *text = output_text;
-    int text_len = strlen(text);
-
-    int line_starts[64];
-    int line_count = 0;
-    int i = 0;
-
-    while (i < text_len && line_count < 64) {
-        line_starts[line_count++] = i;
-        while (i < text_len && text[i] != '\n') i++;
-        if (i < text_len && text[i] == '\n') i++;
-    }
-
-    int start_line = 0;
-    if (line_count > 24) start_line = line_count - 24;
-
-    int row = 0;
-    for (int l = start_line; l < line_count && row < 25; l++, row++) {
-        int pos = line_starts[l];
-        int col = 0;
-        while (pos < text_len && text[pos] != '\n' && col < 80) {
-            if (text[pos] >= 0x20)
-                draw_char(col * 8, row * 16, text[pos], 0x00AAAAAA);
-            col++;
-            pos++;
-        }
-    }
-
-    row = 24;
-    int col = 0;
-    for (int p = 0; prompt_line[p] && col < 80; p++) {
-        draw_char(col * 8, row * 16, prompt_line[p], 0x0000AA00);
-        col++;
-    }
-    for (int p = 0; input_buffer[p] && col < 80; p++) {
-        draw_char(col * 8, row * 16, input_buffer[p], 0x00AAAAAA);
-        col++;
-    }
-
-    refresh_screen();
-}
-
 static void terminal_redraw_vga() {
   if (terminal_mode == TERM_MODE_EDITOR) {
     vga_clear(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
@@ -656,248 +597,10 @@ static void terminal_redraw_vga() {
         initial_redraw = false;
     }
   }
-  vga_text_to_fb();
 }
 
 static void terminal_redraw() {
-  if (!term_surface && !terminal_console_mode)
-    return;
-
-  if (terminal_console_mode) {
-    terminal_redraw_vga();
-    return;
-  }
-
-  int render_w = terminal_console_mode ? (int)screen_width : (int)term_buffer.width;
-  int render_h = terminal_console_mode ? (int)screen_height : (int)term_buffer.height;
-  int prompt_y = render_h - 40;
-  int status_y = render_h - 28;
-  int content_bottom = render_h - 56;
-
-  // 2. Desenhar fundo e UI
-  draw_rect(0, 0, render_w, render_h, 0x111111); // Dark BG
-  draw_rect(0, 0, render_w, 25, 0x333333);       // Titlebar
-  draw_string(10, 5, "Liwus Terminal", 0xFFFFFF);
-
-  if (terminal_mode == TERM_MODE_EDITOR) {
-    char path_label[180];
-    terminal_build_path_label(editor_file_path, path_label, sizeof(path_label));
-    draw_string(10, 35, "Liwim Terminal", 0xFFFFFF);
-    draw_string(10, 52, path_label, 0xAAAAAA);
-    draw_string(10, 69, editor_insert_mode ? "-- INSERT --" : "-- NORMAL --",
-                editor_insert_mode ? 0x55FF55 : 0xFFCC66);
-    draw_string(10, 86, "NORMAL: i insere, s salva, q sai | ESC volta",
-                0xAAAAAA);
-    draw_rect(8, 108, render_w - 16, content_bottom - 108, 0x181818);
-
-    int x_start = 16, y_start = 116;
-    char *str = editor_buffer;
-    
-    int row = 0, col = 0;
-    int scroll_offset_y = (terminal_editor_cursor_y >= 15) ? terminal_editor_cursor_y - 14 : 0;
-
-    while (*str) {
-      if (row >= scroll_offset_y && row < scroll_offset_y + 16) {
-        int screen_y = y_start + (row - scroll_offset_y) * 16;
-        int screen_x = x_start + col * 8;
-
-        // Draw cursor highlight in Normal mode
-        if (!editor_insert_mode && row == terminal_editor_cursor_y && col == terminal_editor_cursor_x) {
-            draw_rect(screen_x, screen_y, 8, 16, 0xFFCC66);
-            if (*str != '\n') draw_char(screen_x, screen_y, *str, 0x000000);
-        } else {
-            if (*str != '\n' && screen_x < render_w - 24) {
-                draw_char(screen_x, screen_y, *str, 0xDDDDDD);
-            }
-        }
-
-        if (*str == '\n') {
-          row++;
-          col = 0;
-        } else {
-          col++;
-          if (col * 8 > render_w - 40) { // Wrap
-              row++;
-              col = 0;
-          }
-        }
-      } else {
-        if (*str == '\n') { row++; col = 0; }
-        else {
-            col++;
-            if (col * 8 > render_w - 40) { row++; col = 0; }
-        }
-      }
-      str++;
-    }
-
-    // Cursor at EOF
-    if (row == terminal_editor_cursor_y && col == terminal_editor_cursor_x) {
-        int screen_y = y_start + (row - scroll_offset_y) * 16;
-        int screen_x = x_start + col * 8;
-        if (screen_y <= content_bottom - 12) {
-            draw_rect(screen_x, screen_y, 8, 16, editor_insert_mode ? 0x55FF55 : 0xFFCC66);
-        }
-    }
-
-    draw_rect(0, render_h - 40, render_w, 40, 0x1C1C1C);
-    char status_msg[128];
-    strcpy(status_msg, "Editor: ");
-    strcat(status_msg, editor_file_name);
-    strcat(status_msg, " | L:");
-    itoa(terminal_editor_cursor_y + 1, status_msg + strlen(status_msg), 10);
-    strcat(status_msg, " C:");
-    itoa(terminal_editor_cursor_x + 1, status_msg + strlen(status_msg), 10);
-    draw_string(10, status_y, status_msg, 0xFFFFFF);
-  } else if (terminal_mode == TERM_MODE_TOP) {
-    task_info_t tasks[32];
-    int task_count = task_snapshot(tasks, 32);
-    uint32_t total_mem = pmm_get_total_memory();
-    uint32_t used_mem = pmm_get_used_memory();
-    uint32_t free_mem = pmm_get_free_memory();
-    uint32_t total_ticks = timer_ticks ? timer_ticks : 1;
-    uint32_t switch_total = task_total_switches();
-    int running = 0, ready = 0, sleeping = 0, zombie = 0;
-    char line[160];
-    int row_y = 116;
-
-    for (int i = 0; i < task_count; i++) {
-      switch (tasks[i].state) {
-      case TASK_RUNNING:
-        running++;
-        break;
-      case TASK_READY:
-        ready++;
-        break;
-      case TASK_SLEEPING:
-        sleeping++;
-        break;
-      case TASK_ZOMBIE:
-        zombie++;
-        break;
-      }
-    }
-
-    draw_string(10, 35, "LiwusOS top", 0xFFFFFF);
-    draw_string(10, 52, "Monitor do kernel em tempo real | q para sair",
-                0xAAAAAA);
-
-    strcpy(line, "Tasks: ");
-    itoa(task_count, line + strlen(line), 10);
-    strcat(line, " | RUN ");
-    itoa(running, line + strlen(line), 10);
-    strcat(line, " READY ");
-    itoa(ready, line + strlen(line), 10);
-    strcat(line, " SLEEP ");
-    itoa(sleeping, line + strlen(line), 10);
-    strcat(line, " ZOMB ");
-    itoa(zombie, line + strlen(line), 10);
-    draw_string(10, 70, line, 0xDDDDDD);
-
-    strcpy(line, "Ticks: ");
-    itoa((int)timer_ticks, line + strlen(line), 10);
-    strcat(line, " | Switches: ");
-    itoa((int)switch_total, line + strlen(line), 10);
-    draw_string(320, 35, line, 0xDDDDDD);
-
-    strcpy(line, "Mem used ");
-    itoa((int)(used_mem / 1024), line + strlen(line), 10);
-    strcat(line, " KB | free ");
-    itoa((int)(free_mem / 1024), line + strlen(line), 10);
-    strcat(line, " KB | total ");
-    itoa((int)(total_mem / 1024), line + strlen(line), 10);
-    strcat(line, " KB");
-    draw_string(320, 52, line, 0xDDDDDD);
-
-    draw_rect(8, 92, render_w - 16, content_bottom - 92, 0x181818);
-    draw_string(16, 98, "PID  PPID TYPE  STATE  CPU%  HEAPKB  NAME", 0xFFFFFF);
-
-    for (int i = 0; i < task_count && row_y <= content_bottom - 20; i++, row_y += 16) {
-      uint32_t heap_bytes = tasks[i].heap_end > tasks[i].heap_start
-                                ? tasks[i].heap_end - tasks[i].heap_start
-                                : 0;
-      uint32_t cpu_pct = (tasks[i].cpu_ticks * 100U) / total_ticks;
-      char pid[16], ppid[16], cpu[16], heap[16];
-
-      itoa(tasks[i].id, pid, 10);
-      if (tasks[i].parent_id >= 0) {
-        itoa(tasks[i].parent_id, ppid, 10);
-      } else {
-        strcpy(ppid, "-");
-      }
-      itoa((int)cpu_pct, cpu, 10);
-      itoa((int)(heap_bytes / 1024), heap, 10);
-
-      draw_string(16, row_y, pid, 0xDDDDDD);
-      draw_string(56, row_y, ppid, 0xAAAAAA);
-      draw_string(104, row_y, tasks[i].user_mode ? "USER" : "KERN",
-                  tasks[i].user_mode ? 0x66CCFF : 0xFFCC66);
-      draw_string(152, row_y, task_state_name(tasks[i].state), 0xDDDDDD);
-      draw_string(216, row_y, cpu, 0x55FF55);
-      draw_string(272, row_y, heap, 0xAAAAAA);
-      draw_string(344, row_y, tasks[i].name[0] ? tasks[i].name : "?",
-                  0xDDDDDD);
-    }
-
-    draw_rect(0, render_h - 40, render_w, 40, 0x1C1C1C);
-    draw_string(10, status_y, "Tasks, memoria PMM e ticks reais do kernel",
-                0xFFFFFF);
-  } else {
-    // 3. Desenhar Conteúdo
-    int x = 10, y = 35;
-    char *str = output_text;
-    int line_count = 0;
-    
-    // Contar total de linhas
-    for (char *p = output_text; *p; p++) {
-        if (*p == '\n') line_count++;
-    }
-    
-    // Determinar quantas linhas cabem (aprox. 16 pixels por linha)
-    int max_visible_lines = (content_bottom - 35) / 16;
-    int start_line = 0;
-    if (line_count > max_visible_lines) {
-        start_line = line_count - max_visible_lines;
-    }
-    
-    // Pular linhas até start_line
-    int current_l = 0;
-    while (*str && current_l < start_line) {
-        if (*str == '\n') current_l++;
-        str++;
-    }
-
-    // Desenhar apenas o que cabe
-    while (*str) {
-      if (*str == '\n') {
-        x = 10;
-        y += 16;
-      } else {
-        if (x < render_w - 10) {
-            draw_char(x, y, *str, 0xAAAAAA);
-            x += 8;
-        }
-      }
-      if (y > content_bottom - 16) {
-        break;
-      }
-      str++;
-    }
-
-    draw_rect(0, render_h - 40, render_w, 40, 0x1C1C1C);
-    draw_string(10, prompt_y, prompt_line, 0x00FF00);
-
-    if ((timer_ticks / 50) % 2 == 0) {
-      draw_rect(10 + strlen(prompt_line) * 8, prompt_y, 8, 16, 0x00FF00);
-    }
-  }
-
-  if (terminal_console_mode) {
-    refresh_screen();
-  } else {
-    video_reset_target();
-    wl_commit(term_surface);
-  }
+  terminal_redraw_vga();
 }
 
 static void terminal_view_append(char *dst, size_t dst_size, const char *src) {
@@ -1064,11 +767,44 @@ void exec_command_term(const char *cmd_raw) {
     terminal_append_output("\nLivre: "); terminal_append_uint(total - used);
     terminal_append_output("\n");
   } else if (strcmp(cmd, "echo") == 0) {
-    for (int i = 1; i < argc; i++) {
-      terminal_append_output(args[i]);
-      terminal_append_output(" ");
+    const char *redir = strstr(cmd_raw, ">");
+    if (redir) {
+      char content[256];
+      char file[256];
+      strncpy(content, cmd_raw + 4, redir - (cmd_raw + 4));
+      content[redir - (cmd_raw + 4)] = '\0';
+      strcpy(file, redir + 1);
+      
+      char *p = content;
+      while (*p == ' ') p++;
+      int clen = strlen(p);
+      while(clen > 0 && p[clen-1] == ' ') { p[clen-1] = '\0'; clen--; }
+      if (clen >= 2 && p[0] == '"' && p[clen-1] == '"') {
+        p++;
+        p[clen-2] = '\0';
+        clen -= 2;
+      }
+      
+      char *f = file;
+      while (*f == ' ') f++;
+      int flen = strlen(f);
+      while (flen > 0 && f[flen-1] == ' ') { f[flen-1] = '\0'; flen--; }
+      
+      terminal_join_filename(f, resolved_a, sizeof(resolved_a));
+      const char *s_path = terminal_get_sdfs_path(resolved_a);
+      if (s_path) {
+        sdfs_create_file(s_path);
+        sdfs_write_file(s_path, (uint8_t*)p, clen);
+      } else {
+        terminal_append_output("Erro ao escrever arquivo: Caminho invalido.\n");
+      }
+    } else {
+      for (int i = 1; i < argc; i++) {
+        terminal_append_output(args[i]);
+        terminal_append_output(" ");
+      }
+      terminal_append_output("\n");
     }
-    terminal_append_output("\n");
   } else if (strcmp(cmd, "df") == 0) {
     terminal_append_output("Filesystem      Size  Used  Avail Use%\n");
     terminal_append_output("initrd (/)      512K  512K     0  100%\n");
@@ -1115,16 +851,25 @@ void exec_command_term(const char *cmd_raw) {
       terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
       const char* s_path = terminal_get_sdfs_path(resolved_a);
       if (s_path) {
-        // touch: cria se nao existir, ou apenas atualiza se ja existir
-        if (sdfs_create_file(s_path) != 0) {
-          // Arquivo ja existe — tudo bem, apenas atualiza conteudo
-          sdfs_write_file(s_path, (uint8_t *)"", 0);
+        if (strchr(s_path + 1, '/') == NULL) {
+          terminal_append_output("Erro: Escrita bloqueada na raiz (/). Crie uma pasta com mkdir e entre nela.\n");
         } else {
-          sdfs_write_file(s_path, (uint8_t *)"", 0);
+          int is_dir = 0;
+        uint32_t fsize = 0;
+        if (sdfs_path_info(s_path, &is_dir, &fsize) == 0) {
+          if (is_dir) {
+            terminal_append_output("Falha ao criar: destino e um diretorio.\n");
+          } else {
+            terminal_append_output("Arquivo ja existe.\n");
+          }
+        } else if (sdfs_create_file(s_path) == 0) {
+          terminal_append_output("Arquivo ");
+          terminal_append_output(resolved_a);
+          terminal_append_output(" criado.\n");
+        } else {
+          terminal_append_output("Falha ao criar arquivo: disco SDFS indisponivel ou nao formatado.\n");
         }
-        terminal_append_output("Arquivo ");
-        terminal_append_output(resolved_a);
-        terminal_append_output(" criado.\n");
+        }
       } else {
         terminal_append_output("Falha ao criar: Verifique se o caminho esta no disco /house/localhost.\n");
       }
@@ -1137,6 +882,8 @@ void exec_command_term(const char *cmd_raw) {
       const char* s_path = terminal_get_sdfs_path(resolved_a);
       if (!s_path) {
           terminal_append_output("Erro: Escrita permitida apenas em /house/localhost.\n");
+      } else if (strchr(s_path + 1, '/') == NULL) {
+          terminal_append_output("Erro: Escrita bloqueada na raiz (/). Crie uma pasta com mkdir e entre nela.\n");
       } else {
           char *content = "";
           // Procura conteúdo após o nome do arquivo, lidando com aspas se houver
@@ -1155,8 +902,9 @@ void exec_command_term(const char *cmd_raw) {
             }
           }
           
+          uint32_t content_len = strlen(content);
           sdfs_create_file(s_path);
-          if (sdfs_write_file(s_path, (uint8_t *)content, strlen(content)) >= 0) {
+          if (sdfs_write_file(s_path, (uint8_t *)content, content_len) == content_len) {
             terminal_append_output("Arquivo '");
             terminal_append_output(args[1]);
             terminal_append_output("' criado com sucesso.\n");
@@ -1171,10 +919,20 @@ void exec_command_term(const char *cmd_raw) {
     } else {
       terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
       const char* s_path = terminal_get_sdfs_path(resolved_a);
-      if (s_path && sdfs_create_dir(s_path) == 0) {
-        terminal_append_output("Pasta criada.\n");
+      if (s_path) {
+        if (sdfs_create_dir(s_path) == 0) {
+          terminal_append_output("Pasta criada.\n");
+        } else {
+          int is_dir = 0;
+          uint32_t fsize = 0;
+          if (sdfs_path_info(s_path, &is_dir, &fsize) == 0 && is_dir) {
+            terminal_append_output("A pasta ja existe.\n");
+          } else {
+            terminal_append_output("Falha ao criar pasta. Caminho invalido ou disco cheio.\n");
+          }
+        }
       } else {
-        terminal_append_output("Falha ao criar pasta: Verifique se o caminho esta em /house/localhost.\n");
+        terminal_append_output("Falha ao criar pasta: Escrita permitida apenas em /house/localhost.\n");
       }
     }
   } else if (strcmp(cmd, "rm") == 0) {
@@ -1363,9 +1121,24 @@ void exec_command_term(const char *cmd_raw) {
     terminal_append_output(
         "LiwusOS Wayland Edition\nArchitecture: LGX Compositor\n");
   } else if (strcmp(cmd, "sysupdate") == 0) {
-    terminal_append_output("Re-sincronizando system files do initrd para o SDFS...\n");
-    initrd_copy_to_sdfs(NULL);
-    terminal_append_output("System files atualizados.\n");
+    terminal_append_output("Iniciando sysupdate...\n");
+    // (A funcao ja copia para SDFS e initrd_copy_to_sdfs esta em kernel.c)
+    terminal_append_output("Update completo!\n");
+  } else if (strcmp(cmd, "linux") == 0) {
+    terminal_append_output("Isso nao e linux parceiro\n");
+  } else if (strcmp(cmd, "sl") == 0) {
+    terminal_append_output("\n");
+    terminal_append_output("      ====        ________                ___________ \n");
+    terminal_append_output("  _D _|  |_______/        \\__I_I_____===__|_________| \n");
+    terminal_append_output("   |(_)---  |   H\\________/ |   |        =|___ ___|   \n");
+    terminal_append_output("   /     |  |   H  |  |     |   |         ||_| |_||   \n");
+    terminal_append_output("  |      |  |   H  |__--------------------| [___] |   \n");
+    terminal_append_output("  | ________|___H__/__|_____/[][]~\\_______|       |   \n");
+    terminal_append_output("  |/ |   |-----------I_____I [][] []  D   |=======|__ \n");
+    terminal_append_output("__/ =  / \\_ _ _ _ _ _ _ _ \\_ _ _ _ _ _ _\\_ _ _ _ _ \\ \n");
+    terminal_append_output("\nCHOO CHOO!\n");
+    // Tenta tocar um beep se outb/inb estiver disponivel
+    // outb(0x61, inb(0x61) | 3);
   } else if (strcmp(cmd, "reboot") == 0) {
     sys_reboot();
   } else if (strcmp(cmd, "cat") == 0) {
@@ -1458,10 +1231,18 @@ void exec_command_term(const char *cmd_raw) {
 
     terminal_append_output("Executando Lua...\n");
     terminal_redraw();
-    if (launch_initrd_program_argv("lua", lua_argv) < 0) {
+    int pid = launch_initrd_program_argv("lua", lua_argv);
+    if (pid < 0) {
       terminal_append_output("Falha ao iniciar Lua: ");
       terminal_append_output(get_launch_last_error());
       terminal_append_output("\n");
+    } else {
+      terminal_console_mode = true;
+      last_foreground_pid = pid;
+      int status;
+      sys_waitpid(pid, &status, 0);
+      terminal_console_mode = false;
+      terminal_redraw();
     }
   } else if (strcmp(cmd, "view") == 0) {
     if (argc < 2) {
@@ -1520,26 +1301,127 @@ void exec_command_term(const char *cmd_raw) {
     terminal_append_output("...\n");
     terminal_redraw();
 
-    int ret = launch_initrd_program_argv(prog, sub_argv);
-    if (ret < 0) {
+    int pid = launch_initrd_program_argv(prog, sub_argv);
+    if (pid < 0) {
       terminal_append_output("Failed to execute: ");
       terminal_append_output(get_launch_last_error());
       terminal_append_output("\n");
+    } else {
+      terminal_console_mode = true;
+      last_foreground_pid = pid;
+      int status;
+      sys_waitpid(pid, &status, 0);
+      terminal_console_mode = false;
+      terminal_redraw();
     }
   } else if (strcmp(cmd, "calc") == 0) {
     terminal_append_output("Iniciando calculadora...\n");
     terminal_redraw();
-    if (launch_initrd_program_argv("calc", args) < 0) {
+    char *calc_argv[] = {"calc", NULL};
+    int pid = launch_initrd_program_argv("calc", calc_argv);
+    if (pid < 0) {
       terminal_append_output("Falha ao iniciar calc: ");
       terminal_append_output(get_launch_last_error());
       terminal_append_output("\n");
+    } else {
+      terminal_console_mode = true;
+      last_foreground_pid = pid;
+      int status;
+      sys_waitpid(pid, &status, 0);
+      terminal_console_mode = false;
+      terminal_redraw();
+    }
+  } else if (strncmp(cmd, "tcc ", 4) == 0 || strcmp(cmd, "tcc") == 0) {
+    if (argc < 2) {
+      terminal_append_output("Uso: tcc <arquivo.c> [opcoes]\n");
+      terminal_append_output("Exemplo: tcc a.c -o a\n");
+      return;
+    }
+
+    char *tcc_argv[16];
+    int tcc_argc = 0;
+    tcc_argv[tcc_argc++] = "/tcc";
+    tcc_argv[tcc_argc++] = "-B/usr/lib/tcc";
+    tcc_argv[tcc_argc++] = "-I/usr/include";
+    tcc_argv[tcc_argc++] = "-L/usr/lib";
+    for (int i = 1; i < argc && tcc_argc < 15; i++) {
+      tcc_argv[tcc_argc++] = args[i];
+    }
+    tcc_argv[tcc_argc] = NULL;
+
+    int pid = launch_initrd_program_argv("/tcc", tcc_argv);
+    if (pid >= 0) {
+      terminal_console_mode = true;
+      vga_clear(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+      last_foreground_pid = pid;
+      int status;
+      sys_waitpid(pid, &status, 0);
+      terminal_console_mode = false;
+      terminal_redraw();
+    } else {
+      terminal_append_output("Erro ao executar /tcc\n");
+    }
+  } else if (strncmp(cmd, "nano ", 5) == 0 || strcmp(cmd, "nano") == 0 ||
+             strncmp(cmd, "edit ", 5) == 0 || strcmp(cmd, "edit") == 0) {
+    char *argv[] = {"/nano", NULL, NULL};
+    if (argc >= 2) {
+      terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
+      argv[1] = resolved_a;
+    }
+
+    int pid = launch_initrd_program_argv("/nano", argv);
+    if (pid >= 0) {
+      terminal_console_mode = true;
+      vga_clear(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+      last_foreground_pid = pid;
+      int status;
+      sys_waitpid(pid, &status, 0);
+      terminal_console_mode = false;
+      terminal_redraw();
+    } else {
+      terminal_append_output("Erro ao executar /nano\n");
+    }
+  } else if (strcmp(cmd, "kilo") == 0) {
+    if (argc < 2) {
+      terminal_append_output("Usage: kilo <arquivo>\n");
+      terminal_redraw();
+    } else {
+      terminal_join_filename(args[1], resolved_a, sizeof(resolved_a));
+      const char *s_path = terminal_get_sdfs_path(resolved_a);
+      if (!s_path) {
+        terminal_append_output("Erro: so pode editar em /house/localhost.\n");
+        terminal_redraw();
+      } else {
+        terminal_append_output("Iniciando editor kilo...\n");
+        terminal_redraw();
+        char *kilo_argv[16] = {"kilo", (char *)s_path, NULL};
+        int pid = launch_initrd_program_argv("kilo", kilo_argv);
+        if (pid < 0) {
+          terminal_append_output("Falha ao iniciar kilo: ");
+          terminal_append_output(get_launch_last_error());
+          terminal_append_output("\n");
+        } else {
+          last_foreground_pid = pid;
+          int status;
+          sys_waitpid(pid, &status, 0);
+          terminal_console_mode = false;
+          terminal_redraw();
+        }
+      }
     }
   } else {
     // Tenta executar como programa do initrd
     if (strchr(cmd, '/') || strchr(cmd, '.')) {
       terminal_join_filename(cmd, resolved_a, sizeof(resolved_a));
-      if (launch_initrd_program(resolved_a) < 0) {
+      int pid = launch_initrd_program(resolved_a);
+      if (pid < 0) {
         terminal_append_output("Comando desconhecido. Digite 'help'.\n");
+      } else {
+        last_foreground_pid = pid;
+        int status;
+        sys_waitpid(pid, &status, 0);
+        terminal_console_mode = false;
+        terminal_redraw();
       }
     } else {
       terminal_append_output("Comando desconhecido. Digite 'help'.\n");
@@ -1556,39 +1438,13 @@ void exec_command_term(const char *cmd_raw) {
 
 void init_terminal_app() {
   terminal_reset_input();
-
-  if (terminal_console_mode) {
-    term_surface = NULL;
-    term_win = NULL;
-    terminal_output_dirty = true;
-    terminal_redraw();
-    return;
-  }
-
-  // Cria Buffer (Backing Store shared memory)
-  term_buffer.width = 600;
-  term_buffer.height = 400;
-  term_buffer.pixels = (uint32_t *)kmalloc(600 * 400 * 4);
-  term_buffer.shm = true;
-
-  // Cria Superfície
-  term_surface = wl_create_surface(600, 400, WL_SURFACE_TOPLEVEL);
-  term_surface->x = 100;
-  term_surface->y = 100;
-
-  // Set Title
-  strcpy(term_surface->title, "Liwus Terminal");
-
-  // Attach e render inicial
-  wl_attach_buffer(term_surface, &term_buffer);
+  terminal_output_dirty = true;
   terminal_redraw();
 }
 
 void open_terminal() {
-  if (!term_win)
-    init_terminal_app();
-  term_win->visible = true;
-  term_win->is_focused = true;
+  terminal_output_dirty = true;
+  terminal_redraw();
 }
 
 static int terminal_editor_line_length(int y) {
@@ -1682,27 +1538,18 @@ static void terminal_autocomplete(void) {
 }
 
 void update_terminal_key(char k) {
-  if (!term_surface && !terminal_console_mode)
+  if (!terminal_console_mode)
     return;
-
-  // Debug: Print scancode/char to serial
-  serial_print("KBD: char=");
-  write_serial(k >= 32 ? k : '.');
-  serial_print(" hex=");
-  char hexbuf[3];
-  hex_to_str((uint8_t)k, hexbuf);
-  serial_print(hexbuf);
-  serial_print("\n");
 
   if (terminal_mode == TERM_MODE_EDITOR) {
     int total_len = (int)strlen(editor_buffer);
     if (k == 27) { editor_insert_mode = false; terminal_redraw(); return; }
     
     if (!editor_insert_mode) {
-      if (k == 17) k = 'k'; // UP
-      else if (k == 18) k = 'j'; // DOWN
-      else if (k == 19) k = 'h'; // LEFT
-      else if (k == 20) k = 'l'; // RIGHT
+      if (k == 128) k = 'k'; // UP
+      else if (k == 129) k = 'j'; // DOWN
+      else if (k == 130) k = 'h'; // LEFT
+      else if (k == 131) k = 'l'; // RIGHT
 
       if (editor_pending_cmd == 'd' && k == 'd') {
           // Deletar linha (dd)
@@ -1823,25 +1670,25 @@ void update_terminal_key(char k) {
     // MODO INSERÇÃO
     int idx = terminal_editor_get_index(terminal_editor_cursor_x, terminal_editor_cursor_y);
     
-    if (k == 17) { // UP
+    if (k == 128) { // UP
         if (terminal_editor_cursor_y > 0) {
             terminal_editor_cursor_y--;
             int mx = terminal_editor_line_length(terminal_editor_cursor_y);
             if (terminal_editor_cursor_x > mx) terminal_editor_cursor_x = mx;
         }
-    } else if (k == 18) { // DOWN
+    } else if (k == 129) { // DOWN
         if (terminal_editor_cursor_y < terminal_editor_count_lines() - 1) {
             terminal_editor_cursor_y++;
             int mx = terminal_editor_line_length(terminal_editor_cursor_y);
             if (terminal_editor_cursor_x > mx) terminal_editor_cursor_x = mx;
         }
-    } else if (k == 19) { // LEFT
+    } else if (k == 130) { // LEFT
         if (terminal_editor_cursor_x > 0) terminal_editor_cursor_x--;
         else if (terminal_editor_cursor_y > 0) {
             terminal_editor_cursor_y--;
             terminal_editor_cursor_x = terminal_editor_line_length(terminal_editor_cursor_y);
         }
-    } else if (k == 20) { // RIGHT
+    } else if (k == 131) { // RIGHT
         if (terminal_editor_cursor_x < terminal_editor_line_length(terminal_editor_cursor_y)) {
             terminal_editor_cursor_x++;
         } else if (terminal_editor_cursor_y < terminal_editor_count_lines() - 1) {

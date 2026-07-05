@@ -10,6 +10,7 @@ int keyboard_pop_char(char *out);
 bool check_ctrl_c(void);
 bool check_alt_f4(void);
 bool check_win_key(void);
+bool keyboard_consume_win_key(void);
 bool keyboard_is_pressed(uint8_t scancode);
 int keyboard_get_event(void *ev);
 void push_event(uint8_t scancode, int pressed);

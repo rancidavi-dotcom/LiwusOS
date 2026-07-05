@@ -41,6 +41,21 @@ static const char hid_to_ascii_shift[] = {
 };
 
 void usb_hid_handle_report(usb_device_t *dev, uint8_t *data, int len) {
+    /* ──── USB HID Boot Protocol MOUSE ──── */
+    if (dev->type == 2) {
+        if (len < 3) return;
+        
+        int buttons = data[0]; // bit0=left, bit1=right, bit2=middle
+        int8_t x_rel = (int8_t)data[1];
+        int8_t y_rel = (int8_t)data[2];
+        
+        // USB: positive Y = mouse moved downward (toward user)
+        // mouse_handle_event subtracts y_rel, so we negate to get correct screen direction
+        mouse_handle_event((int)x_rel * 3, -(int)y_rel * 3, buttons);
+        return;
+    }
+    
+    /* ──── USB HID Boot Protocol KEYBOARD ──── */
     (void)dev;
     if (len < 8) return;
 

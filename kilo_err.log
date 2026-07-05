@@ -1,0 +1,53 @@
+In file included from sdk/include/ssp/stdlib.h:4,
+                 from sdk/include/stdlib.h:342,
+                 from apps/kilo/kilo.c:38:
+sdk/include/ssp/stdlib.h: In function ‘wctomb’:
+sdk/include/ssp/ssp.h:50:43: warning: comparison of integer expressions of different signedness: ‘int’ and ‘long unsigned int’ [-Wsign-compare]
+   50 |         if (bos(buf) != (size_t)-1 && len > bos(buf)) \
+      |                                           ^
+sdk/include/ssp/stdlib.h:23:5: note: in expansion of macro ‘__ssp_check’
+   23 |     __ssp_check(__buf, MB_CUR_MAX, __ssp_bos);
+      |     ^~~~~~~~~~~
+apps/kilo/kilo.c: In function ‘disableRawMode’:
+apps/kilo/kilo.c:168:9: warning: implicit declaration of function ‘tcsetattr’ [-Wimplicit-function-declaration]
+  168 |         tcsetattr(fd,TCSAFLUSH,&orig_termios);
+      |         ^~~~~~~~~
+apps/kilo/kilo.c: In function ‘enableRawMode’:
+apps/kilo/kilo.c:178:9: warning: implicit declaration of function ‘tcgetattr’ [-Wimplicit-function-declaration]
+  178 |     if (tcgetattr(fd,&orig_termios) == -1) goto fatal;
+      |         ^~~~~~~~~
+In file included from apps/kilo/kilo.c:43:
+apps/kilo/kilo.c: In function ‘editorUpdateSyntax’:
+apps/kilo/kilo.c:316:25: warning: array subscript has type ‘char’ [-Wchar-subscripts]
+  316 |     while(*p && isspace(*p)) {
+      |                         ^~
+sdk/include/ctype.h:90:53: note: in definition of macro ‘__ctype_lookup’
+   90 | #define __ctype_lookup(__c) ((__CTYPE_PTR+sizeof(""[__c]))[(int)(__c)])
+      |                                                     ^~~
+apps/kilo/kilo.c:316:17: note: in expansion of macro ‘isspace’
+  316 |     while(*p && isspace(*p)) {
+      |                 ^~~~~~~
+apps/kilo/kilo.c:376:22: warning: array subscript has type ‘char’ [-Wchar-subscripts]
+  376 |         if (!isprint(*p)) {
+      |                      ^~
+sdk/include/ctype.h:90:53: note: in definition of macro ‘__ctype_lookup’
+   90 | #define __ctype_lookup(__c) ((__CTYPE_PTR+sizeof(""[__c]))[(int)(__c)])
+      |                                                     ^~~
+apps/kilo/kilo.c:376:14: note: in expansion of macro ‘isprint’
+  376 |         if (!isprint(*p)) {
+      |              ^~~~~~~
+apps/kilo/kilo.c:383:22: warning: array subscript has type ‘char’ [-Wchar-subscripts]
+  383 |         if ((isdigit(*p) && (prev_sep || row->hl[i-1] == HL_NUMBER)) ||
+      |                      ^~
+sdk/include/ctype.h:90:53: note: in definition of macro ‘__ctype_lookup’
+   90 | #define __ctype_lookup(__c) ((__CTYPE_PTR+sizeof(""[__c]))[(int)(__c)])
+      |                                                     ^~~
+apps/kilo/kilo.c:383:14: note: in expansion of macro ‘isdigit’
+  383 |         if ((isdigit(*p) && (prev_sep || row->hl[i-1] == HL_NUMBER)) ||
+      |              ^~~~~~~
+/usr/bin/ld: warning: libc_a-memset.o: missing .note.GNU-stack section implies executable stack
+/usr/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker
+/usr/bin/ld: /tmp/ccdpAFwQ.o: in function `editorSave':
+kilo.c:(.text+0x1c4c): undefined reference to `__liw_sys_save_file'
+collect2: error: ld returned 1 exit status
+make: *** [Makefile:152: apps/kilo/kilo.elf] Error 1

@@ -7,147 +7,134 @@
 page_directory_t *kernel_directory = 0;
 page_directory_t *current_directory = 0;
 
-extern void load_page_directory(uint32_t *);
-extern void enable_paging();
+static int walk_pt_modified_pml4 = 0;
 
-/* Helpers */
+static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
+  pml4_t *pml4 = dir->pml4_virt;
+  uint64_t pml4_i = vaddr_pml4i(vaddr);
+  uint64_t alloc_flags = PTE_P | PTE_W;
+  if (flags & PTE_U) alloc_flags |= PTE_U;
+
+  if (!(pml4->entries[pml4_i] & PTE_P)) {
+    if (!flags) return 0;
+    pdp_t *new_pdp = (pdp_t *)kmalloc_a(4096);
+    memset(new_pdp, 0, 4096);
+    pml4->entries[pml4_i] = ((uint64_t)new_pdp) | alloc_flags;
+    walk_pt_modified_pml4 = 1;
+  } else if ((flags & PTE_U) && !(pml4->entries[pml4_i] & PTE_U)) {
+    pml4->entries[pml4_i] |= PTE_U;
+    walk_pt_modified_pml4 = 1;
+  }
+
+  pdp_t *pdp = (pdp_t *)(uint64_t)(pml4->entries[pml4_i] & ~0xFFFULL);
+  uint64_t pdp_i = vaddr_pdpi(vaddr);
+
+  if (!(pdp->entries[pdp_i] & PTE_P)) {
+    if (!flags) return 0;
+    pd_t *new_pd = (pd_t *)kmalloc_a(4096);
+    memset(new_pd, 0, 4096);
+    pdp->entries[pdp_i] = ((uint64_t)new_pd) | alloc_flags;
+  } else if ((flags & PTE_U) && !(pdp->entries[pdp_i] & PTE_U)) {
+    pdp->entries[pdp_i] |= PTE_U;
+  }
+
+  pd_t *pd = (pd_t *)(uint64_t)(pdp->entries[pdp_i] & ~0xFFFULL);
+  uint64_t pd_i = vaddr_pdi(vaddr);
+
+  if (pd->entries[pd_i] & PTE_PS) {
+    if (!flags) return 0;
+    uint64_t large_base = pd->entries[pd_i] & ~0x1FFFFFULL;
+    uint64_t large_flags = pd->entries[pd_i] & 0x1FFULL;
+    if (flags & PTE_U) large_flags |= PTE_U;
+    if (flags & PTE_W) large_flags |= PTE_W;
+    pt_t *new_pt = (pt_t *)kmalloc_a(4096);
+    memset(new_pt, 0, 4096);
+    for (int j = 0; j < 512; j++) {
+      new_pt->entries[j] = (large_base + j * 4096) | (large_flags & ~PTE_PS);
+    }
+    pd->entries[pd_i] = ((uint64_t)new_pt) | alloc_flags;
+  }
+
+  if (!(pd->entries[pd_i] & PTE_P)) {
+    if (!flags) return 0;
+    pt_t *new_pt = (pt_t *)kmalloc_a(4096);
+    memset(new_pt, 0, 4096);
+    pd->entries[pd_i] = ((uint64_t)new_pt) | alloc_flags;
+  }
+
+  pt_t *pt = (pt_t *)(uint64_t)(pd->entries[pd_i] & ~0xFFFULL);
+  uint64_t pt_i = vaddr_pti(vaddr);
+  return &pt->entries[pt_i];
+}
+
+void vmm_map_page(void *phys, void *virt, uint64_t flags) {
+  uint64_t p = (uint64_t)phys;
+  uint64_t v = (uint64_t)virt;
+  uint64_t f = flags;
+
+  walk_pt_modified_pml4 = 0;
+  pte_t *entry = walk_pt(current_directory, v, f);
+  if (entry) {
+    *entry = (p & ~0xFFFULL) | (f & 0xFFF) | PTE_P;
+    if (walk_pt_modified_pml4) {
+      uint64_t cr3;
+      asm volatile("mov %%cr3, %0" : "=r"(cr3));
+      asm volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
+    } else {
+      asm volatile("invlpg (%0)" : : "r"(v) : "memory");
+    }
+  }
+}
+
+void vmm_map_framebuffer(uint64_t phys_addr, uint64_t size) {
+  for (uint64_t i = 0; i < size; i += 4096) {
+    vmm_map_page((void*)(phys_addr + i), (void*)(phys_addr + i), PTE_P | PTE_W);
+  }
+}
+
 void switch_page_directory(page_directory_t *dir) {
   current_directory = dir;
-  load_page_directory((uint32_t *)dir->physicalAddr);
+  asm volatile("mov %0, %%cr3" : : "r"(dir->pml4_phys) : "memory");
 }
 
-void vmm_map_page(void *phys, void *virt, uint32_t flags) {
-  page_directory_t *dir = current_directory;
-  uint32_t pd_index = (uint32_t)virt >> 22;
-  uint32_t pt_index = ((uint32_t)virt >> 12) & 0x03FF;
-  uint32_t *pd = (uint32_t *)dir->physicalAddr;
-
-  if (!dir->tablesVirtual[pd_index]) {
-    uint32_t *new_table = (uint32_t *)kmalloc_a(4096);
-    uint32_t phys_table = (uint32_t)new_table;
-    memset(new_table, 0, 4096);
-
-    dir->tablesVirtual[pd_index] = new_table;
-    dir->tablesPhysical[pd_index] = phys_table | 0x7; // PRESENT, RW, US
-    pd[pd_index] = phys_table | 0x7;
-  } else {
-    uint32_t pd_flags = 0x1;
-    if (flags & 0x2) {
-      pd_flags |= 0x2;
-    }
-    if (flags & 0x4) {
-      pd_flags |= 0x4;
-    }
-    pd[pd_index] |= pd_flags;
-  }
-
-  uint32_t *table = dir->tablesVirtual[pd_index];
-  table[pt_index] = ((uint32_t)phys) | (flags & 0xFFF) | 0x1; // Present
-  
-  asm volatile("invlpg (%0)" ::"r" (virt) : "memory");
-}
-
-void init_vmm(uint32_t memory_size) {
+void init_vmm(uint64_t memory_size) {
+  (void)memory_size;
   kernel_directory = (page_directory_t *)kmalloc(sizeof(page_directory_t));
   memset(kernel_directory, 0, sizeof(page_directory_t));
-
-  uint32_t phys_addr;
-  kmalloc_ap(4096, &phys_addr);
-  kernel_directory->physicalAddr = phys_addr;
-  memset((void *)kernel_directory->physicalAddr, 0, 4096);
-
-  uint32_t *pd = (uint32_t *)kernel_directory->physicalAddr;
-
-  for (uint32_t i = 0; i < memory_size; i += 4096) {
-    uint32_t pd_index = i >> 22;
-    uint32_t pt_index = (i >> 12) & 0x03FF;
-
-    if (!kernel_directory->tablesVirtual[pd_index]) {
-      uint32_t *table = (uint32_t *)kmalloc_a(4096);
-      kernel_directory->tablesVirtual[pd_index] = table;
-      pd[pd_index] = ((uint32_t)table) | 0x3;
-      memset(table, 0, 4096);
-    }
-    kernel_directory->tablesVirtual[pd_index][pt_index] = i | 0x3;
-  }
-
-  uint32_t fb_phys = 0xFD000000;
-  for (int i = 0; i < 16 * 1024 * 1024; i += 4096) {
-    uint32_t addr = fb_phys + i;
-    uint32_t pd_index = addr >> 22;
-    uint32_t pt_index = (addr >> 12) & 0x03FF;
-
-    if (!kernel_directory->tablesVirtual[pd_index]) {
-      uint32_t *table = (uint32_t *)kmalloc_a(4096);
-      kernel_directory->tablesVirtual[pd_index] = table;
-      pd[pd_index] = ((uint32_t)table) | 0x3;
-      memset(table, 0, 4096);
-    }
-    kernel_directory->tablesVirtual[pd_index][pt_index] = addr | 0x3;
-  }
-
+  uint64_t cr3;
+  asm volatile("mov %%cr3, %0" : "=r"(cr3));
+  kernel_directory->pml4_phys = cr3;
+  kernel_directory->pml4_virt = (pml4_t *)(uint64_t)cr3;
   current_directory = kernel_directory;
-  load_page_directory((uint32_t *)kernel_directory->physicalAddr);
-  enable_paging();
 }
 
 page_directory_t *vmm_create_directory() {
   page_directory_t *dir = (page_directory_t *)kmalloc(sizeof(page_directory_t));
   memset(dir, 0, sizeof(page_directory_t));
-  uint32_t phys_addr;
-  kmalloc_ap(4096, &phys_addr);
-  dir->physicalAddr = phys_addr;
-  memset((void *)dir->physicalAddr, 0, 4096);
-  for (int i = 0; i < 1024; i++) {
-    if (kernel_directory->tablesVirtual[i]) {
-      dir->tablesVirtual[i] = kernel_directory->tablesVirtual[i];
-      uint32_t *pd = (uint32_t *)dir->physicalAddr;
-      uint32_t *k_pd = (uint32_t *)kernel_directory->physicalAddr;
-      pd[i] = k_pd[i];
-    }
-  }
+  pml4_t *new_pml4 = (pml4_t *)kmalloc_a(4096);
+  memset(new_pml4, 0, 4096);
+  pml4_t *kernel_pml4 = kernel_directory->pml4_virt;
+  for (int i = 0; i < 512; i++)
+    new_pml4->entries[i] = kernel_pml4->entries[i];
+  dir->pml4_virt = new_pml4;
+  dir->pml4_phys = (uint64_t)new_pml4;
   return dir;
 }
 
 page_directory_t *vmm_copy_directory(page_directory_t *src) {
-  page_directory_t *dir = vmm_create_directory();
-  for (int i = 0; i < 1024; i++) {
-    if (src->tablesVirtual[i] && src->tablesVirtual[i] != kernel_directory->tablesVirtual[i]) {
-      uint32_t *old_table = src->tablesVirtual[i];
-      uint32_t *new_table = (uint32_t *)kmalloc_a(4096);
-      dir->tablesVirtual[i] = new_table;
-      dir->tablesPhysical[i] = (uint32_t)new_table | 0x7;
-      memset(new_table, 0, 4096);
-      for (int j = 0; j < 1024; j++) {
-        if (old_table[j] & 0x1) {
-          uint32_t flags = old_table[j] & 0xFFF;
-          uint32_t phys = old_table[j] & 0xFFFFF000;
-          void *new_phys = kmalloc_a(4096);
-          memcpy(new_phys, (void *)(phys), 4096);
-          new_table[j] = (uint32_t)new_phys | flags;
-        }
-      }
-    }
-  }
-  return dir;
+  (void)src;
+  return vmm_create_directory();
 }
 
 #include "task.h"
 extern task_t *current_task;
-uint32_t sys_brk(uint32_t addr) {
+uint64_t sys_brk(uint64_t addr) {
   if (!current_task) return 0;
-  serial_print("DBG_BRK: pid=");
-  char _nb[16];
-  itoa(current_task->id, _nb, 10); serial_print(_nb);
-  serial_print(" req="); serial_print_hex(addr);
-  serial_print(" heap_start="); serial_print_hex(current_task->heap_start);
-  serial_print(" heap_end="); serial_print_hex(current_task->heap_end);
-  serial_print("\n");
   if (addr == 0 || addr < current_task->heap_start) return current_task->heap_end;
   if (addr > current_task->heap_end) {
-    uint32_t start = (current_task->heap_end + 0xFFF) & 0xFFFFF000;
-    uint32_t end = (addr + 0xFFF) & 0xFFFFF000;
-    for (uint32_t p = start; p < end; p += 4096) {
+    uint64_t start = (current_task->heap_end + 0xFFF) & ~0xFFFULL;
+    uint64_t end = (addr + 0xFFF) & ~0xFFFULL;
+    for (uint64_t p = start; p < end; p += 4096) {
       void *phys = kmalloc_a(4096);
       vmm_map_page(phys, (void *)p, 0x7);
       memset((void *)p, 0, 4096);

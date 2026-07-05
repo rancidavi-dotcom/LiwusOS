@@ -4,7 +4,6 @@
 #include "serial.h"
 #include "string.h"
 #include "tcp.h"
-#include "video.h"
 
 static void http_log(const char *msg) { serial_print(msg); }
 

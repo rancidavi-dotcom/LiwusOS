@@ -3,11 +3,11 @@
 #include "serial.h"
 #include "syscall.h" // Para syscall_handler
 #include "task.h"
-
+#include "string.h"
 extern void keyboard_handler();
 extern void timer_handler();
 extern void mouse_handler();
-extern uint32_t schedule(uint32_t current_esp);
+extern uint64_t schedule(uint64_t current_rsp);
 extern void rtl8139_handler();
 extern task_t *current_task;
 
@@ -23,25 +23,27 @@ void isr_handler(registers_t *regs) {
     serial_print(" err=");
     serial_print_hex(regs->err_code);
     if (regs->int_no == 14) {
-      uint32_t cr2;
+      uint64_t cr2;
       asm volatile("mov %%cr2, %0" : "=r"(cr2));
       serial_print(" cr2=");
       serial_print_hex(cr2);
     }
-    serial_print(" eip=");
-    serial_print_hex(regs->eip);
+    serial_print(" rip=");
+    serial_print_hex(regs->rip);
     serial_print("\n");
 
     if ((regs->cs & 0x3) == 0x3 && current_task && current_task->user_mode) {
       serial_print("user task killed after exception\n");
       sys_exit_process(128 + (int)regs->int_no);
     } else {
-      serial_print("KERNEL PANIC: Unhandled CPU exception in supervisor mode.\n");
-      serial_print("System Halted.\n");
-      asm volatile("cli");
-      while (1) {
-        asm volatile("hlt");
-      }
+      extern void kernel_panic(const char *msg);
+      char buf[64];
+      strcpy(buf, "Unhandled CPU exception (ISR ");
+      char num[16];
+      itoa(regs->int_no, num, 10);
+      strcat(buf, num);
+      strcat(buf, ")");
+      kernel_panic(buf);
     }
   }
 }
@@ -49,8 +51,8 @@ void isr_handler(registers_t *regs) {
 /* Handler para interrupções de hardware (IRQ 0-15) */
 /* O Assembly 'irq_common_stub' faz 'push %esp' e 'call irq_handler', então
  * recebe um ponteiro */
-uint32_t irq_handler(uint32_t esp) {
-  registers_t *regs = (registers_t *)esp;
+uint64_t irq_handler(uint64_t rsp) {
+  registers_t *regs = (registers_t *)rsp;
 
   if (regs->int_no >= 40)
     outb(0xA0, 0x20);
@@ -58,7 +60,7 @@ uint32_t irq_handler(uint32_t esp) {
 
   if (regs->int_no == 32) {
     timer_handler();
-    return schedule(esp);
+    return schedule(rsp);
   } else if (regs->int_no == 33) {
     keyboard_handler();
   } else if (regs->int_no == 43) { // IRQ 11 (Network)
@@ -67,5 +69,5 @@ uint32_t irq_handler(uint32_t esp) {
     mouse_handler();
   }
 
-  return esp;
+  return rsp;
 }

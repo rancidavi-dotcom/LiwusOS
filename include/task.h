@@ -18,29 +18,29 @@ typedef struct task {
   int id;
   task_state_t state;
   int exit_code;
-  uint32_t stack_top;    // saved ESP
-  uint32_t kernel_stack; // kernel stack top
-  uint32_t kernel_stack_size; // kernel stack size (for cleanup)
+  uint64_t stack_top;
+  uint64_t kernel_stack;
+  uint32_t kernel_stack_size;
   struct task *parent;
   struct task *next;
   page_directory_t *page_directory;
-  uint32_t heap_start;
-  uint32_t heap_end;
-  uint32_t cpu_ticks;
-  uint32_t switch_count;
+  uint64_t heap_start;
+  uint64_t heap_end;
+  uint64_t cpu_ticks;
+  uint64_t switch_count;
   bool user_mode;
   char name[32];
-  fs_node_t *file_descriptors[16]; // Tabela de arquivos abertos
+  fs_node_t *file_descriptors[16];
 } task_t;
 
 typedef struct {
   int id;
   int parent_id;
   task_state_t state;
-  uint32_t heap_start;
-  uint32_t heap_end;
-  uint32_t cpu_ticks;
-  uint32_t switch_count;
+  uint64_t heap_start;
+  uint64_t heap_end;
+  uint64_t cpu_ticks;
+  uint64_t switch_count;
   bool user_mode;
   char name[32];
 } task_info_t;
@@ -48,11 +48,13 @@ typedef struct {
 void init_tasking();
 int create_task(void (*entry_point)());
 int create_task_named(void (*entry_point)(), const char *name);
-int create_user_task(uint32_t entry_point, uint32_t user_stack);
-int create_user_task_named(uint32_t entry_point, uint32_t user_stack,
+int create_user_task(uint64_t entry_point, uint64_t user_stack);
+int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
                             const char *name);
+int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
+                               const char *name);
 void switch_task();
-uint32_t schedule(uint32_t current_esp);
+uint64_t schedule(uint64_t current_rsp);
 void move_to_user_mode();
 int task_snapshot(task_info_t *out, int max_entries);
 const char *task_state_name(task_state_t state);

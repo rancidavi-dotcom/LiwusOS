@@ -1,15 +1,22 @@
+all: $(LIBGLOSS_A) zlib libpng libjpeg $(CRT0_OBJ) liwusos.iso
 CC = gcc
 AR = ar
 HOSTCC = gcc
 M32 = -m32
+M64 = -m64 -mno-red-zone
 
-CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Iinclude -Isdk/libc/include $(M32)
-USER_CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -Isdk/libc/include $(M32)
+CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Iinclude $(M64) -fno-pie -fno-pic -mcmodel=large -mno-sse -mno-sse2 -mno-mmx
+LDFLAGS = -Wl,-no-pie
+USER_CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -m64 -mno-red-zone -fno-pie -fno-pic
 LIBGCC = -lgcc
-CRT0_OBJ = sdk/lib/crt0.o
+NEWLIB_DIR = sdk/lib
+LIBC_A = $(NEWLIB_DIR)/libc.a
+LIBM_A = $(NEWLIB_DIR)/libm.a
+LIBGLOSS_A = sdk/lib/libgloss.a
+CRT0_OBJ = libgloss/crt0.o
 
-$(CRT0_OBJ): sdk/lib/crt0.s
-	$(CC) -c $< -o $@ $(M32)
+$(CRT0_OBJ): libgloss/crt0.S
+	$(CC) -c $< -o $@ $(USER_CFLAGS)
 
 SRC_DIR = src
 BOOT_DIR = $(SRC_DIR)/boot
@@ -17,61 +24,43 @@ KERNEL_DIR = $(SRC_DIR)/kernel
 DRIVERS_DIR = $(SRC_DIR)/drivers
 FS_DIR = $(SRC_DIR)/fs
 NET_DIR = $(SRC_DIR)/net
-GUI_DIR = $(SRC_DIR)/gui
 APPS_DIR = $(SRC_DIR)/apps
 OBJ_DIR = obj
 
 KERNEL_BIN = kernel.bin
 ISO_IMAGE = liwusos.iso
-LIW_ELF = liw.elf
 CALC_ELF = apps/calc/calc.elf
 HELLO_ELF = apps/hello/hello.elf
 DOOMPROBE_ELF = apps/doomprobe/doomprobe.elf
 LUA_ELF = apps/lua/lua.elf
-DOOMGENERIC_ELF = apps/doomgeneric/doomgeneric.elf
 CRUN_ELF = apps/c4/crun.elf
-VIEW_ELF = apps/view/view.elf
 EDITOR_NANO_ELF = apps/editor_nano/editor_nano.elf
+TCC_ELF = apps/tcc/tcc.elf
+NANO_ELF = apps/kilo/kilo.elf
+DEMO_GUI_ELF = apps/demo_gui/demo_gui.elf
 
-TCC_DIR = third_party/tcc
-TCC_BIN = $(TCC_DIR)/tcc
 
 BOOT_SRCS = $(BOOT_DIR)/boot.s $(BOOT_DIR)/interrupt.s
 KERNEL_SRCS = $(wildcard $(KERNEL_DIR)/*.c) $(wildcard $(KERNEL_DIR)/*.s)
 DRIVERS_SRCS = $(wildcard $(DRIVERS_DIR)/*.c)
 FS_SRCS = $(wildcard $(FS_DIR)/*.c)
 NET_SRCS = $(wildcard $(NET_DIR)/*.c)
-GUI_SRCS = $(wildcard $(GUI_DIR)/*.c)
-APPS_SRCS = $(filter-out $(APPS_DIR)/liw_app.c, $(wildcard $(APPS_DIR)/*.c))
+APPS_SRCS = $(filter-out $(APPS_DIR)/liw_app.c $(APPS_DIR)/editor.c, $(wildcard $(APPS_DIR)/*.c))
 
-KERNEL_C_SRCS = $(KERNEL_SRCS) $(DRIVERS_SRCS) $(FS_SRCS) $(NET_SRCS) $(GUI_SRCS) $(APPS_SRCS)
+KERNEL_C_SRCS = $(KERNEL_SRCS) $(DRIVERS_SRCS) $(FS_SRCS) $(NET_SRCS) $(APPS_SRCS)
 KERNEL_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(filter %.c,$(KERNEL_C_SRCS))) \
               $(patsubst %.s,$(OBJ_DIR)/%.o,$(filter %.s,$(KERNEL_C_SRCS))) \
               $(patsubst %.s,$(OBJ_DIR)/%.o,$(BOOT_SRCS)) \
               $(OBJ_DIR)/$(DRIVERS_DIR)/font.o
 
-SDK_LIBC_SRCS = $(wildcard sdk/libc/*.c)
-SDK_LIBC_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(SDK_LIBC_SRCS))
-SDK_LIB = sdk/lib/libliwc.a
-
-DOOM_DIR = third_party/doomgeneric/doomgeneric
-DOOMGENERIC_CFLAGS = $(USER_CFLAGS) -I$(DOOM_DIR) -Iapps/doomgeneric -DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200
-DOOM_ALL_SRCS = $(wildcard $(DOOM_DIR)/*.c)
-DOOM_EXCLUDE = $(DOOM_DIR)/doomgeneric_allegro.c $(DOOM_DIR)/doomgeneric_emscripten.c \
-               $(DOOM_DIR)/doomgeneric_linuxvt.c $(DOOM_DIR)/doomgeneric_sdl.c \
-               $(DOOM_DIR)/doomgeneric_soso.c $(DOOM_DIR)/doomgeneric_sosox.c \
-               $(DOOM_DIR)/doomgeneric_win.c $(DOOM_DIR)/doomgeneric_xlib.c \
-               $(DOOM_DIR)/i_allegromusic.c $(DOOM_DIR)/i_allegrosound.c \
-               $(DOOM_DIR)/i_sdlmusic.c $(DOOM_DIR)/i_sdlsound.c
-DOOM_SRCS = $(filter-out $(DOOM_EXCLUDE), $(DOOM_ALL_SRCS)) \
-	    apps/doomgeneric/doomgeneric_liwus.c
+LIBGLOSS_SRCS = libgloss/syscalls.c
+LIBGLOSS_OBJS = $(OBJ_DIR)/libgloss/syscalls.o
 
 LUA_DIR = third_party/lua/src
 LUA_CFLAGS = $(USER_CFLAGS) -I$(LUA_DIR) -DLUA_USE_C89
 LUA_ALL_SRCS = $(wildcard $(LUA_DIR)/*.c)
 LUA_SRCS = $(filter-out $(LUA_DIR)/lua.c $(LUA_DIR)/luac.c, $(LUA_ALL_SRCS)) apps/lua/lua_main.c
 
-SDK_LIB = sdk/lib/libliwc.a
 ZLIB_LIB = sdk/lib/libz.a
 PNG_LIB = sdk/lib/libpng.a
 JPEG_LIB = sdk/lib/libjpeg.a
@@ -80,22 +69,21 @@ ZLIB_DIR = third_party/zlib
 PNG_DIR = third_party/libpng
 JPEG_DIR = third_party/libjpeg
 
-.PHONY: all run clean tcc zlib libpng libjpeg
+.PHONY: all run clean zlib libpng libjpeg
 
-all: $(SDK_LIB) zlib libpng libjpeg $(ISO_IMAGE)
 
 zlib:
 	@if [ ! -f $(ZLIB_LIB) ] && [ -d $(ZLIB_DIR) ]; then \
-		cd $(ZLIB_DIR) && CHOST=i686-elf CC=$(CC) CFLAGS="$(USER_CFLAGS) -I$(CURDIR)/sdk/libc/include" ./configure --static --prefix=$(CURDIR)/sdk && $(MAKE) libz.a && \
-		cp libz.a ../../$(ZLIB_LIB) && cp *.h ../../sdk/libc/include/; \
+		cd $(ZLIB_DIR) && CHOST=i686-elf CC=$(CC) CFLAGS="$(USER_CFLAGS) -I$(CURDIR)/sdk/include" ./configure --static --prefix=$(CURDIR)/sdk && $(MAKE) libz.a && \
+		cp libz.a ../../$(ZLIB_LIB) && cp *.h ../../sdk/include/; \
 	fi
 
-libpng: zlib $(SDK_LIB) $(CRT0_OBJ)
+libpng: zlib $(CRT0_OBJ)
 	@if [ ! -f $(PNG_LIB) ] && [ -d $(PNG_DIR) ]; then \
 		cd $(PNG_DIR) && \
-		CPPFLAGS="-I$(CURDIR)/sdk/libc/include" \
+		CPPFLAGS="-I$(CURDIR)/sdk/include" \
 		LDFLAGS="-L$(CURDIR)/sdk/lib -nostdlib" \
-		LIBS="-l:libliwc.a -lgcc" \
+		LIBS="-lc -lm -lgloss -lgcc" \
 		./configure --host=i686-elf --prefix=$(CURDIR)/sdk \
 		--enable-static --disable-shared \
 		--with-zlib-prefix=$(CURDIR)/sdk \
@@ -103,32 +91,25 @@ libpng: zlib $(SDK_LIB) $(CRT0_OBJ)
 		ac_cv_func_realloc_0_nonnull=yes \
 		ac_cv_lib_z_zlibVersion=yes && \
 		$(MAKE) libpng16.la && \
-		cp .libs/libpng16.a ../../$(PNG_LIB) && cp *.h ../../sdk/libc/include/; \
+		cp .libs/libpng16.a ../../$(PNG_LIB) && cp *.h ../../sdk/include/; \
 	fi
 
-libjpeg: $(SDK_LIB) $(CRT0_OBJ)
+libjpeg: $(CRT0_OBJ)
 	@if [ ! -f $(JPEG_LIB) ] && [ -d $(JPEG_DIR) ]; then \
 		cd $(JPEG_DIR) && \
 		./configure --host=i686-elf --prefix=$(CURDIR)/sdk \
 		--enable-static --disable-shared \
-		CC=$(CC) CFLAGS="$(USER_CFLAGS) -I$(CURDIR)/sdk/libc/include" \
+		CC=$(CC) CFLAGS="$(USER_CFLAGS) -I$(CURDIR)/sdk/include" \
 		LDFLAGS="-L$(CURDIR)/sdk/lib -nostdlib" \
-		LIBS="-l:libliwc.a -lgcc" \
+		LIBS="-lc -lm -lgloss -lgcc" \
 		ac_cv_func_malloc_0_nonnull=yes \
 		ac_cv_func_realloc_0_nonnull=yes && \
 		$(MAKE) libjpeg.la && \
-		cp .libs/libjpeg.a ../../$(JPEG_LIB) && cp *.h ../../sdk/libc/include/; \
+		cp .libs/libjpeg.a ../../$(JPEG_LIB) && cp *.h ../../sdk/include/; \
 	fi
 
-tcc:
-	cd $(TCC_DIR) && ./configure --cc=$(CC) --cpu=i386 --triplet=i686-elf --prefix=/usr/local --extra-cflags="-ffreestanding -I$(CURDIR)/sdk/libc/include" && $(MAKE) tcc
-
 $(KERNEL_BIN): $(KERNEL_OBJS) $(BOOT_DIR)/linker.ld
-	$(CC) -T $(BOOT_DIR)/linker.ld -o $@ $(CFLAGS) -nostdlib -static -Wl,--build-id=none $(KERNEL_OBJS) $(LIBGCC)
-
-$(OBJ_DIR)/sdk/libc/%.o: sdk/libc/%.c
-	@mkdir -p $(dir $@)
-	$(CC) -c $< -o $@ $(USER_CFLAGS)
+	$(CC) -T $(BOOT_DIR)/linker.ld -o $@ $(CFLAGS) $(LDFLAGS) -nostdlib -static -Wl,--build-id=none $(KERNEL_OBJS) $(LIBGCC)
 
 $(OBJ_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -136,87 +117,112 @@ $(OBJ_DIR)/%.o: %.c
 
 $(OBJ_DIR)/%.o: %.s
 	@mkdir -p $(dir $@)
-	$(CC) -c $< -o $@ $(M32)
+	$(CC) -c $< -o $@ $(M64)
 
 $(OBJ_DIR)/$(DRIVERS_DIR)/font.o: $(DRIVERS_DIR)/font.psf
 	@mkdir -p $(dir $@)
-	objcopy -I binary -O elf32-i386 -B i386 $< $@
+	objcopy -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
 
-$(SDK_LIB): $(SDK_LIBC_OBJS)
+$(LIBGLOSS_A): $(LIBGLOSS_OBJS)
 	@mkdir -p $(dir $@)
-	$(AR) rcs $@ $(SDK_LIBC_OBJS)
-	cp $@ sdk/lib/libm.a
-	cp $@ sdk/lib/libc.a
+	$(AR) rcs $@ $(LIBGLOSS_OBJS)
 
-$(LIW_ELF): src/apps/liw_app.c
-	$(CC) $(USER_CFLAGS) -nostdlib -static $< -o $@ $(LIBGCC)
-
-$(CALC_ELF): apps/calc/calc.c $(SDK_LIB) $(CRT0_OBJ)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/calc/calc.c $(SDK_LIB) -o $@ $(LIBGCC)
-
-$(HELLO_ELF): apps/hello/hello.c $(SDK_LIB) $(CRT0_OBJ)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/hello/hello.c $(SDK_LIB) -o $@ $(LIBGCC)
-
-$(DOOMPROBE_ELF): apps/doomprobe/doomprobe.c $(SDK_LIB) $(CRT0_OBJ)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/doomprobe/doomprobe.c $(SDK_LIB) -o $@ $(LIBGCC)
-
-$(LUA_ELF): $(LUA_SRCS) $(SDK_LIB) $(CRT0_OBJ)
-	$(CC) $(LUA_CFLAGS) -nostdlib -static $(CRT0_OBJ) $(LUA_SRCS) $(SDK_LIB) -o $@ $(LIBGCC)
-
-$(DOOMGENERIC_ELF): $(DOOM_SRCS) $(SDK_LIB) $(CRT0_OBJ)
-	$(CC) $(DOOMGENERIC_CFLAGS) -nostdlib -static $(CRT0_OBJ) $(DOOM_SRCS) $(SDK_LIB) -o $@ $(LIBGCC)
-
-$(EDITOR_NANO_ELF): apps/editor_nano/editor_nano.c apps/editor_nano/font.h $(SDK_LIB) $(CRT0_OBJ)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/editor_nano/editor_nano.c $(SDK_LIB) -o $@ $(LIBGCC)
-
-$(CRUN_ELF): apps/c4/c4.c $(SDK_LIB) $(CRT0_OBJ)
+$(LIBGLOSS_OBJS): libgloss/syscalls.c
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/c4/c4.c $(SDK_LIB) -o $@ $(LIBGCC)
+	$(CC) -c $< -o $@ $(USER_CFLAGS)
 
-$(VIEW_ELF): apps/view/view.c $(SDK_LIB) $(CRT0_OBJ) zlib libpng libjpeg
+LIBS = $(LIBC_A) $(LIBM_A) $(LIBGLOSS_A) $(LIBGCC)
+
+$(HELLO_ELF): apps/hello/hello.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/hello/hello.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+
+$(DOOMPROBE_ELF): apps/doomprobe/doomprobe.c $(CRT0_OBJ) $(LIBGLOSS_A)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/doomprobe/doomprobe.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+
+$(LUA_ELF): $(LUA_SRCS) $(CRT0_OBJ) $(LIBGLOSS_A)
+	$(CC) $(LUA_CFLAGS) -nostdlib -static $(CRT0_OBJ) $(LUA_SRCS) -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+
+$(EDITOR_NANO_ELF): apps/editor_nano/editor_nano.c apps/editor_nano/font.h $(CRT0_OBJ) $(LIBGLOSS_A)
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -I$(CURDIR)/sdk/libc/include -nostdlib -static $(CRT0_OBJ) apps/view/view.c $(PNG_LIB) $(JPEG_LIB) $(ZLIB_LIB) $(SDK_LIB) -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/editor_nano/editor_nano.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
 
-$(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(SDK_LIB) $(CALC_ELF) $(LIW_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(LUA_ELF)
+$(NANO_ELF): apps/kilo/kilo.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/kilo/kilo.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+
+$(CRUN_ELF): apps/c4/c4.c $(CRT0_OBJ) $(LIBGLOSS_A)
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/c4/c4.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+
+$(CALC_ELF): apps/calc/calc.c $(CRT0_OBJ) $(LIBGLOSS_A)
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/calc/calc.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+
+$(TCC_ELF): apps/tcc/tcc.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -DONE_SOURCE=1 -DTCC_TARGET_X86_64 -DCONFIG_TCCDIR=\"/usr/lib/tcc\" -DCONFIG_TCC_SEMLOCK=0 -DCONFIG_TCC_BACKTRACE=0 -DCONFIG_TCC_BCHECK=0 -nostdlib -static $(CRT0_OBJ) apps/tcc/tcc.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+
+sdk/lib/liblgx.a:
+	$(MAKE) -C liblgx
+
+$(DEMO_GUI_ELF): apps/demo_gui/demo_gui.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/liblgx.a
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/demo_gui/demo_gui.c -L$(NEWLIB_DIR) -Lsdk/lib -llgx -lc -lm -lgloss -o $@ $(LIBGCC)
+
+$(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(CALC_ELF) $(HELLO_ELF) $(LUA_ELF) $(TCC_ELF) $(NANO_ELF) $(DEMO_GUI_ELF)
 	$(HOSTCC) -Iinclude sdk/tools/liw-builder.c -o sdk/tools/liw-builder
 	$(HOSTCC) sdk/tools/img-gen.c -o sdk/tools/img-gen
 	./sdk/tools/liw-builder src/boot/test.liw src/boot/test.elf src/boot/test_manifest.json
-	grub-file --is-x86-multiboot $(KERNEL_BIN)
+	grub-file --is-x86-multiboot2 $(KERNEL_BIN)
 	mkdir -p repo
 	./sdk/tools/img-gen
-	if [ -f assets/LiwusOSlogo.png ]; then cp assets/LiwusOSlogo.png repo/logo.png; fi
-	cp $(LIW_ELF) repo/liw
-	cp $(CALC_ELF) repo/calc
+	rm -f repo/tcc repo/nano
 	cp $(HELLO_ELF) repo/hello.liwpkg
-	cp $(DOOMPROBE_ELF) repo/doomprobe.liwpkg
+	cp $(CALC_ELF) repo/calc
 	cp $(LUA_ELF) repo/lua
+	cp $(TCC_ELF) repo/tcc
+	mkdir -p repo/usr/include
+	mkdir -p repo/usr/lib
+	mkdir -p repo/usr/lib/tcc/include
+	cp -r sdk/include/* repo/usr/include/
+	cp sdk/lib/libc.a repo/usr/lib/
+	cp sdk/lib/libm.a repo/usr/lib/
+	cp sdk/lib/libgloss.a repo/usr/lib/
+	cp sdk/lib/liblgx.a repo/usr/lib/
+	cp libgloss/crt0.o repo/usr/lib/
+	cp `$(CC) -print-libgcc-file-name` repo/usr/lib/tcc/libtcc1.a
+	cp apps/tcc/include/* repo/usr/lib/tcc/include/
 	if [ -f $(CRUN_ELF) ]; then cp $(CRUN_ELF) repo/crun; fi
-	if [ -f $(VIEW_ELF) ]; then cp $(VIEW_ELF) repo/view.liwpkg; fi
-	cp apps/lua/hello.lua repo/hello.lua
-	if [ -f $(DOOMGENERIC_ELF) ]; then cp $(DOOMGENERIC_ELF) repo/doomgeneric; fi
-	if [ -f $(EDITOR_NANO_ELF) ]; then cp $(EDITOR_NANO_ELF) repo/editor; fi
-	if [ -f freedoom1.wad ]; then cp freedoom1.wad repo/freedoom1.wad; fi
+	if [ -f $(EDITOR_NANO_ELF) ]; then cp $(EDITOR_NANO_ELF) repo/editor_gui; fi
+	if [ -f $(NANO_ELF) ]; then cp $(NANO_ELF) repo/nano; fi
+	if [ -f $(DEMO_GUI_ELF) ]; then cp $(DEMO_GUI_ELF) repo/demo_gui; fi
 	tar -cvf initrd.tar -C repo . --format=ustar
 	mkdir -p isodir/boot/grub
 	cp $(KERNEL_BIN) isodir/boot/kernel.bin
 	cp $(BOOT_DIR)/grub.cfg isodir/boot/grub/grub.cfg
 	cp initrd.tar isodir/boot/initrd.tar
+	# Create SDFS disk image for persistent storage (only if not exists)
+	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
 	grub-mkrescue -o $(ISO_IMAGE) isodir
 
 $(BOOT_DIR)/test.elf: $(BOOT_DIR)/test.s
-	$(CC) -nostdlib -static $< -o $@ $(LIBGCC) $(M32)
+	$(CC) -nostdlib -static $< -o $@ $(LIBGCC) $(M32) -Ttext 0x100000
 
 run: $(ISO_IMAGE)
-	qemu-system-i386 -cdrom $(ISO_IMAGE) -m 512
+	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
+	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512
 
 run-serial: $(ISO_IMAGE)
-	qemu-system-i386 -cdrom $(ISO_IMAGE) -m 512 -serial stdio -usb -device usb-kbd
+	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
+	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 -serial stdio -d guest_errors -no-reboot
 
 run-log: $(ISO_IMAGE)
-	qemu-system-i386 -cdrom $(ISO_IMAGE) -m 512 -serial file:qemu_serial.log -D qemu_debug.log -d int,cpu_reset
+	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
+	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 -serial file:qemu_serial.log -D qemu_debug.log -d int,cpu_reset
 
 clean:
 	rm -rf $(OBJ_DIR)
-	rm -f $(KERNEL_BIN) $(ISO_IMAGE) initrd.tar liwus_disk.img src/boot/test.elf src/boot/test.liw $(LIW_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(LUA_ELF) $(DOOMGENERIC_ELF) $(CRUN_ELF) $(EDITOR_NANO_ELF)
+	rm -f $(KERNEL_BIN) $(ISO_IMAGE) initrd.tar src/boot/test.elf src/boot/test.liw $(CALC_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(LUA_ELF) $(CRUN_ELF) $(EDITOR_NANO_ELF) $(LIBGLOSS_A) $(LIBGLOSS_OBJS) $(CRT0_OBJ)
+	@echo "  NOTA: liwus_disk.img preservado (remova manualmente se quiser disco limpo)"
 	rm -f sdk/tools/liw-builder sdk/tools/img-gen
 	rm -rf isodir repo

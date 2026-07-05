@@ -3,35 +3,75 @@
 #include "serial.h"
 #include "kheap.h"
 #include "string.h"
-#include "uhci.h"
-#include "io.h"
-#include "serial.h"
-#include "kheap.h"
-#include "string.h"
 #include "timer.h"
 #include "usb_spec.h"
 
 static uint32_t uhci_io_base = 0;
 
-static uhci_td_t *interrupt_td = NULL;
-static void *interrupt_buffer = NULL;
-static int interrupt_len = 0;
+/* ── Multi-slot interrupt support (keyboard + mouse) ── */
+static uhci_td_t *int_td[UHCI_MAX_INT_SLOTS]   = {NULL, NULL};
+static void      *int_buf[UHCI_MAX_INT_SLOTS]   = {NULL, NULL};
+static int        int_len[UHCI_MAX_INT_SLOTS]   = {0, 0};
+static uint8_t    int_type[UHCI_MAX_INT_SLOTS]   = {0, 0}; // 1=kbd, 2=mouse
+static int        int_count = 0;
 
-uhci_td_t *uhci_get_interrupt_td(void) {
-    return interrupt_td;
+/* ── Slot-based accessors ── */
+int uhci_get_int_slot_count(void) { return int_count; }
+
+uhci_td_t *uhci_get_int_td(int slot) {
+    if (slot < 0 || slot >= int_count) return NULL;
+    return int_td[slot];
 }
 
-void *uhci_get_interrupt_buffer(void) {
-    return interrupt_buffer;
+void *uhci_get_int_buffer(int slot) {
+    if (slot < 0 || slot >= int_count) return NULL;
+    return int_buf[slot];
 }
 
-int uhci_get_interrupt_len(void) {
-    return interrupt_len;
+int uhci_get_int_len(int slot) {
+    if (slot < 0 || slot >= int_count) return 0;
+    return int_len[slot];
 }
 
-void uhci_rearm_interrupt(void) {
-    if (interrupt_td) {
-        interrupt_td->status = (1 << 23) | (3 << 16);
+uint8_t uhci_get_int_dev_type(int slot) {
+    if (slot < 0 || slot >= int_count) return 0;
+    return int_type[slot];
+}
+
+void uhci_set_int_dev_type(int slot, uint8_t type) {
+    if (slot >= 0 && slot < UHCI_MAX_INT_SLOTS) int_type[slot] = type;
+}
+
+void uhci_rearm_int(int slot) {
+    if (slot >= 0 && slot < int_count && int_td[slot]) {
+        int_td[slot]->status = (1 << 23) | (3 << 16);
+    }
+}
+
+/* ── Legacy accessors (slot 0) ── */
+uhci_td_t *uhci_get_interrupt_td(void)  { return uhci_get_int_td(0); }
+void *uhci_get_interrupt_buffer(void)   { return uhci_get_int_buffer(0); }
+int uhci_get_interrupt_len(void)        { return uhci_get_int_len(0); }
+void uhci_rearm_interrupt(void)         { uhci_rearm_int(0); }
+
+/* ── Rebuild frame list: chain all active interrupt TDs ── */
+static void uhci_rebuild_frame_list(void) {
+    uint32_t *frame_list = (uint32_t *)inl(uhci_io_base + UHCI_FRBASEADD);
+    if (!frame_list) return;
+
+    /* Chain: TD[0] -> TD[1] -> ... -> Terminate */
+    for (int s = 0; s < int_count; s++) {
+        if (s < int_count - 1 && int_td[s + 1]) {
+            int_td[s]->link = (uint32_t)int_td[s + 1]; // next TD (bit 0=0 = TD)
+        } else {
+            int_td[s]->link = 1; // Terminate
+        }
+    }
+
+    /* All frames point to the head of the chain */
+    uint32_t head = (int_count > 0 && int_td[0]) ? (uint32_t)int_td[0] : 1;
+    for (int i = 0; i < 1024; i++) {
+        frame_list[i] = head;
     }
 }
 
@@ -93,28 +133,38 @@ int uhci_send_control(pci_device_t *dev, uint8_t addr, void *setup, void *data, 
     return -1;
 }
 
-// Registra polling de interrupção (HID)
+// Registra polling de interrupção (HID) - agora com suporte a múltiplos slots
 int uhci_register_interrupt(pci_device_t *dev, uint8_t addr, uint8_t endpoint, void *buffer, uint16_t len) {
     (void)dev;
-    uint32_t io_base = uhci_io_base;
+
+    if (int_count >= UHCI_MAX_INT_SLOTS) {
+        serial_print("UHCI: Max interrupt slots reached!\n");
+        return -1;
+    }
+
+    int slot = int_count;
 
     uhci_td_t *td = (uhci_td_t *)kmalloc_a(sizeof(uhci_td_t));
     memset(td, 0, sizeof(uhci_td_t));
     td->link = 1;
-    td->status = (1 << 23) | (3 << 16);
+    td->status = (1 << 23) | (3 << 16); // Active, Low Speed (3 errors)
     td->token = ((len - 1) << 21) | ((endpoint & 0x0F) << 15) | (addr << 8) | 0x69;
     td->buffer = (uint32_t)buffer;
 
-    interrupt_td = td;
-    interrupt_buffer = buffer;
-    interrupt_len = len;
+    int_td[slot] = td;
+    int_buf[slot] = buffer;
+    int_len[slot] = len;
+    int_type[slot] = 0; // Caller will set type via usb_enumerate
+    int_count++;
 
-    uint32_t *frame_list = (uint32_t *)inl(io_base + UHCI_FRBASEADD);
-    for (int i = 0; i < 1024; i++) {
-        frame_list[i] = (uint32_t)td;
-    }
+    serial_print("UHCI: Registered interrupt slot ");
+    char sstr[4]; itoa(slot, sstr, 10); serial_print(sstr);
+    serial_print(" addr="); serial_print_hex(addr);
+    serial_print(" ep="); serial_print_hex(endpoint);
+    serial_print("\n");
 
-    return 0;
+    uhci_rebuild_frame_list();
+    return slot;
 }
 
 void uhci_init(pci_device_t *dev) {

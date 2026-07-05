@@ -24,6 +24,59 @@ int ata_wait_drq(uint16_t bus) {
     return -1;
 }
 
+static void ata_io_delay(uint16_t bus) {
+    for (int i = 0; i < 4; i++) inb(bus + ATA_REG_STATUS);
+}
+
+int ata_probe(uint16_t bus, uint8_t drive) {
+    outb(bus + 6, drive);
+    ata_io_delay(bus);
+
+    outb(bus + 2, 0);
+    outb(bus + 3, 0);
+    outb(bus + 4, 0);
+    outb(bus + 5, 0);
+    outb(bus + 7, ATA_CMD_IDENTIFY);
+    ata_io_delay(bus);
+
+    uint8_t status = inb(bus + ATA_REG_STATUS);
+    if (status == 0 || status == 0xFF) return -1;
+
+    uint32_t timeout = 100000;
+    while (timeout--) {
+        status = inb(bus + ATA_REG_STATUS);
+        if (status & 0x01) return -1;
+        if (status & 0x08) {
+            uint16_t discard[256];
+            for (int i = 0; i < 256; i++) discard[i] = inw(bus);
+            return 0;
+        }
+    }
+    return -1;
+}
+
+int ata_find_first(uint16_t *bus_out, uint8_t *drive_out) {
+    static const uint16_t buses[] = { ATA_PRIMARY, ATA_SECONDARY };
+    static const uint8_t drives[] = { ATA_MASTER, ATA_SLAVE };
+
+    for (int b = 0; b < 2; b++) {
+        for (int d = 0; d < 2; d++) {
+            if (ata_probe(buses[b], drives[d]) == 0) {
+                if (bus_out) *bus_out = buses[b];
+                if (drive_out) *drive_out = drives[d];
+                serial_print("ata: found PIO disk bus=0x");
+                serial_print_hex(buses[b]);
+                serial_print(" drive=0x");
+                serial_print_hex(drives[d]);
+                serial_print("\n");
+                return 0;
+            }
+        }
+    }
+    serial_print("ata: no legacy PIO disk found\n");
+    return -1;
+}
+
 int ata_read_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffer) {
     /* Seleciona o drive */
     outb(bus + 6, 0x40 | drive | ((lba >> 24) & 0x0F));
@@ -46,7 +99,7 @@ int ata_read_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffer)
     return 0;
 }
 
-void ata_write_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffer) {
+int ata_write_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffer) {
     outb(bus + 6, 0x40 | drive | ((lba >> 24) & 0x0F));
     outb(bus + 2, 1);
     outb(bus + 3, (uint8_t)lba);
@@ -54,8 +107,8 @@ void ata_write_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffe
     outb(bus + 5, (uint8_t)(lba >> 16));
     outb(bus + 7, ATA_CMD_WRITE);
 
-    if (ata_wait_bsy(bus) < 0) return;
-    if (ata_wait_drq(bus) < 0) return;
+    if (ata_wait_bsy(bus) < 0) return -1;
+    if (ata_wait_drq(bus) < 0) return -1;
 
     for (int i = 0; i < 256; i++) {
         outw(bus, buffer[i]);
@@ -63,7 +116,8 @@ void ata_write_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffe
 
     /* Flush cache to persist writes before the next read/mount */
     outb(bus + 7, 0xE7);
-    ata_wait_bsy(bus);
+    if (ata_wait_bsy(bus) < 0) return -1;
+    return 0;
 }
 
 // ================================================================
@@ -183,6 +237,11 @@ static int ata_bmide_transfer(uint32_t lba, uint8_t count, uint16_t *buffer, int
 
     if (!write)
         memcpy(buffer, ata_dma_buf, size);
+
+    if (write) {
+        outb(ATA_PRIMARY + 7, 0xE7);  // ATA CACHE FLUSH
+        ata_wait_bsy(ATA_PRIMARY);
+    }
 
     return 0;
 }

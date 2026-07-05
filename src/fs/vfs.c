@@ -119,3 +119,73 @@ uint32_t write_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buff
     }
     return 0;
 }
+
+fs_node_t* vfs_create(const char* path, uint32_t flags) {
+    if (!path) return NULL;
+    if (path[0] == '\0') return NULL; // Can't create root
+
+    vfs_mount_t* best_match = NULL;
+    int max_len = -1;
+
+    vfs_mount_t* it = mounts;
+    while (it) {
+        int m_len = strlen(it->path);
+        if (strncmp(path, it->path, m_len) == 0) {
+            if (m_len > max_len) {
+                max_len = m_len;
+                best_match = it;
+            }
+        }
+        it = it->next;
+    }
+
+    if (!best_match) {
+        it = mounts;
+        while (it) {
+            if (strcmp(it->path, "/") == 0) {
+                best_match = it;
+                max_len = 1;
+                break;
+            }
+            it = it->next;
+        }
+    }
+
+    if (!best_match) return NULL;
+
+    fs_node_t* current = best_match->root;
+    const char* remaining;
+
+    if (strcmp(best_match->path, "/") == 0) {
+        remaining = (path[0] == '/') ? path + 1 : path;
+    } else {
+        remaining = path + max_len;
+        if (*remaining == '/') remaining++;
+    }
+
+    if (*remaining == '\0') return NULL; // Exists
+
+    char part[128];
+    while (*remaining) {
+        int i = 0;
+        while (*remaining && *remaining != '/') {
+            part[i++] = *remaining++;
+        }
+        part[i] = '\0';
+        
+        if (*remaining == '/') {
+            remaining++;
+            // Not the last part, must be a directory
+            fs_node_t* next_node = finddir_fs(current, part);
+            if (!next_node) return NULL;
+            current = next_node;
+        } else {
+            // Last part, this is the file to create
+            if (current && (current->flags & FS_DIRECTORY) && current->create) {
+                return current->create(current, part, flags);
+            }
+            return NULL;
+        }
+    }
+    return NULL;
+}
