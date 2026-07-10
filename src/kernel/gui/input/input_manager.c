@@ -113,6 +113,27 @@ void input_manager_poll(input_manager_t *im) {
             event_post_key(bus, (uint8_t)sc, false);
         }
     }
+
+    /* KEY_CHAR: drain the keyboard char queue and post one KEY_CHAR per char.
+     * The keyboard ISR translates scancodes to Unicode/ASCII using the ABNT2
+     * layout table, so we just need to forward whatever it queued. */
+    {
+        extern int keyboard_pop_char(char *out);
+        char ch = 0;
+        while (keyboard_pop_char(&ch)) {
+            if (ch < 32 && ch != '\n' && ch != '\b' && ch != '\t') continue;
+            gui_event_t ev;
+            ev.type       = GUI_EVENT_KEY_CHAR;
+            ev.priority   = GUI_PRIORITY_HIGH;
+            ev.target_id  = 0;
+            ev.propagating = true;
+            ev.key.scancode  = 0;
+            ev.key.keycode   = (uint32_t)(uint8_t)ch;
+            ev.key.unicode   = (uint32_t)(uint8_t)ch;
+            ev.key.modifiers = im->modifiers;
+            event_bus_post(bus, &ev);
+        }
+    }
 }
 
 /* --------------------------------------------------------------------------
