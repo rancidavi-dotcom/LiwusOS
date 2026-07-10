@@ -14,7 +14,22 @@
 #include "fb_renderer.h"
 #include "../core/theme_engine.h"
 #include "../core/animation_engine.h"
+#include "../assets/asset_manager.h"
+
 compositor_t *g_compositor = NULL;
+
+/* ---- Profiling Metrics (Cycles) ---- */
+static uint64_t perf_input_cycles  = 0;
+static uint64_t perf_event_cycles  = 0;
+static uint64_t perf_render_cycles = 0;
+static uint64_t perf_blit_cycles   = 0;
+static uint64_t perf_total_cycles  = 0;
+
+static inline uint64_t rdtsc(void) {
+    uint32_t lo, hi;
+    asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
 
 /* --------------------------------------------------------------------------
  * Lifecycle
@@ -235,17 +250,86 @@ static void draw_minimap(compositor_t *c) {
 }
 
 /* --------------------------------------------------------------------------
+ * Profiler Overlay
+ * -------------------------------------------------------------------------- */
+
+static void draw_text_simple(compositor_t *c, int x, int y, const char *str, uint32_t color) {
+    const glyph_t *font = asset_manager_get_font(NULL);
+    if (!font) return;
+    int cur_x = x;
+    while (*str) {
+        char ch = *str++;
+        if (ch >= 32 && ch <= 126) {
+            /* 10 bytes per glyph in this basic font assuming 8x10 or so.
+               Actually the renderer_draw_glyph handles it by passing the pointer.
+               We just need a temporary glyph_t with the correct bitmap. */
+            glyph_t g;
+            g.bitmap = font->bitmap + (ch * font->cell_h);
+            g.cell_w = font->cell_w;
+            g.cell_h = font->cell_h;
+            renderer_draw_glyph(c->renderer, cur_x, y, color, 0, &g);
+        }
+        cur_x += font->cell_w;
+    }
+}
+
+static void draw_profiler_overlay(compositor_t *c) {
+    int sx = 10, sy = 10;
+    int line_h = 16;
+    
+    gui_rect_t bg = rect_make(sx - 5, sy - 5, 250, 100);
+    renderer_fill_rect(c->renderer, bg, 0xCC000000);
+    renderer_draw_rect(c->renderer, bg, 0xFFFFFFFF, 1);
+
+    char buf[64];
+    
+    strcpy(buf, "PROFILER (CPU CYCLES)");
+    draw_text_simple(c, sx, sy, buf, 0xFF00FFFF);
+    sy += line_h;
+
+    strcpy(buf, "Input:  ");
+    int_to_str(perf_input_cycles, buf + 8);
+    draw_text_simple(c, sx, sy, buf, 0xFFFFFFFF);
+    sy += line_h;
+
+    strcpy(buf, "Events: ");
+    int_to_str(perf_event_cycles, buf + 8);
+    draw_text_simple(c, sx, sy, buf, 0xFFFFFFFF);
+    sy += line_h;
+
+    strcpy(buf, "Render: ");
+    int_to_str(perf_render_cycles, buf + 8);
+    draw_text_simple(c, sx, sy, buf, 0xFF00FF00); // Green for render
+    sy += line_h;
+
+    strcpy(buf, "Blit:   ");
+    int_to_str(perf_blit_cycles, buf + 8);
+    draw_text_simple(c, sx, sy, buf, 0xFFFF0000); // Red for blit (critical)
+    sy += line_h;
+
+    strcpy(buf, "Total:  ");
+    int_to_str(perf_total_cycles, buf + 8);
+    draw_text_simple(c, sx, sy, buf, 0xFFFFFF00);
+}
+
+/* --------------------------------------------------------------------------
  * Frame
  * -------------------------------------------------------------------------- */
 
 void compositor_frame(compositor_t *c) {
     if (!c) return;
 
+    uint64_t t_start = rdtsc();
+
     /* 1. Poll input → post events */
     input_manager_poll(c->input);
+    uint64_t t_in = rdtsc();
+    perf_input_cycles = t_in - t_start;
 
     /* 2. Dispatch events to all subscribers */
     event_bus_dispatch(c->bus);
+    uint64_t t_ev = rdtsc();
+    perf_event_cycles = t_ev - t_in;
 
     /* 3. Camera inertia */
     camera_update(c->camera);
@@ -256,29 +340,30 @@ void compositor_frame(compositor_t *c) {
     /* 4. Transform pass */
     node_update_transforms(c->scene_root, transform_identity());
 
-    /* 5. Full repaint every frame (dirty-rect opt comes in Phase 4).
-     *    This is what the old lgx.c did and is perfectly correct. */
-
-    /* Restore saved pixels under old cursor before repaint */
+    /* 5. Full repaint every frame */
     cursor_restore(c);
-
-    /* Repaint background */
     draw_background(c);
-
-    /* Draw all nodes */
     renderer_set_clip(c->renderer, rect_zero());
     node_draw_recursive(c->scene_root, c->renderer);
-
-    /* 5.5 Draw minimap overlay */
     draw_minimap(c);
 
-    /* 6. Cursor — always on top, after all node painting */
+    /* Draw profiler overlay (shows previous frame's metrics) */
+    draw_profiler_overlay(c);
+
+    /* 6. Cursor */
     int mx = input_mouse_x(c->input);
     int my = input_mouse_y(c->input);
     cursor_draw(c, mx, my);
 
+    uint64_t t_render = rdtsc();
+    perf_render_cycles = t_render - t_ev;
+
     /* 7. Flip back-buffer → VRAM */
     renderer_present(c->renderer);
+
+    uint64_t t_blit = rdtsc();
+    perf_blit_cycles = t_blit - t_render;
+    perf_total_cycles = t_blit - t_start;
 
     c->frame_number++;
 

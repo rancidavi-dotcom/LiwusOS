@@ -182,10 +182,10 @@ static void fb_set_opacity(gui_renderer_t *r, float opacity) {
 static void fb_present(gui_renderer_t *r) {
     fb_state_t *s = (fb_state_t *)r->backend;
     /* Fast copy: back-buffer → physical VRAM */
-    uint32_t words = (vga_fb_pitch / sizeof(uint32_t)) * s->height;
-    uint32_t *src = s->backbuf;
-    uint32_t *dst = s->vram;
-    for (uint32_t i = 0; i < words; i++) dst[i] = src[i];
+    uint32_t bytes = vga_fb_pitch * s->height;
+    
+    extern void fast_memcpy(void *dst, const void *src, uint64_t n);
+    fast_memcpy(s->vram, s->backbuf, bytes);
 }
 
 static void fb_destroy(gui_renderer_t *r) {

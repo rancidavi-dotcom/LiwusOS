@@ -7,6 +7,29 @@
 page_directory_t *kernel_directory = 0;
 page_directory_t *current_directory = 0;
 
+static inline void vmm_wrmsr(uint32_t msr, uint64_t val) {
+    uint32_t low = val & 0xFFFFFFFF;
+    uint32_t high = val >> 32;
+    asm volatile("wrmsr" : : "a"(low), "d"(high), "c"(msr));
+}
+
+static inline uint64_t vmm_rdmsr(uint32_t msr) {
+    uint32_t low, high;
+    asm volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
+    return ((uint64_t)high << 32) | low;
+}
+
+void vmm_init_pat() {
+    uint64_t pat = vmm_rdmsr(0x277); /* IA32_CR_PAT */
+    /* PAT0 is bits 0-7 (default 0x06 = WB)
+     * PAT1 is bits 8-15 (default 0x04 = WT)
+     * We change PAT1 to 0x01 (WC - Write Combining) */
+    pat &= ~(0xFFULL << 8);
+    pat |= (0x01ULL << 8);
+    vmm_wrmsr(0x277, pat);
+    serial_print("VMM: PAT initialized (PAT1 = WC)\n");
+}
+
 static int walk_pt_modified_pml4 = 0;
 
 static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
@@ -90,7 +113,8 @@ void vmm_map_page(void *phys, void *virt, uint64_t flags) {
 
 void vmm_map_framebuffer(uint64_t phys_addr, uint64_t size) {
   for (uint64_t i = 0; i < size; i += 4096) {
-    vmm_map_page((void*)(phys_addr + i), (void*)(phys_addr + i), PTE_P | PTE_W);
+    /* Map with PTE_PWT to select PAT1 (WC - Write Combining) */
+    vmm_map_page((void*)(phys_addr + i), (void*)(phys_addr + i), PTE_P | PTE_W | PTE_PWT);
   }
 }
 
@@ -100,8 +124,8 @@ void switch_page_directory(page_directory_t *dir) {
 }
 
 void init_vmm(uint64_t memory_size) {
-  (void)memory_size;
-  kernel_directory = (page_directory_t *)kmalloc(sizeof(page_directory_t));
+  vmm_init_pat();
+  kernel_directory = (page_directory_t *)kmalloc_a(sizeof(page_directory_t));
   memset(kernel_directory, 0, sizeof(page_directory_t));
   uint64_t cr3;
   asm volatile("mov %%cr3, %0" : "=r"(cr3));
