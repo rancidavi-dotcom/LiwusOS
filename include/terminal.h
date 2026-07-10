@@ -3,19 +3,33 @@
 
 #include <stdint.h>
 
-void init_terminal_app();
-void open_terminal();
-void terminal_enable_console_mode(void);
-void update_terminal_key(char k);
-void terminal_append_output(const char *text);
-void terminal_append_output_n(const char *text, int len);
-int terminal_has_dirty_output(void);
-void terminal_clear_dirty_output(void);
-int terminal_needs_update(uint32_t now_ticks);
-void terminal_flush_updates(uint32_t now_ticks);
-void terminal_submit_line(const char *line);
-const char *terminal_get_text_view(uint32_t now_ticks);
-int terminal_get_mode(void);
-void exec_command_term(const char *cmd_raw);
+#define TERMINAL_MAX_INPUT 256
+#define TERMINAL_MAX_ARGS 16
+
+// Terminal Loop
+void terminal_task(void);
+
+// Parser
+int terminal_parse_line(char *line, char **argv);
+
+// Dispatcher
+void terminal_execute(int argc, char **argv);
+
+// Commands
+void cmd_help(int argc, char **argv);
+void cmd_clear(int argc, char **argv);
+void cmd_echo(int argc, char **argv);
+void cmd_ls(int argc, char **argv);
+void cmd_pwd(int argc, char **argv);
+void cmd_reboot(int argc, char **argv);
+void cmd_version(int argc, char **argv);
+void cmd_meminfo(int argc, char **argv);
+
+// Command structure
+typedef struct {
+    const char *name;
+    void (*func)(int argc, char **argv);
+    const char *desc;
+} terminal_command_t;
 
 #endif

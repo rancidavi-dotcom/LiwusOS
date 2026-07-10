@@ -104,15 +104,9 @@ void keyboard_handler() {
       
       if (key) {
         last_key = key;
-        extern bool lgx_app_menu_open;
-        if (!lgx_app_menu_open) {
-            push_char(key);
-        }
+        push_char(key);
       }
-      extern bool lgx_app_menu_open;
-      if (!lgx_app_menu_open || scancode == 0x5B || scancode == 0x5C) {
-          push_event(scancode | 0x80, 1);
-      }
+      push_event(scancode | 0x80, 1);
       extended = false;
       return;
     }
@@ -168,16 +162,10 @@ void keyboard_handler() {
 
       if (key) {
         last_key = key;
-        extern bool lgx_app_menu_open;
-        if (!lgx_app_menu_open) {
-            push_char(key);
-        }
+        push_char(key);
       }
     }
-    extern bool lgx_app_menu_open;
-    if (!lgx_app_menu_open || scancode == 0x0F || scancode == 0x5B || scancode == 0x5C) {
-        push_event(scancode, 1);
-    }
+    push_event(scancode, 1);
     extended = false;
   }
 }

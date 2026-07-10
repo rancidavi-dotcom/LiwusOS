@@ -7,5 +7,6 @@ int init_serial();
 void write_serial(char a);
 void serial_print(const char *str);
 void serial_print_hex(uint64_t n);
+int serial_pop_char(char *c);
 
 #endif

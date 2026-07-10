@@ -60,6 +60,8 @@ static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
     pt_t *new_pt = (pt_t *)kmalloc_a(4096);
     memset(new_pt, 0, 4096);
     pd->entries[pd_i] = ((uint64_t)new_pt) | alloc_flags;
+  } else if ((flags & PTE_U) && !(pd->entries[pd_i] & PTE_U)) {
+    pd->entries[pd_i] |= PTE_U;
   }
 
   pt_t *pt = (pt_t *)(uint64_t)(pd->entries[pd_i] & ~0xFFFULL);

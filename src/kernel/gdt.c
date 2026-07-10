@@ -56,7 +56,7 @@ void init_gdt() {
   gdt_set_gate(1, 0, 0xFFFFFFFF, 0x9A, 0xAF);
 
   /* 0x10: Kernel data 64-bit */
-  gdt_set_gate(2, 0, 0xFFFFFFFF, 0x92, 0xAF);
+  gdt_set_gate(2, 0, 0xFFFFFFFF, 0x92, 0x8F);
 
   /* 0x18: User code 32-bit compat (D=1, L=0) */
   gdt_set_gate(3, 0, 0xFFFFFFFF, 0xFA, 0xCF);
@@ -68,7 +68,7 @@ void init_gdt() {
   gdt_set_gate(5, 0, 0xFFFFFFFF, 0xFA, 0xAF);
 
   /* 0x30: User data 64-bit */
-  gdt_set_gate(6, 0, 0xFFFFFFFF, 0xF2, 0xAF);
+  gdt_set_gate(6, 0, 0xFFFFFFFF, 0xF2, 0x8F);
 
   /* 0x38: TSS (entry 7), initially with RSP0 = 0. Updated per task switch */
   write_tss(7, 0x10, 0);

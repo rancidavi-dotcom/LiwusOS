@@ -34,22 +34,59 @@ int _execve(const char *name, char *const argv[], char *const envp[]) {
 }
 
 int _fork(void) {
-    errno = ENOSYS;
-    return -1;
+    return __liw_syscall(14, 0, 0, 0);
 }
 
+#undef st_atime
+#undef st_mtime
+#undef st_ctime
+
+struct kernel_stat {
+  uint64_t st_dev;
+  uint64_t st_ino;
+  uint32_t st_mode;
+  uint64_t st_nlink;
+  uint32_t st_uid;
+  uint32_t st_gid;
+  uint64_t st_rdev;
+  uint64_t st_size;
+  int64_t  st_atime;
+  int64_t  st_atimensec;
+  int64_t  st_mtime;
+  int64_t  st_mtimensec;
+  int64_t  st_ctime;
+  int64_t  st_ctimensec;
+  int64_t  st_blksize;
+  int64_t  st_blocks;
+  int64_t  st_spare4[2];
+};
+
 int _fstat(int fd, struct stat *st) {
-    if (fd < 3) {
-        st->st_mode = S_IFCHR;
-        st->st_blksize = 0;
-        return 0;
+    struct kernel_stat kst;
+    long ret = __liw_syscall(23, fd, (long)&kst, 0);
+    if (ret == 0) {
+        st->st_dev = kst.st_dev;
+        st->st_ino = kst.st_ino;
+        st->st_mode = kst.st_mode;
+        st->st_nlink = kst.st_nlink;
+        st->st_uid = kst.st_uid;
+        st->st_gid = kst.st_gid;
+        st->st_rdev = kst.st_rdev;
+        st->st_size = kst.st_size;
+        st->st_atim.tv_sec = kst.st_atime;
+        st->st_atim.tv_nsec = kst.st_atimensec;
+        st->st_mtim.tv_sec = kst.st_mtime;
+        st->st_mtim.tv_nsec = kst.st_mtimensec;
+        st->st_ctim.tv_sec = kst.st_ctime;
+        st->st_ctim.tv_nsec = kst.st_ctimensec;
+        st->st_blksize = kst.st_blksize;
+        st->st_blocks = kst.st_blocks;
     }
-    errno = EBADF;
-    return -1;
+    return ret;
 }
 
 int _getpid(void) {
-    return 1;
+    return __liw_syscall(20, 0, 0, 0);
 }
 
 int _isatty(int fd) {
@@ -57,9 +94,7 @@ int _isatty(int fd) {
 }
 
 int _kill(int pid, int sig) {
-    (void)pid; (void)sig;
-    errno = ENOSYS;
-    return -1;
+    return __liw_syscall(28, pid, sig, 0);
 }
 
 int _link(const char *old, const char *new) {
@@ -90,15 +125,31 @@ void *_sbrk(ptrdiff_t incr) {
 }
 
 int _stat(const char *file, struct stat *st) {
-    (void)file; (void)st;
-    errno = ENOSYS;
-    return -1;
+    struct kernel_stat kst;
+    long ret = __liw_syscall(22, (long)file, (long)&kst, 0);
+    if (ret == 0) {
+        st->st_dev = kst.st_dev;
+        st->st_ino = kst.st_ino;
+        st->st_mode = kst.st_mode;
+        st->st_nlink = kst.st_nlink;
+        st->st_uid = kst.st_uid;
+        st->st_gid = kst.st_gid;
+        st->st_rdev = kst.st_rdev;
+        st->st_size = kst.st_size;
+        st->st_atim.tv_sec = kst.st_atime;
+        st->st_atim.tv_nsec = kst.st_atimensec;
+        st->st_mtim.tv_sec = kst.st_mtime;
+        st->st_mtim.tv_nsec = kst.st_mtimensec;
+        st->st_ctim.tv_sec = kst.st_ctime;
+        st->st_ctim.tv_nsec = kst.st_ctimensec;
+        st->st_blksize = kst.st_blksize;
+        st->st_blocks = kst.st_blocks;
+    }
+    return ret;
 }
 
 int _unlink(const char *name) {
-    (void)name;
-    errno = ENOSYS;
-    return -1;
+    return __liw_syscall(24, (long)name, 0, 0);
 }
 
 int _wait(int *status) {
@@ -112,15 +163,19 @@ ssize_t _write(int fd, const void *buf, size_t nbytes) {
 }
 
 int _gettimeofday(struct timeval *tv, void *tz) {
-    (void)tv; (void)tz;
-    errno = ENOSYS;
-    return -1;
+    return __liw_syscall(21, (long)tv, (long)tz, 0);
 }
 
 clock_t _times(struct tms *buf) {
     (void)buf;
-    errno = ENOSYS;
-    return -1;
+    long ticks = __liw_syscall(8, 0, 0, 0);
+    if (buf) {
+        buf->tms_utime = ticks;
+        buf->tms_stime = 0;
+        buf->tms_cutime = 0;
+        buf->tms_cstime = 0;
+    }
+    return ticks;
 }
 
 int _readlink(const char *__restrict path, char *__restrict buf, size_t bufsize) {
@@ -144,15 +199,6 @@ long sysconf(int name) {
 int mprotect(void *addr, size_t len, int prot) {
     (void)addr; (void)len; (void)prot;
     return 0; /* Success, all memory is executable anyway */
-}
-
-char *getcwd(char *buf, size_t size) {
-    if (buf && size > 1) {
-        buf[0] = '/';
-        buf[1] = '\0';
-        return buf;
-    }
-    return NULL;
 }
 
 void *dlopen(const char *filename, int flag) {
@@ -189,7 +235,8 @@ char *realpath(const char *path, char *resolved_path) {
     return NULL;
 }
 
-/* Wrappers sem underscore para chamadas diretas dos aplicativos. */
+/* Wrappers sem underscore para chamadas diretas dos aplicativos.
+   Note: _READ_WRITE_RETURN_TYPE is defined as int by newlib on this target. */
 int close(int fd) { return _close(fd); }
 int fstat(int fd, struct stat *st) { return _fstat(fd, st); }
 int getpid(void) { return _getpid(); }
@@ -198,12 +245,12 @@ int kill(int pid, int sig) { return _kill(pid, sig); }
 int link(const char *old, const char *new) { return _link(old, new); }
 off_t lseek(int fd, off_t offset, int whence) { return _lseek(fd, offset, whence); }
 int open(const char *file, int flags, ...) { return _open(file, flags); }
-ssize_t read(int fd, void *buf, size_t nbytes) { return _read(fd, buf, nbytes); }
+_READ_WRITE_RETURN_TYPE read(int fd, void *buf, size_t nbytes) { return _read(fd, buf, nbytes); }
 void *sbrk(ptrdiff_t incr) { return _sbrk(incr); }
 int stat(const char *file, struct stat *st) { return _stat(file, st); }
 int unlink(const char *name) { return _unlink(name); }
 int wait(int *status) { return _wait(status); }
-ssize_t write(int fd, const void *buf, size_t nbytes) { return _write(fd, buf, nbytes); }
+_READ_WRITE_RETURN_TYPE write(int fd, const void *buf, size_t nbytes) { return _write(fd, buf, nbytes); }
 int gettimeofday(struct timeval *tv, void *tz) { return _gettimeofday(tv, tz); }
 clock_t times(struct tms *buf) { return _times(buf); }
 
@@ -241,3 +288,132 @@ unsigned int sleep(unsigned int seconds) {
     while (__liw_syscall(8, 0, 0, 0) - start < seconds * 100);
     return 0;
 }
+
+/* ============================================================
+ * Novas syscalls POSIX
+ * ============================================================ */
+
+int _mkdir(const char *path, mode_t mode) {
+    return __liw_syscall(25, (long)path, (long)mode, 0);
+}
+
+int _chdir(const char *path) {
+    return __liw_syscall(26, (long)path, 0, 0);
+}
+
+char *_getcwd(char *buf, size_t size) {
+    long ret = __liw_syscall(27, (long)buf, (long)size, 0);
+    if (ret < 0) return NULL;
+    return buf;
+}
+
+int _rmdir(const char *path) {
+    return __liw_syscall(29, (long)path, 0, 0);
+}
+
+int getdents(int fd, void *buf, unsigned int count) {
+    return __liw_syscall(30, fd, (long)buf, count);
+}
+
+/* Non-underscore wrappers */
+int mkdir(const char *path, mode_t mode) { return _mkdir(path, mode); }
+int chdir(const char *path) { return _chdir(path); }
+char *getcwd(char *buf, size_t size) { return _getcwd(buf, size); }
+int rmdir(const char *path) { return _rmdir(path); }
+
+/* Dirent operations.
+   Avoid including unistd.h here to prevent clashes with SSP redefinitions.
+   open/close/lseek are already declared in this file. */
+#include <dirent.h>
+#include <sys/types.h>
+
+extern void *malloc(size_t);
+extern void free(void *);
+
+DIR *opendir(const char *path) {
+    int fd = open(path, 0);
+    if (fd < 0) return NULL;
+    DIR *dir = (DIR *)malloc(sizeof(DIR));
+    if (!dir) { close(fd); return NULL; }
+    dir->dd_fd = fd;
+    dir->dd_index = 0;
+    return dir;
+}
+
+struct dirent *readdir(DIR *dirp) {
+    if (!dirp) return NULL;
+    struct dirent tmp;
+    int ret = getdents(dirp->dd_fd, &tmp, sizeof(struct dirent));
+    if (ret <= 0) return NULL;
+    dirp->dd_entry = tmp;
+    return &dirp->dd_entry;
+}
+
+int closedir(DIR *dirp) {
+    if (!dirp) return -1;
+    close(dirp->dd_fd);
+    free(dirp);
+    return 0;
+}
+
+void rewinddir(DIR *dirp) {
+    if (!dirp) return;
+    dirp->dd_index = 0;
+    lseek(dirp->dd_fd, 0, 0); /* SEEK_SET = 0 */
+}
+
+int pipe(int pipefd[2]) {
+    return __liw_syscall(31, (long)pipefd, 0, 0);
+}
+
+int dup(int oldfd) {
+    return __liw_syscall(32, oldfd, 0, 0);
+}
+
+int dup2(int oldfd, int newfd) {
+    return __liw_syscall(33, oldfd, newfd, 0);
+}
+
+
+#include <sys/mman.h>
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
+    errno = ENOMEM;
+    return (void *)-1;
+}
+
+int fcntl(int fd, int cmd, ...) {
+    return 0; // Fake success for F_SETFD/F_GETFL
+}
+
+struct sigaction;
+int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact) {
+    return 0; // Fake success
+}
+
+struct rlimit;
+int getrlimit(int resource, struct rlimit *rlim) { return 0; }
+int setrlimit(int resource, const struct rlimit *rlim) { return 0; }
+mode_t umask(mode_t mask) { return 022; }
+
+struct pollfd;
+int poll(struct pollfd *fds, unsigned long nfds, int timeout) {
+    errno = ENOSYS;
+    return -1;
+}
+
+typedef unsigned long sigset_t;
+int sigprocmask(int how, const sigset_t *set, sigset_t *oldset) {
+    return 0;
+}
+
+unsigned int geteuid(void) { return 0; }
+unsigned int getppid(void) { return 0; }
+int sigsuspend(const sigset_t *mask) { return -1; }
+
+#include <glob.h>
+int glob(const char *pattern, int flags, int (*errfunc)(const char *, int), glob_t *pglob) { return GLOB_NOMATCH; }
+void globfree(glob_t *pglob) {}
+
+struct passwd;
+struct passwd *getpwnam(const char *name) { return (void*)0; }
+int fnmatch(const char *pattern, const char *string, int flags) { return 1; /* FNM_NOMATCH */ }

@@ -3,7 +3,6 @@
 #include "serial.h"
 #include "string.h"
 #include "vmm.h"
-#include "lgx.h"
 #include <stdbool.h>
 
 uint64_t vga_fb_addr = 0;
@@ -12,7 +11,6 @@ uint32_t vga_fb_height = 0;
 uint32_t vga_fb_pitch = 0;
 uint8_t vga_fb_bpp = 0;
 
-static window_t* term_win = NULL;
 static bool is_framebuffer = false;
 
 // Fallback text mode buffer
@@ -47,22 +45,22 @@ static int vga_ansi_bg = 0;
 static bool vga_reverse = false;
 
 static const uint32_t vga_palette[16] = {
-    0xFF000000, // 0: Black
-    0xFF0000AA, // 1: Blue
-    0xFF00AA00, // 2: Green
-    0xFF00AAAA, // 3: Cyan
-    0xFFAA0000, // 4: Red
-    0xFFAA00AA, // 5: Magenta
-    0xFFAA5500, // 6: Brown
-    0xFFAAAAAA, // 7: Light Grey
-    0xFF555555, // 8: Dark Grey
-    0xFF5555FF, // 9: Light Blue
-    0xFF55FF55, // 10: Light Green
-    0xFF55FFFF, // 11: Light Cyan
-    0xFFFF5555, // 12: Light Red
-    0xFFFF55FF, // 13: Light Magenta
-    0xFFFFFF55, // 14: Light Brown
-    0xFFFFFFFF, // 15: White
+    0xCC0B0F19, // 0: Black (Glassmorphic Midnight Slate: 80% opacity)
+    0xFF3B82F6, // 1: Blue (Vibrant Indigo/Blue 500)
+    0xFF10B981, // 2: Emerald Green 500
+    0xFF06B6D4, // 3: Cyan 500
+    0xFFEF4444, // 4: Rose/Red 500
+    0xFFD946EF, // 5: Fuchsia 500
+    0xFFF59E0B, // 6: Amber 500
+    0xFFCBD5E1, // 7: Light Grey (Slate 300)
+    0xFF64748B, // 8: Dark Grey (Slate 500)
+    0xFF60A5FA, // 9: Light Blue 400
+    0xFF34D399, // 10: Light Emerald 400
+    0xFF22D3EE, // 11: Light Cyan 400
+    0xFFF87171, // 12: Light Red 400
+    0xFFE879F9, // 13: Light Fuchsia 400
+    0xFFFBBF24, // 14: Light Amber 400
+    0xFFF8FAFC, // 15: White (Slate 50)
 };
 
 static inline uint8_t vga_entry_color(enum vga_color fg, enum vga_color bg) {
@@ -74,9 +72,10 @@ static inline uint16_t vga_entry(unsigned char uc, uint8_t color) {
 }
 
 void vga_put_pixel(uint32_t x, uint32_t y, uint32_t color) {
-    if (!is_framebuffer || !term_win) return;
-    if (x >= (uint32_t)term_win->width || y >= (uint32_t)term_win->height) return;
-    term_win->buffer[y * term_win->width + x] = color;
+    if (!is_framebuffer) return;
+    if (x >= vga_fb_width || y >= vga_fb_height) return;
+    uint32_t* fb = (uint32_t*)((uint64_t)vga_fb_addr);
+    fb[y * (vga_fb_pitch / 4) + x] = color;
 }
 
 void vga_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
@@ -147,6 +146,18 @@ static void vga_exec_esc(void) {
         if (mode == 2) {
             vga_clear(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         }
+    } else if (cmd == 'C') {
+        int n = vga_esc_params[0];
+        if (n == 0) n = 1;
+        vga_column += n;
+        if (vga_column >= max_cols) vga_column = max_cols - 1;
+        vga_set_cursor((int)vga_column, (int)vga_row);
+    } else if (cmd == 'D') {
+        int n = vga_esc_params[0];
+        if (n == 0) n = 1;
+        if (vga_column >= (size_t)n) vga_column -= n;
+        else vga_column = 0;
+        vga_set_cursor((int)vga_column, (int)vga_row);
     } else if (cmd == 'K') {
         int mode = vga_esc_params[0];
         if (mode == 0 || mode == 2) {
@@ -312,10 +323,6 @@ void vga_init(void) {
         
         int win_w = 800;
         int win_h = 560;
-        int win_x = (vga_fb_width - win_w) / 2;
-        int win_y = (vga_fb_height - win_h) / 2;
-        
-        term_win = window_create(win_x, win_y, win_w, win_h, 0); // 0 = standard window with title bar
         
         // Setup font
         uint8_t* font_hdr = (uint8_t*)&_binary_src_drivers_font_psf_start;
@@ -357,15 +364,14 @@ void vga_putentryat(char c, uint8_t color, size_t x, size_t y) {
 }
 
 void vga_scroll() {
-    if (is_framebuffer && term_win) {
-        uint32_t row_words = term_win->width * font_height;
-        uint32_t total_scroll_words = row_words * (max_rows - 1);
+    if (is_framebuffer) {
+        uint32_t row_words = vga_fb_width * font_height;
+        uint32_t total_scroll_words = vga_fb_width * ((max_rows - 1) * font_height);
         
-        // memmove term_win->buffer
-        memmove(term_win->buffer, term_win->buffer + row_words, total_scroll_words * 4);
+        uint32_t* fb = (uint32_t*)((uint64_t)vga_fb_addr);
+        memmove(fb, fb + row_words, total_scroll_words * 4);
         
-        // Clear last line
-        vga_draw_rect(0, (max_rows - 1) * font_height, term_win->width, font_height, vga_bg_color);
+        vga_draw_rect(0, (max_rows - 1) * font_height, vga_fb_width, font_height, vga_bg_color);
     } else {
         for (size_t y = 0; y < max_rows - 1; y++) {
             for (size_t x = 0; x < max_cols; x++) {
@@ -439,8 +445,8 @@ void vga_clear(enum vga_color fg, enum vga_color bg) {
     vga_fg_color = vga_palette[fg];
     vga_bg_color = vga_palette[bg];
     
-    if (is_framebuffer && term_win) {
-        vga_draw_rect(0, 0, term_win->width, term_win->height, vga_bg_color);
+    if (is_framebuffer) {
+        vga_draw_rect(0, 0, vga_fb_width, vga_fb_height, vga_bg_color);
     } else {
         for (size_t y = 0; y < max_rows; y++) {
             for (size_t x = 0; x < max_cols; x++) {
@@ -452,3 +458,6 @@ void vga_clear(enum vga_color fg, enum vga_color bg) {
     vga_column = 0;
     vga_set_cursor(0, 0);
 }
+
+/* Accessor used by gui/widgets/terminal_node.c */
+

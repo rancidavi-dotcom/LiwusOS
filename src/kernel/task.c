@@ -42,6 +42,7 @@ void init_tasking() {
   current_task->state = TASK_RUNNING;
   current_task->page_directory = current_directory;
   current_task->user_mode = false;
+  strcpy(current_task->cwd, "/");
   task_assign_name(current_task, "kernel", false);
 
   current_task->next = current_task;
@@ -61,6 +62,7 @@ int create_task_named(void (*entry_point)(), const char *name) {
   new_task->parent = current_task;
   new_task->page_directory = current_directory;
   new_task->user_mode = false;
+  strcpy(new_task->cwd, current_task ? current_task->cwd : "/");
   task_assign_name(new_task, name, false);
 
   uint64_t stack_size = 8192;
@@ -102,6 +104,7 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
   new_task->parent = current_task;
   new_task->page_directory = current_directory;
   new_task->user_mode = true;
+  strcpy(new_task->cwd, current_task ? current_task->cwd : "/");
   task_assign_name(new_task, name, true);
 
   uint64_t stack_size = 8192;
@@ -150,6 +153,7 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
   new_task->parent = current_task;
   new_task->page_directory = current_directory;
   new_task->user_mode = true;
+  strcpy(new_task->cwd, current_task ? current_task->cwd : "/");
   task_assign_name(new_task, name, true);
 
   uint64_t stack_size = 8192;
@@ -330,10 +334,11 @@ int fork_process(registers_t *regs) {
   new_regs->rax = 0;
   new_task->stack_top = new_stack_ptr;
 
-  // Copy heap limits
+  // Copy heap limits and cwd
   new_task->heap_start = parent->heap_start;
   new_task->heap_end = parent->heap_end;
   new_task->user_mode = parent->user_mode;
+  strcpy(new_task->cwd, parent->cwd);
 
   new_task->next = task_list->next;
   task_list->next = new_task;

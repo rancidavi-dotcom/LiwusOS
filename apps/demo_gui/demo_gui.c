@@ -1,45 +1,37 @@
 #include <stdint.h>
 #include <stdlib.h>
-#include <lgx.h>
+#include <liwus_gui.h>
 #include <libliw.h>
 
 int errno = 0;
 int* __errno(void) { return &errno; }
 
 int main() {
-    int w = 200;
-    int h = 150;
-    
-    // Create a window via liblgx
-    lgx_window_t *win = lgx_init(w, h, 0);
-    if (!win) {
+    // 1. Cria a janela base (Canvas)
+    Canvas canvas = canvas_create(400, 300, "App Demo GUI");
+    if (!canvas) {
         exit(1);
     }
     
-    // Draw an animated colorful pattern using our new API
-    int offset = 0;
+    // 2. Cria alguns nodes usando a nova API
+    Node title = text_create("Aplicativo User Space!");
+    node_move(title, 20, 20);
+    
+    Node btn = button_create("Botão Nativo");
+    node_move(btn, 20, 60);
+    
+    Node panel = panel_create();
+    node_move(panel, 20, 110);
+    
+    // 3. Adiciona na janela
+    canvas_add(canvas, title);
+    canvas_add(canvas, btn);
+    canvas_add(canvas, panel);
+    
+    // Loop infinito apenas para manter o processo vivo.
+    // Como a renderização é no Kernel (Compositor), não precisamos 
+    // de lgx_refresh ou loop de desenho!
     while (1) {
-        for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                uint8_t r = (x + offset) % 255;
-                uint8_t g = (y + offset) % 255;
-                uint8_t b = (x * y + offset) % 255;
-                
-                uint32_t color = (0xFF << 24) | (r << 16) | (g << 8) | b;
-                // Directly drawing to buffer is still possible for speed, 
-                // but let's just do it directly for this demo's speed.
-                win->buffer[y * w + x] = color;
-            }
-        }
-        
-        // Draw a rectangle in the middle using the new LGX API function!
-        lgx_draw_rect(win, 50, 50, 100, 50, 0xFFFFFFFF); // White box
-        
-        lgx_refresh(win);
-        
-        offset += 5;
-        
-        // Small delay loop
         for (volatile int i = 0; i < 1000000; i++) {}
     }
     

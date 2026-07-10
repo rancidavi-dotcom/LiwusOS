@@ -44,6 +44,18 @@ static inline void sys_reboot() {
     asm volatile("lidt %0; int $3" : : "m"(idt_ptr));
 }
 
+static inline void sys_shutdown() {
+    /* Tenta desligamento via portas QEMU / Bochs */
+    outw(0x604, 0x2000);
+    outw(0xB004, 0x2000);
+    
+    /* Tenta desligamento via VirtualBox */
+    outw(0x4004, 0x3400);
+    
+    /* Se tudo falhar, reinicia a máquina */
+    sys_reboot();
+}
+
 /* Pequeno atraso para portas de hardware lentas (como o teclado antigo) */
 static inline void io_wait(void) {
     outb(0x80, 0);

@@ -1,0 +1,543 @@
+Missão
+
+Quero transformar a infraestrutura gráfica do LiwusOS em uma arquitetura de nível profissional.
+
+Não quero apenas adicionar funcionalidades.
+
+Quero criar uma fundação que permita o sistema evoluir pelos próximos anos sem precisar ser reescrito.
+
+Imagine que você está projetando a infraestrutura gráfica do LiwusOS para durar uma década.
+
+Não pense como alguém criando um hobby OS.
+
+Pense como um arquiteto que está projetando o equivalente ao compositor, sistema gráfico, toolkit e runtime de um sistema operacional moderno.
+
+Contexto
+
+O LiwusOS não utilizará X11, Wayland, Quartz, Win32, Cocoa, GTK ou Qt.
+
+Tudo será nativo.
+
+O objetivo não é copiar Linux ou Windows.
+
+O objetivo é criar uma arquitetura própria.
+
+A interface será baseada em um Canvas Infinito, onde todos os elementos do sistema vivem em um mesmo espaço navegável.
+
+Sua função
+
+Antes de modificar qualquer código:
+
+Faça uma engenharia reversa completa da infraestrutura atual.
+
+Quero que você entenda profundamente:
+
+compositor
+renderer
+pipeline gráfica
+eventos
+gerenciamento de input
+janelas
+canvas
+gerenciamento de objetos
+memória gráfica
+sincronização
+scheduler gráfico
+
+Não proponha alterações antes de entender toda a arquitetura existente.
+
+Objetivo
+
+Não quero um sistema que apenas funcione.
+
+Quero uma arquitetura que faça um desenvolvedor experiente pensar:
+
+"Isso foi extremamente bem projetado."
+
+Prioridade máxima
+
+A infraestrutura.
+
+Não a aparência.
+
+Não ícones.
+
+Não temas.
+
+Não animações.
+
+Primeiro a engenharia.
+
+Quero que você projete módulos independentes
+
+Cada sistema deve ser desacoplado.
+
+Exemplo:
+
+Input
+
+↓
+
+Event System
+
+↓
+
+Scene Graph
+
+↓
+
+Renderer
+
+↓
+
+GPU Backend
+
+↓
+
+Display
+
+Nada deve conversar diretamente quando puder usar interfaces bem definidas.
+
+Quero uma arquitetura modular
+
+Cada componente deve possuir responsabilidade única.
+
+Exemplo:
+
+Canvas Engine
+
+Renderer
+
+Compositor
+
+Input Manager
+
+Scene Graph
+
+Window Manager
+
+Widget Toolkit
+
+Animation Engine
+
+Layout Engine
+
+Theme Engine
+
+Asset Manager
+
+Clipboard
+
+Selection System
+
+Focus Manager
+
+History Manager
+
+Undo/Redo Engine
+
+Plugin Manager
+
+Developer Tools
+
+Accessibility
+
+Profiler
+
+Debug Overlay
+
+IPC Interface
+
+Application Runtime
+
+Cada módulo separado.
+
+Sem acoplamento desnecessário.
+
+Scene Graph
+
+Não quero um monte de draw_rect() espalhados.
+
+Quero um Scene Graph moderno.
+
+Cada elemento do sistema deve ser um Node.
+
+Exemplo:
+
+Canvas
+
+ ├── Group
+
+ │      ├── Text
+
+ │      ├── Image
+
+ │      ├── Rectangle
+
+ │      ├── Button
+
+ │      └── Terminal
+
+ ├── Workspace
+
+ ├── Overlay
+
+ └── Debug Layer
+
+Tudo deve existir como objetos da árvore.
+
+Renderer
+
+O renderer deve ser completamente desacoplado da interface.
+
+No futuro devo conseguir trocar:
+
+Framebuffer
+
+↓
+
+OpenGL
+
+↓
+
+Vulkan
+
+↓
+
+Metal
+
+↓
+
+Software Renderer
+
+Sem alterar o restante do sistema.
+
+Sistema de Eventos
+
+Não quero callbacks espalhados.
+
+Quero um Event Bus profissional.
+
+Eventos tipados.
+
+Filas.
+
+Propagação.
+
+Captura.
+
+Bubble.
+
+Prioridades.
+
+Filtros.
+
+Cancelamento.
+
+Eventos assíncronos quando necessário.
+
+Input
+
+O Input Manager não deve conhecer widgets.
+
+Ele apenas gera eventos.
+
+Mouse
+
+Teclado
+
+Touch
+
+Gamepad
+
+Caneta
+
+Todos independentes.
+
+Ferramentas
+
+A interação com o Canvas deve ocorrer através de ferramentas.
+
+Exemplo:
+
+Select Tool
+
+Move Tool
+
+Resize Tool
+
+Connection Tool
+
+Text Tool
+
+Draw Tool
+
+Inspect Tool
+
+Navigation Tool
+
+Cada ferramenta deve ser um módulo independente.
+
+Coordenadas
+
+Quero múltiplos sistemas de coordenadas.
+
+World
+
+Canvas
+
+Viewport
+
+Screen
+
+Local
+
+Cada transformação deve ser bem definida.
+
+Nada de cálculos espalhados.
+
+Camera
+
+Toda navegação deve depender apenas da Camera.
+
+Pan
+
+Zoom
+
+Rotation
+
+Smooth Movement
+
+Inertia
+
+Tudo centralizado.
+
+Widgets
+
+Todo componente visual deve herdar de uma base comum.
+
+Nada duplicado.
+
+Exemplo:
+
+Node
+
+↓
+
+Widget
+
+↓
+
+Button
+
+↓
+
+TextBox
+
+↓
+
+Terminal
+
+↓
+
+Explorer
+
+↓
+
+Menu
+
+↓
+
+Panel
+
+↓
+
+Inspector
+
+↓
+
+Viewport
+
+Assets
+
+Criar um Asset Manager completo.
+
+Imagens
+
+Fontes
+
+Cursores
+
+Ícones
+
+Shaders
+
+Temas
+
+Tudo carregado através dele.
+
+Layout
+
+Mesmo usando Canvas Infinito, quero um Layout Engine.
+
+Flex
+
+Grid
+
+Livre
+
+Dock
+
+Anchor
+
+Stack
+
+Cada widget escolhe seu layout.
+
+Compositor
+
+Quero um compositor preparado para:
+
+Camadas
+
+Overlays
+
+Popups
+
+Transparência
+
+Regiões inválidas
+
+Dirty Rectangles
+
+Culling
+
+Double Buffer
+
+Triple Buffer (estrutura preparada)
+
+Renderização parcial
+
+Performance
+
+Pensar desde já em:
+
+Occlusion Culling
+
+Spatial Partition
+
+QuadTree
+
+Dirty Regions
+
+Cache de Texto
+
+Cache de Fontes
+
+Cache de Ícones
+
+Object Pool
+
+Arena Allocator
+
+Frame Profiler
+
+Sistema de Comandos
+
+Toda ação do usuário deve ser um Command.
+
+Isso permitirá:
+
+Undo
+
+Redo
+
+Replay
+
+Macros
+
+Automação
+
+Histórico
+
+Extensibilidade
+
+Adicionar um novo widget deve exigir poucas linhas.
+
+Adicionar uma nova ferramenta também.
+
+Adicionar um novo renderer idem.
+
+Nada deve exigir alterações em dezenas de arquivos.
+
+API
+
+Toda a infraestrutura deve parecer uma SDK.
+
+Se amanhã eu criar um aplicativo, quero escrever algo como:
+
+Canvas* canvas = canvas_create();
+
+Node* node = text_create("Olá");
+
+canvas_add(canvas, node);
+
+camera_zoom(canvas, 2.0f);
+
+node_move(node, 500, 300);
+
+A API deve ser limpa, consistente e intuitiva.
+
+Ferramentas de desenvolvimento
+
+Criar infraestrutura para:
+
+Debug Overlay
+
+Inspector
+
+Scene Viewer
+
+Hierarchy Viewer
+
+Event Monitor
+
+FPS
+
+Memory Profiler
+
+Render Profiler
+
+Widget Inspector
+
+Sem necessariamente implementar tudo agora.
+
+Mas deixar preparado.
+
+O que NÃO quero
+
+Não quero código improvisado.
+
+Não quero funções gigantes.
+
+Não quero switch com centenas de linhas.
+
+Não quero dependências circulares.
+
+Não quero módulos acoplados.
+
+Não quero arquitetura difícil de manter.
+
+O que espero
+
+Quando terminar a análise, monte:
+
+um diagrama completo da arquitetura;
+a árvore de diretórios ideal;
+as responsabilidades de cada módulo;
+as interfaces públicas;
+as dependências permitidas entre módulos;
+um plano de migração da arquitetura atual para a nova;
+uma ordem de implementação priorizada, minimizando retrabalho.
+
+Antes de escrever qualquer código, valide se a arquitetura é escalável, modular, extensível e adequada ao conceito único do Canvas Infinito do LiwusOS.

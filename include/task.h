@@ -30,6 +30,7 @@ typedef struct task {
   uint64_t switch_count;
   bool user_mode;
   char name[32];
+  char cwd[256];
   fs_node_t *file_descriptors[16];
 } task_t;
 

@@ -5,6 +5,9 @@
 extern "C" {
 #endif
 
+#define UTIME_NOW   ((1l << 30) - 1l)
+#define UTIME_OMIT  ((1l << 30) - 2l)
+
 #include <_ansi.h>
 #include <time.h>
 #include <sys/cdefs.h>
@@ -146,6 +149,9 @@ mode_t	umask (mode_t __mask );
 int	lstat (const char *__restrict __path, struct stat *__restrict __buf );
 int	mknod (const char *__path, mode_t __mode, dev_t __dev );
 #endif
+
+int	lstat (const char *__restrict __path, struct stat *__restrict __buf );
+int	fstatat (int, const char *__restrict , struct stat *__restrict, int);
 
 #if __ATFILE_VISIBLE && !defined(__INSIDE_CYGWIN__)
 int	fchmodat (int, const char *, mode_t, int);

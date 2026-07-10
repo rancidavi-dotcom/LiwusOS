@@ -25,6 +25,7 @@ extern "C" {
 #define WEXITSTATUS(w)	(((w) >> 8) & 0xff)
 #define WTERMSIG(w)	((w) & 0x7f)
 #define WSTOPSIG	WEXITSTATUS
+#define WCOREDUMP(w) ((w) & 0x80)
 
 pid_t wait (int *);
 pid_t waitpid (pid_t, int *, int);

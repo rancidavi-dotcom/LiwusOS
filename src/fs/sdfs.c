@@ -1052,23 +1052,25 @@ static uint32_t sdfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uint
   uint32_t start_block = node->inode;
   uint32_t file_size = node->length;
 
-  if (offset >= file_size) return 0; // no sparse files
-  if (offset + size > file_size) size = file_size - offset;
+  if (offset > file_size) return 0; // no sparse files
 
-  // Navigate to the block containing the offset
   uint32_t block_index = offset / 4092;
   uint32_t offset_in_block = offset % 4092;
 
   uint32_t cur_block = start_block;
   for (uint32_t i = 0; i < block_index; i++) {
-    cur_block = sdfs_get_next_block(cur_block);
-    if (cur_block == 0) return 0;
+    uint32_t next = sdfs_get_next_block(cur_block);
+    if (next == 0) {
+      next = sdfs_append_block(start_block); // actually we should append to cur_block but start_block chain works
+      if (next == 0) return 0;
+    }
+    cur_block = next;
   }
 
   uint32_t bytes_written = 0;
   uint32_t remaining = size;
 
-  while (remaining > 0 && cur_block != 0) {
+  while (remaining > 0) {
     uint8_t block_buf[SDFS_BLOCK_SIZE];
     sdfs_read_block(cur_block, block_buf);
 
@@ -1082,7 +1084,36 @@ static uint32_t sdfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uint
     remaining -= to_write;
     offset_in_block = 0;
 
-    cur_block = sdfs_get_next_block(cur_block);
+    if (remaining > 0) {
+      uint32_t next = sdfs_get_next_block(cur_block);
+      if (next == 0) {
+        next = sdfs_append_block(start_block); // append finds the end of the chain from start_block
+        if (next == 0) break; // Out of space
+        // Wait, sdfs_append_block finds the end of the chain from start_block, which is fine!
+        // But the end is cur_block.
+      }
+      cur_block = next;
+    }
+  }
+
+  if (offset + bytes_written > file_size) {
+    node->length = offset + bytes_written;
+    uint32_t dir_block = node->impl;
+    uint16_t dir_offset = (uint16_t)node->impl_offset;
+    if (dir_block != 0) {
+      uint8_t *buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+      if (buf) {
+        sdfs_read_block(dir_block, buf);
+        uint32_t rem = SDFS_BLOCK_SIZE - dir_offset;
+        sdfs_entry_t e;
+        if (sdfs_entry_deserialize(buf + dir_offset, rem, &e) > 1) {
+          e.file_size = node->length;
+          sdfs_entry_serialize(buf + dir_offset, rem, &e);
+          sdfs_write_block(dir_block, buf);
+        }
+        kfree(buf);
+      }
+    }
   }
 
   return bytes_written;
@@ -1102,6 +1133,31 @@ static struct dirent *sdfs_readdir(fs_node_t *node, uint32_t index) {
   return &sdfs_dirent;
 }
 
+static void sdfs_truncate(fs_node_t *node) {
+  if (!node || !(node->flags & FS_FILE)) return;
+  uint32_t start_block = node->inode;
+  uint32_t next = sdfs_get_next_block(start_block);
+  if (next != 0) {
+    sdfs_set_next_block(start_block, 0);
+    sdfs_free_chain(next);
+  }
+  node->length = 0;
+  uint32_t dir_block = node->impl;
+  uint16_t dir_offset = (uint16_t)node->impl_offset;
+  if (dir_block == 0) return;
+  uint8_t *buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+  if (!buf) return;
+  sdfs_read_block(dir_block, buf);
+  uint32_t remaining = SDFS_BLOCK_SIZE - dir_offset;
+  sdfs_entry_t e;
+  if (sdfs_entry_deserialize(buf + dir_offset, remaining, &e) > 1) {
+    e.file_size = 0;
+    sdfs_entry_serialize(buf + dir_offset, remaining, &e);
+    sdfs_write_block(dir_block, buf);
+  }
+  kfree(buf);
+}
+
 static fs_node_t *sdfs_finddir(fs_node_t *node, const char *name) {
   if (!node || !(node->flags & FS_DIRECTORY) || !name) return NULL;
   uint32_t dir_block = node->inode;
@@ -1115,6 +1171,8 @@ static fs_node_t *sdfs_finddir(fs_node_t *node, const char *name) {
   res->name[e.name_len] = '\0';
   res->inode = e.start_block;
   res->length = e.file_size;
+  res->impl = e.block;
+  res->impl_offset = e.block_offset;
   res->flags = (e.type == SDFS_TYPE_DIR) ? FS_DIRECTORY : FS_FILE;
   res->read = sdfs_read;
   res->write = sdfs_write;
@@ -1123,6 +1181,7 @@ static fs_node_t *sdfs_finddir(fs_node_t *node, const char *name) {
   res->create = sdfs_vfs_create;
   res->open = sdfs_open;
   res->close = sdfs_close;
+  res->truncate = sdfs_truncate;
   return res;
 }
 

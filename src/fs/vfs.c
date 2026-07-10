@@ -42,6 +42,12 @@ fs_node_t *finddir_fs(fs_node_t *node, const char *name) {
   return NULL;
 }
 
+void vfs_truncate(fs_node_t *node) {
+    if (node && node->truncate) {
+        node->truncate(node);
+    }
+}
+
 fs_node_t* vfs_open(const char* path) {
     if (!path) return NULL;
     if (path[0] == '\0') return fs_root;

@@ -1,7 +1,6 @@
 #include "ata.h"
 #include "ahci.h"
 #include "sdfs.h"
-#include "lgx.h"
 #include "mouse.h"
 #include "gdt.h"
 #include "idt.h"
@@ -18,7 +17,6 @@
 #include "serial.h"
 #include "string.h"
 #include "task.h"
-#include "terminal.h"
 #include "tcp.h"
 #include "udp.h"
 #include "dns.h"
@@ -265,42 +263,6 @@ int graphics_exclusive_active(void) { return 0; }
 void graphics_exclusive_acquire(int pid) { (void)pid; }
 void graphics_exclusive_release(int pid) { (void)pid; }
 
-void task_terminal_loop() {
-  terminal_enable_console_mode();
-  init_terminal_app();
-
-  while (1) {
-    char key_batch[64];
-    int key_count = 0;
-    char popped_key = 0;
-    bool terminal_dirty;
-
-    if (graphics_exclusive_active()) {
-      asm volatile("hlt");
-      continue;
-    }
-
-    // Não roubar teclas do aplicativo em primeiro plano
-    while (last_foreground_pid <= 0 &&
-           key_count < (int)(sizeof(key_batch) / sizeof(key_batch[0])) &&
-           keyboard_pop_char(&popped_key)) {
-      key_batch[key_count++] = popped_key;
-    }
-
-    for (int i = 0; i < key_count; i++) {
-      update_terminal_key(key_batch[i]);
-    }
-
-    terminal_dirty = terminal_needs_update(timer_ticks);
-    if (terminal_dirty) {
-      terminal_flush_updates(timer_ticks);
-    }
-
-    if (key_count == 0 && !terminal_dirty) {
-      asm volatile("hlt");
-    }
-  }
-}
 
 /*
  * ensure_disk_ready: Monta o SDFS e copia os system files do initrd
@@ -437,10 +399,6 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
 
   vfs_init();
   serial_print("VFS initialized\n");
-
-  lgx_init();
-
-
   vga_init();
   vga_puts("LiwusOS Kernel Booting (Text Mode Only)...\n");
 
@@ -555,9 +513,12 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   extern void usb_start_polling(void);
   usb_start_polling();
 
-  create_task_named(lgx_compositor_task, "lgx_comp");
-  create_task_named(task_terminal_loop, "terminal");
-
+  extern void gui_init(void);
+  extern void gui_compositor_task(void);
+  gui_init();
+  create_task_named(gui_compositor_task, "gui");
+  // extern void terminal_task();
+  // create_task_named(terminal_task, "terminal");
 
   serial_print("sti...\n");
   asm volatile("sti");

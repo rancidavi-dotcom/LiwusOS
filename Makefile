@@ -41,7 +41,19 @@ DEMO_GUI_ELF = apps/demo_gui/demo_gui.elf
 
 
 BOOT_SRCS = $(BOOT_DIR)/boot.s $(BOOT_DIR)/interrupt.s
-KERNEL_SRCS = $(wildcard $(KERNEL_DIR)/*.c) $(wildcard $(KERNEL_DIR)/*.s)
+KERNEL_SRCS = $(wildcard $(KERNEL_DIR)/*.c) $(wildcard $(KERNEL_DIR)/*.s) \
+              $(wildcard $(KERNEL_DIR)/terminal/*.c) \
+              $(wildcard $(KERNEL_DIR)/gui/*.c) \
+              $(wildcard $(KERNEL_DIR)/gui/core/*.c) \
+              $(wildcard $(KERNEL_DIR)/gui/scene/*.c) \
+              $(wildcard $(KERNEL_DIR)/gui/render/*.c) \
+              $(wildcard $(KERNEL_DIR)/gui/input/*.c) \
+              $(wildcard $(KERNEL_DIR)/gui/input/tools/*.c) \
+              $(wildcard $(KERNEL_DIR)/gui/widgets/*.c) \
+              $(wildcard $(KERNEL_DIR)/gui/layout/*.c) \
+              $(wildcard $(KERNEL_DIR)/gui/window/*.c) \
+              $(wildcard $(KERNEL_DIR)/gui/assets/*.c) \
+              src/kernel/gui/core/app_registry.o
 DRIVERS_SRCS = $(wildcard $(DRIVERS_DIR)/*.c)
 FS_SRCS = $(wildcard $(FS_DIR)/*.c)
 NET_SRCS = $(wildcard $(NET_DIR)/*.c)
@@ -83,7 +95,7 @@ libpng: zlib $(CRT0_OBJ)
 		cd $(PNG_DIR) && \
 		CPPFLAGS="-I$(CURDIR)/sdk/include" \
 		LDFLAGS="-L$(CURDIR)/sdk/lib -nostdlib" \
-		LIBS="-lc -lm -lgloss -lgcc" \
+		LIBS="-lgloss -lc -lm -lgcc" \
 		./configure --host=i686-elf --prefix=$(CURDIR)/sdk \
 		--enable-static --disable-shared \
 		--with-zlib-prefix=$(CURDIR)/sdk \
@@ -101,7 +113,7 @@ libjpeg: $(CRT0_OBJ)
 		--enable-static --disable-shared \
 		CC=$(CC) CFLAGS="$(USER_CFLAGS) -I$(CURDIR)/sdk/include" \
 		LDFLAGS="-L$(CURDIR)/sdk/lib -nostdlib" \
-		LIBS="-lc -lm -lgloss -lgcc" \
+		LIBS="-lgloss -lc -lm -lgcc" \
 		ac_cv_func_malloc_0_nonnull=yes \
 		ac_cv_func_realloc_0_nonnull=yes && \
 		$(MAKE) libjpeg.la && \
@@ -134,68 +146,51 @@ $(LIBGLOSS_OBJS): libgloss/syscalls.c
 LIBS = $(LIBC_A) $(LIBM_A) $(LIBGLOSS_A) $(LIBGCC)
 
 $(HELLO_ELF): apps/hello/hello.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/hello/hello.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/hello/hello.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(DOOMPROBE_ELF): apps/doomprobe/doomprobe.c $(CRT0_OBJ) $(LIBGLOSS_A)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/doomprobe/doomprobe.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/doomprobe/doomprobe.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(LUA_ELF): $(LUA_SRCS) $(CRT0_OBJ) $(LIBGLOSS_A)
-	$(CC) $(LUA_CFLAGS) -nostdlib -static $(CRT0_OBJ) $(LUA_SRCS) -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+	$(CC) $(LUA_CFLAGS) -nostdlib -static $(CRT0_OBJ) $(LUA_SRCS) -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(EDITOR_NANO_ELF): apps/editor_nano/editor_nano.c apps/editor_nano/font.h $(CRT0_OBJ) $(LIBGLOSS_A)
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/editor_nano/editor_nano.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/editor_nano/editor_nano.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(NANO_ELF): apps/kilo/kilo.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/kilo/kilo.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/kilo/kilo.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(CRUN_ELF): apps/c4/c4.c $(CRT0_OBJ) $(LIBGLOSS_A)
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/c4/c4.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/c4/c4.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
-$(CALC_ELF): apps/calc/calc.c $(CRT0_OBJ) $(LIBGLOSS_A)
+$(CALC_ELF): apps/calc/calc.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/libliwus_gui.a
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/calc/calc.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/calc/calc.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(TCC_ELF): apps/tcc/tcc.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -DONE_SOURCE=1 -DTCC_TARGET_X86_64 -DCONFIG_TCCDIR=\"/usr/lib/tcc\" -DCONFIG_TCC_SEMLOCK=0 -DCONFIG_TCC_BACKTRACE=0 -DCONFIG_TCC_BCHECK=0 -nostdlib -static $(CRT0_OBJ) apps/tcc/tcc.c -L$(NEWLIB_DIR) -lc -lm -lgloss -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) -DONE_SOURCE=1 -DTCC_TARGET_X86_64 -DCONFIG_TCCDIR=\"/usr/lib/tcc\" -DCONFIG_TCC_SEMLOCK=0 -DCONFIG_TCC_BACKTRACE=0 -DCONFIG_TCC_BCHECK=0 -nostdlib -static $(CRT0_OBJ) apps/tcc/tcc.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
-sdk/lib/liblgx.a:
-	$(MAKE) -C liblgx
+sdk/lib/libliwus_gui.a: sdk/lib/liwus_gui.c
+	$(CC) -c $< -o sdk/lib/liwus_gui.o $(USER_CFLAGS) -I$(CURDIR)/sdk/include
+	$(AR) rcs $@ sdk/lib/liwus_gui.o
 
-$(DEMO_GUI_ELF): apps/demo_gui/demo_gui.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/liblgx.a
+$(DEMO_GUI_ELF): apps/demo_gui/demo_gui.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/libliwus_gui.a
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/demo_gui/demo_gui.c -L$(NEWLIB_DIR) -Lsdk/lib -llgx -lc -lm -lgloss -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/demo_gui/demo_gui.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
 
-$(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(CALC_ELF) $(HELLO_ELF) $(LUA_ELF) $(TCC_ELF) $(NANO_ELF) $(DEMO_GUI_ELF)
+$(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(DEMO_GUI_ELF)
 	$(HOSTCC) -Iinclude sdk/tools/liw-builder.c -o sdk/tools/liw-builder
 	$(HOSTCC) sdk/tools/img-gen.c -o sdk/tools/img-gen
 	./sdk/tools/liw-builder src/boot/test.liw src/boot/test.elf src/boot/test_manifest.json
 	grub-file --is-x86-multiboot2 $(KERNEL_BIN)
 	mkdir -p repo
 	./sdk/tools/img-gen
-	rm -f repo/tcc repo/nano
-	cp $(HELLO_ELF) repo/hello.liwpkg
-	cp $(CALC_ELF) repo/calc
-	cp $(LUA_ELF) repo/lua
-	cp $(TCC_ELF) repo/tcc
-	mkdir -p repo/usr/include
-	mkdir -p repo/usr/lib
-	mkdir -p repo/usr/lib/tcc/include
-	cp -r sdk/include/* repo/usr/include/
-	cp sdk/lib/libc.a repo/usr/lib/
-	cp sdk/lib/libm.a repo/usr/lib/
-	cp sdk/lib/libgloss.a repo/usr/lib/
-	cp sdk/lib/liblgx.a repo/usr/lib/
-	cp libgloss/crt0.o repo/usr/lib/
-	cp `$(CC) -print-libgcc-file-name` repo/usr/lib/tcc/libtcc1.a
-	cp apps/tcc/include/* repo/usr/lib/tcc/include/
-	if [ -f $(CRUN_ELF) ]; then cp $(CRUN_ELF) repo/crun; fi
-	if [ -f $(EDITOR_NANO_ELF) ]; then cp $(EDITOR_NANO_ELF) repo/editor_gui; fi
-	if [ -f $(NANO_ELF) ]; then cp $(NANO_ELF) repo/nano; fi
 	if [ -f $(DEMO_GUI_ELF) ]; then cp $(DEMO_GUI_ELF) repo/demo_gui; fi
+
 	tar -cvf initrd.tar -C repo . --format=ustar
 	mkdir -p isodir/boot/grub
 	cp $(KERNEL_BIN) isodir/boot/kernel.bin
@@ -204,6 +199,12 @@ $(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(CALC_ELF) $(HELLO_ELF) $(LUA_
 	# Create SDFS disk image for persistent storage (only if not exists)
 	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
 	grub-mkrescue -o $(ISO_IMAGE) isodir
+
+
+
+# ============================================================
+# Test ELF
+# ============================================================
 
 $(BOOT_DIR)/test.elf: $(BOOT_DIR)/test.s
 	$(CC) -nostdlib -static $< -o $@ $(LIBGCC) $(M32) -Ttext 0x100000

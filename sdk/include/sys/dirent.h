@@ -1,13 +1,32 @@
-/* <dirent.h> includes <sys/dirent.h>, which is this file.  On a
-   system which supports <dirent.h>, this file is overridden by
-   dirent.h in the libc/sys/.../sys directory.  On a system which does
-   not support <dirent.h>, we will get this file which uses #error to force
-   an error.  */
+#ifndef _SYS_DIRENT_H
+#define _SYS_DIRENT_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-#error "<dirent.h> not supported"
-#ifdef __cplusplus
-}
+#include <sys/types.h>
+
+#define MAXNAMLEN 255
+
+struct dirent {
+    ino_t d_ino;
+    off_t d_off;
+    unsigned short d_reclen;
+    unsigned char d_type;
+    char d_name[MAXNAMLEN + 1];
+};
+
+#define DT_UNKNOWN 0
+#define DT_DIR     4
+#define DT_REG     8
+
+typedef struct {
+    int dd_fd;
+    int dd_index;
+    struct dirent dd_entry;
+} DIR;
+
+DIR *opendir(const char *path);
+struct dirent *readdir(DIR *dirp);
+int closedir(DIR *dirp);
+void rewinddir(DIR *dirp);
+int getdents(int fd, void *buf, unsigned int count);
+
 #endif

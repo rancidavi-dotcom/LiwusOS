@@ -21,5 +21,10 @@ int	setjmp (jmp_buf __jmpb);
 
 _END_STD_C
 
+typedef jmp_buf sigjmp_buf;
+
+#define sigsetjmp(env, savemask) setjmp(env)
+#define siglongjmp(env, val) longjmp(env, val)
+
 #endif /* _SETJMP_H_ */
 

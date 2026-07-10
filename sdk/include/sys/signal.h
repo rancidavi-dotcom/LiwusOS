@@ -115,7 +115,13 @@ struct sigaction {
 
 #else /* defined(__rtems__) */
 
-#define SA_NOCLDSTOP 1  /* only value supported now for sa_flags */
+#define SA_NOCLDSTOP 1
+#define SA_RESTART   0x10000000
+#define SA_NODEFER   0x40000000
+#define SA_RESETHAND 0x80000000
+#define SA_SIGINFO   4
+#define SA_NOCLDWAIT 2
+#define SA_ONSTACK   0x08000000
 
 typedef void (*_sig_func_ptr)(int);
 

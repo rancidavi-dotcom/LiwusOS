@@ -93,6 +93,12 @@ ISR_NOERRCODE 31
 isr_common_stub:
   PUSH_ALL
 
+  mov $0x10, %ax          /* Kernel data segment */
+  mov %ax, %ds
+  mov %ax, %es
+  mov %ax, %fs
+  mov %ax, %gs
+
   mov %rsp, %rdi         /* First arg: pointer to registers_t */
   call isr_handler
 

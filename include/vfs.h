@@ -20,6 +20,7 @@ typedef void (*close_type_t)(struct fs_node*);
 typedef struct dirent* (*readdir_type_t)(struct fs_node*, uint32_t);
 typedef struct fs_node* (*finddir_type_t)(struct fs_node*, const char* name);
 typedef struct fs_node* (*create_type_t)(struct fs_node*, const char* name, uint32_t flags);
+typedef void (*truncate_type_t)(struct fs_node*);
 typedef struct fs_node {
     char name[128];
     uint32_t mask;
@@ -28,6 +29,8 @@ typedef struct fs_node {
     uint32_t flags;
     uint32_t inode;
     uint32_t length;
+    uint32_t impl;
+    uint32_t impl_offset;
     read_type_t read;
     write_type_t write;
     open_type_t open;
@@ -35,6 +38,7 @@ typedef struct fs_node {
     readdir_type_t readdir;
     finddir_type_t finddir;
     create_type_t create;
+    truncate_type_t truncate;
     struct fs_node* ptr; /* Para diretórios */
 } fs_node_t;
 
@@ -53,6 +57,7 @@ fs_node_t* vfs_create(const char* path, uint32_t flags);
 
 struct dirent *readdir_fs(fs_node_t *node, uint32_t index);
 fs_node_t *finddir_fs(fs_node_t *node, const char *name);
+void vfs_truncate(fs_node_t *node);
 
 uint32_t read_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
 uint32_t write_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);

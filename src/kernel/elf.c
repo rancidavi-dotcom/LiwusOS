@@ -27,8 +27,8 @@ uint64_t elf32_load_file(void *file_buffer) {
       uint64_t filesz = phdr[i].p_filesz;
       uint64_t offset = phdr[i].p_offset;
 
-      uint64_t start_page = vaddr & 0xFFFFF000;
-      uint64_t end_page = (vaddr + memsz + 0xFFF) & 0xFFFFF000;
+      uint64_t start_page = vaddr & ~0xFFFULL;
+      uint64_t end_page = (vaddr + memsz + 0xFFF) & ~0xFFFULL;
 
       for (uint64_t p = start_page; p < end_page; p += 4096) {
         void *phys = kmalloc_a(4096);
@@ -61,8 +61,8 @@ uint64_t elf64_load_file(void *file_buffer) {
       uint64_t filesz = phdr[i].p_filesz;
       uint64_t offset = phdr[i].p_offset;
 
-      uint64_t start_page = vaddr & 0xFFFFF000;
-      uint64_t end_page = (vaddr + memsz + 0xFFF) & 0xFFFFF000;
+      uint64_t start_page = vaddr & ~0xFFFULL;
+      uint64_t end_page = (vaddr + memsz + 0xFFF) & ~0xFFFULL;
 
       for (uint64_t p = start_page; p < end_page; p += 4096) {
         void *phys = kmalloc_a(4096);
