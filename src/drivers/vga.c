@@ -11,6 +11,9 @@ uint32_t vga_fb_height = 0;
 uint32_t vga_fb_pitch = 0;
 uint8_t vga_fb_bpp = 0;
 
+/* GUI terminal output hook — when non-NULL, vga_puts redirects here */
+void (*vga_output_hook)(const char *str) = NULL;
+
 static bool is_framebuffer = false;
 
 // Fallback text mode buffer
@@ -436,6 +439,10 @@ void vga_putc(char c) {
 }
 
 void vga_puts(const char* str) {
+    if (vga_output_hook) {
+        vga_output_hook(str);
+        return;
+    }
     for (size_t i = 0; str[i] != '\0'; i++)
         vga_putc(str[i]);
 }

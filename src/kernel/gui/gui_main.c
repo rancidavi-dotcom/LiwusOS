@@ -36,6 +36,7 @@
 #include "window/focus_manager.h"
 #include "window/window_manager.h"
 #include "core/app_registry.h"
+#include "apps/gui_settings.h"
 
 /* VGA globals (de vga.c) */
 extern uint32_t vga_fb_width;
@@ -124,85 +125,23 @@ void settings_app_start(void) {
     }
 }
 
-static char terminal_buffer[256] = "root@liwusos# ";
-static int  terminal_cursor     = 14;
-static node_t *s_terminal_lbl  = NULL;
-
-static bool term_key_down(node_t *self, uint8_t sc, void *ctx) {
-    (void)self; (void)ctx;
-    extern void label_set_text(node_t *label, const char *text);
-
-    if (sc == 0x0E) { /* Backspace */
-        if (terminal_cursor > 14) {
-            terminal_buffer[--terminal_cursor] = '\0';
-            if (s_terminal_lbl) label_set_text(s_terminal_lbl, terminal_buffer);
-        }
-        return true;
-    }
-    if (sc == 0x1C) { /* Enter */
-        if (terminal_cursor + 16 < 256) {
-            terminal_buffer[terminal_cursor++] = '\n';
-            const char *p = "root@liwusos# ";
-            while (*p && terminal_cursor < 254)
-                terminal_buffer[terminal_cursor++] = *p++;
-            terminal_buffer[terminal_cursor] = '\0';
-        } else {
-            /* clear */
-            const char *p = "root@liwusos# ";
-            terminal_cursor = 0;
-            while (*p) terminal_buffer[terminal_cursor++] = *p++;
-            terminal_buffer[terminal_cursor] = '\0';
-        }
-        if (s_terminal_lbl) label_set_text(s_terminal_lbl, terminal_buffer);
-        return true;
-    }
-    /* Consume all other keys (WASD, arrows…) so canvas doesn't move */
-    return true;
-}
-
-static bool term_key_char(node_t *self, char c, void *ctx) {
-    (void)self; (void)ctx;
-    extern void label_set_text(node_t *label, const char *text);
-    if (c >= 32 && c <= 126 && terminal_cursor < 255) {
-        terminal_buffer[terminal_cursor++] = c;
-        terminal_buffer[terminal_cursor]   = '\0';
-        if (s_terminal_lbl) label_set_text(s_terminal_lbl, terminal_buffer);
-    }
-    return true;
-}
+/* The old terminal logic has been removed and replaced by gui_terminal.h */
 
 void terminal_app_start(void) {
     extern scene_graph_t *g_scene;
     if (!g_scene || !g_scene->root) return;
-
-    node_t *win = window_node_create("terminal_win", 200, 200, 500, 350, "Terminal (GUI)");
-    if (win) {
-        win->layout_type = LAYOUT_VBOX;
-        win->padding[0] = 30;
-        win->padding[1] = 5;
-        win->padding[2] = 5;
-        win->padding[3] = 5;
-
-        node_t *panel = panel_create("term_bg", 0, 0, 490, 310, 0xFF000000);
-        panel->flex_weight  = 1;
-        panel->layout_align = ALIGN_STRETCH;
-
-        s_terminal_lbl = label_create("term_txt", 0, 0, terminal_buffer, 0xFF00FF00);
-        s_terminal_lbl->local_x = 5;
-        s_terminal_lbl->local_y = 5;
-        node_add_child(panel, s_terminal_lbl);
-
-        node_add_child(win, panel);
-        node_add_child(g_scene->root, win);
-        layout_engine_compute(win);
-
-        /* Safe callback-based key handling — no vtable subclassing */
-        window_node_set_key_handler(win, term_key_down, term_key_char, NULL);
-
+    
+    extern node_t *gui_terminal_create(const char *win_name, int x, int y, int w, int h);
+    
+    node_t *term = gui_terminal_create("terminal_win", 200, 200, 652, 416); // 80 cols * 8 + padding, 24 rows * 16 + padding + titlebar
+    if (term) {
+        node_add_child(g_scene->root, term);
+        layout_engine_compute(term);
+        
         extern focus_manager_t *g_focus_manager;
-        if (g_focus_manager) focus_manager_set_focus(g_focus_manager, win);
+        if (g_focus_manager) focus_manager_set_focus(g_focus_manager, term);
         extern void window_manager_bring_to_front(node_t *node);
-        window_manager_bring_to_front(win);
+        window_manager_bring_to_front(term);
     }
 }
 
@@ -215,6 +154,7 @@ void gui_init(void) {
     
     /* 1.1. App Registry */
     app_registry_init();
+    app_settings_init();
 
     /* 1.5. Theme Engine */
     theme_engine_init();
@@ -242,8 +182,9 @@ void gui_init(void) {
     g_scene->root = root;
 
     /* Register Apps */
+    extern void terminal_app_start(void);
+    extern void demo_app_start(void);
     app_registry_add("Demo Window", NULL, demo_app_start);
-    app_registry_add("System Settings", NULL, settings_app_start);
     app_registry_add("Terminal", NULL, terminal_app_start);
 
 

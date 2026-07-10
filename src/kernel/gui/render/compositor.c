@@ -15,6 +15,7 @@
 #include "../core/theme_engine.h"
 #include "../core/animation_engine.h"
 #include "../assets/asset_manager.h"
+#include <wallpaper.h>
 
 compositor_t *g_compositor = NULL;
 
@@ -91,6 +92,25 @@ static void draw_background(compositor_t *c) {
     int W = c->renderer->screen_w;
     int H = c->renderer->screen_h;
     int total = W * H;
+
+    extern const int wallpaper_width;
+    extern const int wallpaper_height;
+    extern const uint32_t wallpaper_data[];
+
+    if (wallpaper_width > 0 && wallpaper_height > 0 && wallpaper_data) {
+        if (c->renderer->ops->blit) {
+            /* Crop/Center without float */
+            int copy_w = W < wallpaper_width ? W : wallpaper_width;
+            int copy_h = H < wallpaper_height ? H : wallpaper_height;
+            int src_x = (wallpaper_width - copy_w) / 2;
+            int src_y = (wallpaper_height - copy_h) / 2;
+            int dest_x = (W - copy_w) / 2;
+            int dest_y = (H - copy_h) / 2;
+            
+            c->renderer->ops->blit(c->renderer, dest_x, dest_y, wallpaper_data, wallpaper_width, wallpaper_height, wallpaper_width * 4, src_x, src_y, copy_w, copy_h);
+            return;
+        }
+    }
 
     uint32_t bg_color = theme_engine_get_color(THEME_COLOR_BACKGROUND);
     /* Fill solid background */

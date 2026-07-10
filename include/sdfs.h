@@ -63,6 +63,7 @@ int sdfs_rename(const char *old_path, const char *new_path);
 int sdfs_path_info(const char *path, int *is_dir_out, uint32_t *size_out);
 int sdfs_list_dir_entry(const char *path, int index, char *name_out,
                         int *is_dir_out, uint32_t *size_out);
+void sdfs_get_usage(uint32_t *total_blocks, uint32_t *used_blocks);
 
 #endif
 void sdfs_enable_ramdisk(uint32_t mb);

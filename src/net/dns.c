@@ -72,14 +72,11 @@ void dns_init() {
     udp_register_callback(DNS_LOCAL_PORT, dns_callback);
 }
 
-static void dns_format_name(uint8_t *dest, const char *hostname) {
+static void dns_format_name(uint8_t *dest, const char *name) {
     int lock = 0;
-    char name[128];
-    strcpy(name, hostname);
-    strcat(name, ".");
-
-    for (int i = 0; i < (int)strlen(name); i++) {
-        if (name[i] == '.') {
+    
+    for (int i = 0; i <= (int)strlen(name); i++) {
+        if (name[i] == '.' || name[i] == '\0') {
             *dest++ = i - lock;
             for (; lock < i; lock++) {
                 *dest++ = name[lock];

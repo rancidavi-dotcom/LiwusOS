@@ -6,12 +6,13 @@
 
 .section .multiboot
 .align 8
+mb2_header_start:
 .long MB2_MAGIC
 .long MB2_ARCH
-.long mb2_end - mb2_start
-.long -(MB2_MAGIC + MB2_ARCH + (mb2_end - mb2_start))
+.long mb2_end - mb2_header_start
+.long -(MB2_MAGIC + MB2_ARCH + (mb2_end - mb2_header_start))
 
-mb2_start:
+mb2_tags_start:
   /* Framebuffer tag (Type 5) */
   .align 8
   .word 5      /* type */

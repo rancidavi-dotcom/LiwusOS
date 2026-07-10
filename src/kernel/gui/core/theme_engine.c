@@ -8,7 +8,7 @@ static uint32_t s_palette[THEME_COLOR_MAX];
 void theme_engine_init(void) {
     /* Modern, dark, glassmorphism-inspired default palette (slate/indigo vibes) */
     s_palette[THEME_COLOR_BACKGROUND]      = 0xFF0B1120; /* Very dark slate for canvas */
-    s_palette[THEME_COLOR_WINDOW_BG]       = 0xCC1E293B; /* Slate-800 with 80% opacity */
+    s_palette[THEME_COLOR_WINDOW_BG]       = 0x881E293B; /* Slate-800 with 50% opacity for true glassmorphism */
     s_palette[THEME_COLOR_WINDOW_TITLEBAR] = 0xEE0F172A; /* Slate-900 with 93% opacity */
     s_palette[THEME_COLOR_WINDOW_BORDER]   = 0xFF475569; /* Slate-600 */
     s_palette[THEME_COLOR_TEXT_PRIMARY]    = 0xFFF8FAFC; /* Slate-50 */

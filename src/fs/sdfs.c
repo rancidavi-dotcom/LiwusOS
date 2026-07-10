@@ -143,6 +143,22 @@ static int sdfs_bitmap_test(uint32_t block) {
   return (bitmap_cache[byte_index] & bit_mask) != 0;
 }
 
+void sdfs_get_usage(uint32_t *total_blocks, uint32_t *used_blocks) {
+    if (!sdfs_mounted || !bitmap_cache) {
+        if (total_blocks) *total_blocks = 0;
+        if (used_blocks) *used_blocks = 0;
+        return;
+    }
+    if (total_blocks) *total_blocks = disk_total_blocks;
+    if (used_blocks) {
+        uint32_t used = 0;
+        for (uint32_t b = 0; b < disk_total_blocks; b++) {
+            if (sdfs_bitmap_test(b)) used++;
+        }
+        *used_blocks = used;
+    }
+}
+
 static uint32_t sdfs_alloc_block(void) {
   for (uint32_t b = 0; b < disk_total_blocks; b++) {
     if (!sdfs_bitmap_test(b)) {

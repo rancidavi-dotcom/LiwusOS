@@ -26,7 +26,7 @@ typedef struct {
     void *key_userctx;
 } window_node_data_t;
 
-static void window_draw(node_t *self, struct gui_renderer *r) {
+void window_node_draw(node_t *self, struct gui_renderer *r) {
     window_node_data_t *d = (window_node_data_t *)self->userdata;
     if (!d) return;
 
@@ -95,7 +95,7 @@ static void window_destroy(node_t *self) {
     }
 }
 
-static bool window_on_event(node_t *self, const gui_event_t *e) {
+bool window_node_on_event(node_t *self, const gui_event_t *e) {
     window_node_data_t *d = (window_node_data_t *)self->userdata;
     if (!d) return false;
 
@@ -189,8 +189,8 @@ static bool window_on_event(node_t *self, const gui_event_t *e) {
 }
 
 static const node_vtable_t window_vtable = {
-    .draw     = window_draw,
-    .on_event = window_on_event,
+    .draw     = window_node_draw,
+    .on_event = window_node_on_event,
     .layout   = NULL,
     .destroy  = window_destroy,
 };

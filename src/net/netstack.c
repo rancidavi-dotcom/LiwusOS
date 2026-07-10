@@ -2,6 +2,7 @@
 #include "serial.h"
 #include "string.h"
 #include <stdint.h>
+#include "udp.h"
 
 #define htons(n)                                                               \
   (((((unsigned short)(n) & 0xFF)) << 8) |                                     \
@@ -144,7 +145,7 @@ void netstack_send_ping(uint32_t dest_ip) {
   if (!netif || !netif->send_packet) {
     return;
   }
-  if (netstack_resolve_mac(dest_ip, dest_mac) != 0) {
+  if (netstack_resolve_mac(netstack_next_hop(dest_ip), dest_mac) != 0) {
     return;
   }
   memcpy(eth->dest, dest_mac, 6);
@@ -212,7 +213,8 @@ void netstack_send_ipv4(uint32_t dest_ip, uint8_t proto, void *data,
     net_log("[net] ipv4 send failed: no interface\n");
     return;
   }
-  if (netstack_resolve_mac(dest_ip, dest_mac) != 0) {
+  uint32_t next_hop = netstack_next_hop(dest_ip);
+  if (netstack_resolve_mac(next_hop, dest_mac) != 0) {
     net_log("[net] ipv4 send failed: no mac\n");
     return;
   }

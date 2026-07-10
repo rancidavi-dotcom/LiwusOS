@@ -53,6 +53,7 @@ KERNEL_SRCS = $(wildcard $(KERNEL_DIR)/*.c) $(wildcard $(KERNEL_DIR)/*.s) \
               $(wildcard $(KERNEL_DIR)/gui/layout/*.c) \
               $(wildcard $(KERNEL_DIR)/gui/window/*.c) \
               $(wildcard $(KERNEL_DIR)/gui/assets/*.c) \
+              $(wildcard $(KERNEL_DIR)/gui/apps/*.c) \
               src/kernel/gui/core/app_registry.o
 DRIVERS_SRCS = $(wildcard $(DRIVERS_DIR)/*.c)
 FS_SRCS = $(wildcard $(FS_DIR)/*.c)

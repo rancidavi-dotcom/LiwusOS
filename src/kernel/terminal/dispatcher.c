@@ -12,7 +12,12 @@ static const terminal_command_t commands[] = {
     {"pwd", cmd_pwd, "Prints the current working directory"},
     {"reboot", cmd_reboot, "Reboots the system"},
     {"version", cmd_version, "Shows the OS version"},
-    {"meminfo", cmd_meminfo, "Shows memory information"}
+    {"meminfo", cmd_meminfo, "Shows memory information"},
+    {"diskinfo", cmd_diskinfo, "Shows disk space information"},
+    {"ip", cmd_ip, "Shows current IP address"},
+    {"ping", cmd_ping, "Send ICMP ECHO_REQUEST to network hosts"},
+    {"wget", cmd_wget, "Download files from the web (HTTP)"},
+    {"host", cmd_host, "DNS lookup utility"}
 };
 
 #define NUM_COMMANDS (sizeof(commands) / sizeof(terminal_command_t))

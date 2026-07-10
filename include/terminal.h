@@ -24,6 +24,11 @@ void cmd_pwd(int argc, char **argv);
 void cmd_reboot(int argc, char **argv);
 void cmd_version(int argc, char **argv);
 void cmd_meminfo(int argc, char **argv);
+void cmd_diskinfo(int argc, char **argv);
+void cmd_ip(int argc, char **argv);
+void cmd_ping(int argc, char **argv);
+void cmd_wget(int argc, char **argv);
+void cmd_host(int argc, char **argv);
 
 // Command structure
 typedef struct {
