@@ -125,63 +125,50 @@ void settings_app_start(void) {
 }
 
 static char terminal_buffer[256] = "root@liwusos# ";
-static int terminal_cursor = 14;
-static node_t *s_terminal_lbl = NULL;
-static node_vtable_t s_term_vtable;
-static bool s_term_vtable_inited = false;
-static bool (*s_orig_term_on_event)(node_t *, const gui_event_t *);
+static int  terminal_cursor     = 14;
+static node_t *s_terminal_lbl  = NULL;
 
-static bool terminal_on_event(node_t *self, const gui_event_t *e) {
-    if (e->type == GUI_EVENT_KEY_CHAR) {
-        char c = (char)e->key.unicode;
-        if (c >= 32 && c <= 126 && terminal_cursor < 255) {
-            terminal_buffer[terminal_cursor++] = c;
+static bool term_key_down(node_t *self, uint8_t sc, void *ctx) {
+    (void)self; (void)ctx;
+    extern void label_set_text(node_t *label, const char *text);
+
+    if (sc == 0x0E) { /* Backspace */
+        if (terminal_cursor > 14) {
+            terminal_buffer[--terminal_cursor] = '\0';
+            if (s_terminal_lbl) label_set_text(s_terminal_lbl, terminal_buffer);
+        }
+        return true;
+    }
+    if (sc == 0x1C) { /* Enter */
+        if (terminal_cursor + 16 < 256) {
+            terminal_buffer[terminal_cursor++] = '\n';
+            const char *p = "root@liwusos# ";
+            while (*p && terminal_cursor < 254)
+                terminal_buffer[terminal_cursor++] = *p++;
             terminal_buffer[terminal_cursor] = '\0';
-            if (s_terminal_lbl) {
-                extern void label_set_text(node_t *label, const char *text);
-                label_set_text(s_terminal_lbl, terminal_buffer);
-            }
+        } else {
+            /* clear */
+            const char *p = "root@liwusos# ";
+            terminal_cursor = 0;
+            while (*p) terminal_buffer[terminal_cursor++] = *p++;
+            terminal_buffer[terminal_cursor] = '\0';
         }
-        return true; /* consume! */
+        if (s_terminal_lbl) label_set_text(s_terminal_lbl, terminal_buffer);
+        return true;
     }
-    
-    if (e->type == GUI_EVENT_KEY_DOWN) {
-        if (e->key.scancode == 0x0E) { /* Backspace */
-            if (terminal_cursor > 14) { /* protect prompt */
-                terminal_buffer[--terminal_cursor] = '\0';
-                if (s_terminal_lbl) {
-                    extern void label_set_text(node_t *label, const char *text);
-                    label_set_text(s_terminal_lbl, terminal_buffer);
-                }
-            }
-            return true;
-        } else if (e->key.scancode == 0x1C) { /* Enter */
-            if (terminal_cursor + 16 < 256) {
-                terminal_buffer[terminal_cursor++] = '\n';
-                strcpy(&terminal_buffer[terminal_cursor], "root@liwusos# ");
-                terminal_cursor += 14;
-                if (s_terminal_lbl) {
-                    extern void label_set_text(node_t *label, const char *text);
-                    label_set_text(s_terminal_lbl, terminal_buffer);
-                }
-            } else {
-                /* If buffer full, reset it (simulating clear) */
-                strcpy(terminal_buffer, "root@liwusos# ");
-                terminal_cursor = 14;
-                if (s_terminal_lbl) {
-                    extern void label_set_text(node_t *label, const char *text);
-                    label_set_text(s_terminal_lbl, terminal_buffer);
-                }
-            }
-            return true;
-        }
-        
-        /* Always consume keyboard events if terminal is focused, so WASD doesn't move canvas */
-        return true; 
+    /* Consume all other keys (WASD, arrows…) so canvas doesn't move */
+    return true;
+}
+
+static bool term_key_char(node_t *self, char c, void *ctx) {
+    (void)self; (void)ctx;
+    extern void label_set_text(node_t *label, const char *text);
+    if (c >= 32 && c <= 126 && terminal_cursor < 255) {
+        terminal_buffer[terminal_cursor++] = c;
+        terminal_buffer[terminal_cursor]   = '\0';
+        if (s_terminal_lbl) label_set_text(s_terminal_lbl, terminal_buffer);
     }
-    
-    if (s_orig_term_on_event) return s_orig_term_on_event(self, e);
-    return false;
+    return true;
 }
 
 void terminal_app_start(void) {
@@ -197,7 +184,7 @@ void terminal_app_start(void) {
         win->padding[3] = 5;
 
         node_t *panel = panel_create("term_bg", 0, 0, 490, 310, 0xFF000000);
-        panel->flex_weight = 1;
+        panel->flex_weight  = 1;
         panel->layout_align = ALIGN_STRETCH;
 
         s_terminal_lbl = label_create("term_txt", 0, 0, terminal_buffer, 0xFF00FF00);
@@ -208,26 +195,19 @@ void terminal_app_start(void) {
         node_add_child(win, panel);
         node_add_child(g_scene->root, win);
         layout_engine_compute(win);
-        
-        /* Subclass the window to capture keyboard events */
-        if (!s_term_vtable_inited && win->vtable) {
-            s_term_vtable = *win->vtable;
-            s_orig_term_on_event = s_term_vtable.on_event;
-            s_term_vtable.on_event = terminal_on_event;
-            s_term_vtable_inited = true;
-        }
-        if (s_term_vtable_inited) {
-            win->vtable = &s_term_vtable;
-        }
-        
+
+        /* Safe callback-based key handling — no vtable subclassing */
+        window_node_set_key_handler(win, term_key_down, term_key_char, NULL);
+
         extern focus_manager_t *g_focus_manager;
-        if (g_focus_manager) {
-            focus_manager_set_focus(g_focus_manager, win);
-        }
+        if (g_focus_manager) focus_manager_set_focus(g_focus_manager, win);
         extern void window_manager_bring_to_front(node_t *node);
         window_manager_bring_to_front(win);
     }
 }
+
+
+
 
 void gui_init(void) {
     /* 1. Scene graph */
@@ -267,7 +247,11 @@ void gui_init(void) {
     app_registry_add("Terminal", NULL, terminal_app_start);
 
 
-    /* 7. Tools */
+    /* 7. Managers (must subscribe BEFORE tools to intercept focus events) */
+    g_focus_manager = focus_manager_create(g_event_bus, root);
+    s_wm    = window_manager_create(g_event_bus, root);
+
+    /* 8. Tools */
     s_tools = tool_manager_create(g_event_bus, g_camera, root);
     if (s_tools) {
         tool_t *select = select_tool_create(g_camera, root);
@@ -279,10 +263,6 @@ void gui_init(void) {
         tool_manager_add_tool(s_tools, select);
         tool_manager_add_tool(s_tools, pan);
     }
-
-    /* 8. Managers */
-    g_focus_manager = focus_manager_create(g_event_bus, root);
-    s_wm    = window_manager_create(g_event_bus, root);
 
     /* 9. Compositor */
     s_comp = compositor_create(s_renderer, g_camera, g_event_bus, g_input_manager, root);

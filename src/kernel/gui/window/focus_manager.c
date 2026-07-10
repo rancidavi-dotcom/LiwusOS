@@ -25,25 +25,33 @@ static void focus_bus_handler(const gui_event_t *event, void *userdata) {
             win = win->parent;
         }
         
-        focus_manager_set_focus(fm, win ? win : hit);
-        return; /* Do not consume, let tools/widgets process it */
+        focus_manager_set_focus(fm, win ? win : NULL);
+        /* Do NOT consume — let tools/widgets also process the click */
+        return;
     }
 
-    if (event->type == GUI_EVENT_KEY_DOWN || 
-        event->type == GUI_EVENT_KEY_UP || 
+    /* Key events: forward to focused window first.
+     * Only call stop_propagation if the focused window consumed the key. */
+    if (event->type == GUI_EVENT_KEY_DOWN ||
+        event->type == GUI_EVENT_KEY_UP  ||
         event->type == GUI_EVENT_KEY_CHAR) {
-        
-        if (fm->focused_node && fm->focused_node->vtable && fm->focused_node->vtable->on_event) {
-            /* Dispatch directly to the focused node */
+
+        if (fm->focused_node &&
+            fm->focused_node->vtable &&
+            fm->focused_node->vtable->on_event) {
+
             bool consumed = fm->focused_node->vtable->on_event(fm->focused_node, event);
             if (consumed) {
+                /* Stop this key from reaching the canvas/pan-tool */
                 event_stop_propagation(fm->bus);
                 return;
             }
         }
-        
-        /* If no one consumed, maybe handle Tab for focus traversal here? (Phase 4.1) */
-        if (event->type == GUI_EVENT_KEY_DOWN && event->key.scancode == 0x0F /* Tab */) {
+
+        /* Tab with no focused window → open launcher */
+        if (event->type == GUI_EVENT_KEY_DOWN &&
+            event->key.scancode == 0x0F /* Tab */ &&
+            fm->focused_node == NULL) {
             extern void app_registry_show_launcher(void);
             app_registry_show_launcher();
             return;

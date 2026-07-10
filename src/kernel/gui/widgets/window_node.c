@@ -19,6 +19,11 @@ typedef struct {
     int      drag_start_win_x;
     int      drag_start_win_y;
     bool     focused;
+
+    /* Optional key handlers set by the application */
+    bool (*key_down_cb)(node_t *self, uint8_t scancode, void *userctx);
+    bool (*key_char_cb)(node_t *self, char c, void *userctx);
+    void *key_userctx;
 } window_node_data_t;
 
 static void window_draw(node_t *self, struct gui_renderer *r) {
@@ -103,6 +108,21 @@ static bool window_on_event(node_t *self, const gui_event_t *e) {
     if (e->type == GUI_EVENT_WIN_BLUR) {
         d->focused = false;
         node_mark_dirty(self, NODE_DIRTY_PAINT);
+        return false;
+    }
+
+    /* Key events: forward to application callback if installed */
+    if (e->type == GUI_EVENT_KEY_DOWN) {
+        if (d->key_down_cb) {
+            return d->key_down_cb(self, e->key.scancode, d->key_userctx);
+        }
+        return false;
+    }
+
+    if (e->type == GUI_EVENT_KEY_CHAR) {
+        if (d->key_char_cb) {
+            return d->key_char_cb(self, (char)e->key.unicode, d->key_userctx);
+        }
         return false;
     }
 
@@ -218,4 +238,16 @@ void window_node_set_pid(node_t *win, int pid) {
         window_node_data_t *d = (window_node_data_t *)win->userdata;
         if (d) d->process_id = pid;
     }
+}
+
+void window_node_set_key_handler(node_t *win,
+    bool (*key_down_cb)(node_t *, uint8_t, void *),
+    bool (*key_char_cb)(node_t *, char, void *),
+    void *userctx) {
+    if (!win || win->type != NODE_WINDOW) return;
+    window_node_data_t *d = (window_node_data_t *)win->userdata;
+    if (!d) return;
+    d->key_down_cb  = key_down_cb;
+    d->key_char_cb  = key_char_cb;
+    d->key_userctx  = userctx;
 }
