@@ -5,7 +5,8 @@ HOSTCC = gcc
 M32 = -m32
 M64 = -m64 -mno-red-zone
 
-CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Iinclude $(M64) -fno-pie -fno-pic -mcmodel=large -mno-sse -mno-sse2 -mno-mmx
+INCLUDES = -Iinclude -Iinclude/kernel -Iinclude/drivers -Iinclude/fs -Iinclude/gui -Iinclude/uapi
+CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra $(INCLUDES) $(M64) -fno-pie -fno-pic -mcmodel=large -mno-sse -mno-sse2 -mno-mmx
 LDFLAGS = -Wl,-no-pie
 USER_CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -m64 -mno-red-zone -fno-pie -fno-pic
 LIBGCC = -lgcc
@@ -23,7 +24,7 @@ BOOT_DIR = $(SRC_DIR)/boot
 KERNEL_DIR = $(SRC_DIR)/kernel
 DRIVERS_DIR = $(SRC_DIR)/drivers
 FS_DIR = $(SRC_DIR)/fs
-NET_DIR = $(SRC_DIR)/net
+
 APPS_DIR = $(SRC_DIR)/apps
 OBJ_DIR = obj
 
@@ -32,16 +33,18 @@ ISO_IMAGE = liwusos.iso
 CALC_ELF = apps/calc/calc.elf
 HELLO_ELF = apps/hello/hello.elf
 DOOMPROBE_ELF = apps/doomprobe/doomprobe.elf
-LUA_ELF = apps/lua/lua.elf
-CRUN_ELF = apps/c4/crun.elf
 EDITOR_NANO_ELF = apps/editor_nano/editor_nano.elf
-TCC_ELF = apps/tcc/tcc.elf
 NANO_ELF = apps/kilo/kilo.elf
 DEMO_GUI_ELF = apps/demo_gui/demo_gui.elf
 
 
 BOOT_SRCS = $(BOOT_DIR)/boot.s $(BOOT_DIR)/interrupt.s
 KERNEL_SRCS = $(wildcard $(KERNEL_DIR)/*.c) $(wildcard $(KERNEL_DIR)/*.s) \
+              $(wildcard $(KERNEL_DIR)/arch/x86_64/*.c) $(wildcard $(KERNEL_DIR)/arch/x86_64/*.s) \
+              $(wildcard $(KERNEL_DIR)/mm/*.c) \
+              $(wildcard $(KERNEL_DIR)/sched/*.c) \
+              $(wildcard $(KERNEL_DIR)/core/*.c) \
+              $(wildcard $(KERNEL_DIR)/lib/*.c) $(wildcard $(KERNEL_DIR)/lib/*.s) \
               $(wildcard $(KERNEL_DIR)/terminal/*.c) \
               $(wildcard $(KERNEL_DIR)/gui/*.c) \
               $(wildcard $(KERNEL_DIR)/gui/core/*.c) \
@@ -57,10 +60,9 @@ KERNEL_SRCS = $(wildcard $(KERNEL_DIR)/*.c) $(wildcard $(KERNEL_DIR)/*.s) \
               src/kernel/gui/core/app_registry.o
 DRIVERS_SRCS = $(wildcard $(DRIVERS_DIR)/*.c)
 FS_SRCS = $(wildcard $(FS_DIR)/*.c)
-NET_SRCS = $(wildcard $(NET_DIR)/*.c)
 APPS_SRCS = $(filter-out $(APPS_DIR)/liw_app.c $(APPS_DIR)/editor.c, $(wildcard $(APPS_DIR)/*.c))
 
-KERNEL_C_SRCS = $(KERNEL_SRCS) $(DRIVERS_SRCS) $(FS_SRCS) $(NET_SRCS) $(APPS_SRCS)
+KERNEL_C_SRCS = $(KERNEL_SRCS) $(DRIVERS_SRCS) $(FS_SRCS) $(APPS_SRCS)
 KERNEL_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(filter %.c,$(KERNEL_C_SRCS))) \
               $(patsubst %.s,$(OBJ_DIR)/%.o,$(filter %.s,$(KERNEL_C_SRCS))) \
               $(patsubst %.s,$(OBJ_DIR)/%.o,$(BOOT_SRCS)) \
@@ -69,10 +71,7 @@ KERNEL_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(filter %.c,$(KERNEL_C_SRCS))) \
 LIBGLOSS_SRCS = libgloss/syscalls.c
 LIBGLOSS_OBJS = $(OBJ_DIR)/libgloss/syscalls.o
 
-LUA_DIR = third_party/lua/src
-LUA_CFLAGS = $(USER_CFLAGS) -I$(LUA_DIR) -DLUA_USE_C89
-LUA_ALL_SRCS = $(wildcard $(LUA_DIR)/*.c)
-LUA_SRCS = $(filter-out $(LUA_DIR)/lua.c $(LUA_DIR)/luac.c, $(LUA_ALL_SRCS)) apps/lua/lua_main.c
+
 
 ZLIB_LIB = sdk/lib/libz.a
 PNG_LIB = sdk/lib/libpng.a
@@ -152,8 +151,7 @@ $(HELLO_ELF): apps/hello/hello.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
 $(DOOMPROBE_ELF): apps/doomprobe/doomprobe.c $(CRT0_OBJ) $(LIBGLOSS_A)
 	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/doomprobe/doomprobe.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
-$(LUA_ELF): $(LUA_SRCS) $(CRT0_OBJ) $(LIBGLOSS_A)
-	$(CC) $(LUA_CFLAGS) -nostdlib -static $(CRT0_OBJ) $(LUA_SRCS) -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
+
 
 $(EDITOR_NANO_ELF): apps/editor_nano/editor_nano.c apps/editor_nano/font.h $(CRT0_OBJ) $(LIBGLOSS_A)
 	@mkdir -p $(dir $@)
@@ -163,17 +161,13 @@ $(NANO_ELF): apps/kilo/kilo.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/kilo/kilo.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
-$(CRUN_ELF): apps/c4/c4.c $(CRT0_OBJ) $(LIBGLOSS_A)
-	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/c4/c4.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
+
 
 $(CALC_ELF): apps/calc/calc.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/libliwus_gui.a
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/calc/calc.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
 
-$(TCC_ELF): apps/tcc/tcc.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
-	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -DONE_SOURCE=1 -DTCC_TARGET_X86_64 -DCONFIG_TCCDIR=\"/usr/lib/tcc\" -DCONFIG_TCC_SEMLOCK=0 -DCONFIG_TCC_BACKTRACE=0 -DCONFIG_TCC_BCHECK=0 -nostdlib -static $(CRT0_OBJ) apps/tcc/tcc.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
+
 
 sdk/lib/libliwus_gui.a: sdk/lib/liwus_gui.c
 	$(CC) -c $< -o sdk/lib/liwus_gui.o $(USER_CFLAGS) -I$(CURDIR)/sdk/include
@@ -184,13 +178,14 @@ $(DEMO_GUI_ELF): apps/demo_gui/demo_gui.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/libl
 	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/demo_gui/demo_gui.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(DEMO_GUI_ELF)
-	$(HOSTCC) -Iinclude sdk/tools/liw-builder.c -o sdk/tools/liw-builder
+	$(HOSTCC) $(INCLUDES) sdk/tools/liw-builder.c -o sdk/tools/liw-builder
 	$(HOSTCC) sdk/tools/img-gen.c -o sdk/tools/img-gen
 	./sdk/tools/liw-builder src/boot/test.liw src/boot/test.elf src/boot/test_manifest.json
 	grub-file --is-x86-multiboot2 $(KERNEL_BIN)
 	mkdir -p repo
 	./sdk/tools/img-gen
 	if [ -f $(DEMO_GUI_ELF) ]; then cp $(DEMO_GUI_ELF) repo/demo_gui; fi
+
 
 	tar -cvf initrd.tar -C repo . --format=ustar
 	mkdir -p isodir/boot/grub
@@ -224,7 +219,7 @@ run-log: $(ISO_IMAGE)
 
 clean:
 	rm -rf $(OBJ_DIR)
-	rm -f $(KERNEL_BIN) $(ISO_IMAGE) initrd.tar src/boot/test.elf src/boot/test.liw $(CALC_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(LUA_ELF) $(CRUN_ELF) $(EDITOR_NANO_ELF) $(LIBGLOSS_A) $(LIBGLOSS_OBJS) $(CRT0_OBJ)
+	rm -f $(KERNEL_BIN) $(ISO_IMAGE) initrd.tar src/boot/test.elf src/boot/test.liw $(CALC_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(EDITOR_NANO_ELF) $(DEMO_GUI_ELF) $(LIBGLOSS_A) $(LIBGLOSS_OBJS) $(CRT0_OBJ)
 	@echo "  NOTA: liwus_disk.img preservado (remova manualmente se quiser disco limpo)"
 	rm -f sdk/tools/liw-builder sdk/tools/img-gen
-	rm -rf isodir repo
+

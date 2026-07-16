@@ -268,19 +268,7 @@ static void show_network_settings(node_t *btn, void *userdata) {
     title->margin[2] = 20;
     node_add_child(s_content_panel, title);
     
-    extern uint32_t netstack_get_my_ip(void);
-    uint32_t ip = netstack_get_my_ip();
-    char ip_str[32] = "IP: ";
-    if (ip == 0) {
-        strcat(ip_str, "Offline");
-    } else {
-        extern char *itoa(int value, char *str, int base);
-        char buf[8];
-        itoa((int)(ip & 0xFF), buf, 10); strcat(ip_str, buf); strcat(ip_str, ".");
-        itoa((int)((ip >> 8) & 0xFF), buf, 10); strcat(ip_str, buf); strcat(ip_str, ".");
-        itoa((int)((ip >> 16) & 0xFF), buf, 10); strcat(ip_str, buf); strcat(ip_str, ".");
-        itoa((int)((ip >> 24) & 0xFF), buf, 10); strcat(ip_str, buf);
-    }
+    char ip_str[32] = "IP: Offline";
     
     node_add_child(s_content_panel, label_create("net_ip", 0, 0, ip_str, 0xFFAAAAAA));
     node_add_child(s_content_panel, label_create("net_dhcp", 0, 0, "DHCP: Enabled", 0xFFAAAAAA));

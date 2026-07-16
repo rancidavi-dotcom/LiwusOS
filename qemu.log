@@ -1,3 +1,0 @@
-if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
-qemu-system-x86_64 -cdrom liwusos.iso -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 -serial stdio -d guest_errors -no-reboot
-make: *** [Makefile:219: run-serial] Terminated

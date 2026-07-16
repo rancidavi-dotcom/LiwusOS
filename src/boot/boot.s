@@ -68,7 +68,7 @@ _start:
   mov %eax, (%edi, %ecx, 8)
   add $0x200000, %eax
   inc %ecx
-  cmp $128, %ecx
+  cmp $512, %ecx
   jl 1b
 
   /* ---- Step 5: Enable PAE ---- */

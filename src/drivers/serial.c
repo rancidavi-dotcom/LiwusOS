@@ -1,7 +1,10 @@
 #include "io.h"
+#include "spinlock.h"
 #include <stdarg.h>
 
 #define PORT 0x3f8          // COM1
+
+static spinlock_t serial_lock = {0};
 
 int init_serial() {
    outb(PORT + 1, 0x00);    // Disable all interrupts
@@ -41,16 +44,21 @@ void write_serial(char a) {
 }
 
 void serial_print(const char *str) {
+    spinlock_acquire(&serial_lock);
     while (*str) {
         write_serial(*str++);
     }
+    spinlock_release(&serial_lock);
 }
 
 // Simple helper for hex debug
 void serial_print_hex(uint64_t n) {
+    spinlock_acquire(&serial_lock);
     char *digits = "0123456789ABCDEF";
-    serial_print("0x");
+    write_serial('0');
+    write_serial('x');
     for (int i = 60; i >= 0; i -= 4) {
         write_serial(digits[(n >> i) & 0xF]);
     }
+    spinlock_release(&serial_lock);
 }

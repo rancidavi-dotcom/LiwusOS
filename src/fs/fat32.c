@@ -43,7 +43,6 @@ static int fat32_load_directory(uint32_t start_cluster, uint8_t **buffer_out,
 static uint32_t fat32_next_cluster(uint32_t current_cluster);
 static void fat32_free_cluster_chain(uint32_t start_cluster);
 static void fat32_write_fat_entry(uint32_t cluster, uint32_t value);
-extern task_t *current_task;
 
 static void fat32_maybe_yield(void) {
   if (current_task) {

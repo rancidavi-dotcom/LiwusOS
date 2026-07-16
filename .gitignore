@@ -19,3 +19,9 @@ sdk/tools/liw-builder
 *.swp
 *.bak
 .aider*
+
+# Logs and Temp
+*.log
+output
+test_transform
+*backup*

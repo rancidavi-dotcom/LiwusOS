@@ -41,6 +41,7 @@ with code identifiers in **English**.
   - [Kernel](#kernel)
   - [Memory Management](#memory-management)
   - [Process Management](#process-management)
+  - [Symmetric Multiprocessing (SMP) Architecture](#symmetric-multiprocessing-smp-architecture)
   - [Syscalls](#syscalls)
   - [Filesystems](#filesystems)
   - [Drivers](#drivers)
@@ -275,6 +276,324 @@ The kernel is a **monolithic higher-half** design. All kernel code is linked at 
 - **Ctrl+C:** Kills foreground task via `check_ctrl_c()` in scheduler
 
 **Task States:** RUNNING, READY, SLEEPING, ZOMBIE
+
+### Symmetric Multiprocessing (SMP) Architecture
+
+The LiwusOS kernel implements a Symmetric Multiprocessing (SMP) architecture on `x86_64` systems, transitioning from a single-core Bootstrap Processor (BSP) model to a fully parallel, multi-core environment. All processors run under the same virtual address space, share kernel resources, and execute a synchronized scheduling queue.
+
+```mermaid
+graph TD
+    A[Multiboot2 Entry] --> B[BSP Entry: kernel_main]
+    B --> C[ACPI RSDP / MADT Parser]
+    C --> D[Local APIC & I/O APIC Mapping]
+    D --> E[Disable Legacy 8259 PIC]
+    E --> F[trampoline.s copied to 0x8000]
+    F --> G[For each AP: INIT & STARTUP IPIs]
+    G --> H[AP executes trampoline.s at 0x8000]
+    H --> I[Transition 16-bit -> 32-bit PM -> 64-bit LM]
+    I --> J[AP sets GS Base & calls ap_kernel_main]
+    J --> K[Scheduler loop & Per-CPU local queues active]
+```
+
+#### 1. Visão Geral da Arquitetura
+
+Originalmente, o LiwusOS era um sistema estritamente single-core, onde o Bootstrap Processor (BSP) inicializado pelo GRUB gerenciava exclusivamente o agendamento de tarefas, tratamento de interrupções e renderização gráfica. A nova arquitetura SMP migra o sistema para um modelo simétrico, caracterizado por:
+
+- **Identidade Simétrica de Cores**: Após a inicialização, a distinção lógica entre BSP e Application Processors (APs) é minimizada. Cada processador executa o escalonador Round-Robin de forma concorrente e atua de maneira autônoma.
+- **Compartilhamento de Recursos Coerentes**: Todos os cores compartilham o mesmo espaço de endereçamento PML4 (tabela de páginas do kernel), o Heap do kernel (`kheap`), e a tabela física de frames de memória (PMM), comunicando-se por meio de estruturas protegidas por primitivas atômicas.
+- **Tratamento de Interrupções Distribuído**: O roteamento de interrupções foi portado para a arquitetura APIC (Advanced Programmable Interrupt Controller), permitindo o direcionamento seletivo de IRQs de hardware para cores específicos.
+
+#### 2. Fase de Hardware e Inicialização (O Protocolo INIT-SIPI)
+
+A inicialização do subsistema de multiprocessamento ocorre sequencialmente na fase inicial do boot do BSP, dividindo-se em quatro etapas de baixo nível:
+
+##### A. Parsing do ACPI RSDP e MADT
+O kernel realiza uma busca na memória física baixa (EBDA e a faixa BIOS `0x000E0000` - `0x000FFFFF`) pela assinatura `"RSD PTR "` para localizar a estrutura **RSDP (Root System Description Pointer)**. A partir dela, o endereço da tabela **MADT (Multiple APIC Description Table)** é resolvido. O parser do MADT varre os registros de entrada de hardware para extrair:
+1. O endereço físico base do Local APIC (LAPIC).
+2. A lista de núcleos de CPU disponíveis no sistema (registrando seus IDs APIC locais).
+3. A configuração do I/O APIC (endereço físico base e mapeamentos de IRQ).
+
+| Campo MADT | Significado | Endereço Físico Padrão |
+| :--- | :--- | :--- |
+| **LAPIC Base** | Registradores de controle local do core | `0xFEE00000` |
+| **I/O APIC Base** | Roteamento de interrupções de hardware | `0xFEC00000` |
+
+##### B. Mapeamento MMIO Uncacheable
+Para garantir que as operações de escrita e leitura nos registradores MMIO do APIC ocorram de forma imediata (sem passar por caches L1/L2/L3 da CPU), mapeamos as páginas físicas correspondentes ao LAPIC e I/O APIC no VMM aplicando a flag `PTE_PCD` (Page-level Cache Disable). A configuração também inicializa a tabela de atributos de página PAT (Page Attribute Table) definindo a entrada `PAT1` como **Write-Combining (WC)** para acesso otimizado de display.
+
+```c
+// Exemplo de mapeamento MMIO seguro para APIC
+vmm_map_page((void*)LAPIC_PHYS_BASE, (void*)LAPIC_VIRT_BASE, PTE_PRESENT | PTE_WRITE | PTE_PCD);
+```
+
+##### C. Desativação do Legacy PIC
+O controlador de interrupções clássico Intel 8259 PIC é desativado escrevendo máscaras completas (`0xFF`) em seus registradores de dados para evitar conflito de IRQs espúrias:
+```c
+outb(0x21, 0xFF); // Mascara todas as IRQs no Master PIC
+outb(0xA1, 0xFF); // Mascara todas as IRQs no Slave PIC
+```
+
+##### D. Envio de IPIs (Inter-Processor Interrupts)
+Para acordar cada AP detectado no MADT, o LAPIC do BSP programa o registrador **ICR (Interrupt Command Register)**. O protocolo de acordar segue a sequência de sinalização padrão Intel:
+
+1. **INIT IPI**: Reseta o estado do core do AP.
+   - Escrita no ICR: `(apic_id << 24) | 0x0000C500` (Sinal de assert/deassert nível e vetor 0).
+   - O BSP aguarda **10 milissegundos** para a estabilização física do hardware do core.
+2. **STARTUP IPI (SIPI)**: Envia o vetor contendo a página real de inicialização (`0x08`).
+   - Escrita no ICR: `(apic_id << 24) | 0x00004608` (Delivery mode: Startup, Vector: `0x08` $\rightarrow$ aponta para o endereço físico `0x8000`).
+   - O BSP aguarda **1 milissegundo** e verifica a flag atômica de inicialização do AP.
+
+#### 3. O Código de Trampolim (Trampoline Code)
+
+Os núcleos AP acordam em **Real Mode (modo de 16 bits real)**. Portanto, o código de trampolim deve ser posicionado em memória convencional abaixo de 1MB. O LiwusOS utiliza o endereço físico fixo `0x8000` (página `0x08` enviada no SIPI).
+
+O arquivo `src/kernel/trampoline.s` é copiado fisicamente para `0x8000` antes do envio das IPIs. A transição de modos de processamento ocorre sob a seguinte sequência estruturada em assembly:
+
+```assembly
+.code16
+.global trampoline_start
+trampoline_start:
+    cli                         # Desativa interrupções locais no AP
+    xor %ax, %ax
+    mov %ax, %ds
+    mov %ax, %es
+    
+    # Carrega a GDT de modo real temporária (baseada no endereço 0x8000)
+    lgdt (gdt_ptr_16 - trampoline_start + 0x8000)
+    
+    # Transição 1: Habilita Protected Mode de 32 bits (PE=1 no CR0)
+    mov %cr0, %eax
+    or $1, %eax
+    mov %eax, %cr0
+    
+    # Far jump para recarregar o seletor CS para 32-bit PM
+    ljmpl $0x08, $(entry_32 - trampoline_start + 0x8000)
+
+.code32
+entry_32:
+    # Registradores de segmento de 32-bit de dados
+    mov $0x10, %ax
+    mov %ax, %ds
+    mov %ax, %es
+    mov %ax, %ss
+    
+    # Transição 2: Configuração de Paginação de 4 Níveis (Paging para Long Mode)
+    # 1. Copia o PML4 físico configurado pelo BSP para o CR3 do AP
+    mov (ap_pml4_val - trampoline_start + 0x8000), %eax
+    mov %eax, %cr3
+    
+    # 2. Habilita Physical Address Extension (PAE) escrevendo no CR4
+    mov %cr4, %eax
+    or $(1 << 5), %eax
+    mov %eax, %cr4
+    
+    # 3. Define a flag Long Mode Enable (LME) no MSR EFER (0xC0000080)
+    mov $0xC0000080, %ecx
+    rdmsr
+    or $(1 << 8), %eax
+    wrmsr
+    
+    # 4. Habilita Paginação Geral (PG=1 e PE=1) no CR0
+    mov %cr0, %eax
+    or $0x80000000, %eax
+    mov %eax, %cr0
+    
+    # Carrega a GDT de 64 bits definitiva
+    lgdt (gdt_ptr_64 - trampoline_start + 0x8000)
+    
+    # Far jump definitivo para Long Mode de 64 bits
+    ljmp $0x18, $(entry_64 - trampoline_start + 0x8000)
+
+.code64
+entry_64:
+    # AP agora está executando em 64-bit Long Mode!
+    # Carrega a pilha exclusiva do kernel previamente alocada pelo BSP para este core
+    mov (ap_stack_val - trampoline_start + 0x8000), %rsp
+    
+    # Escreve a flag de status de inicialização atômica sinalizando sucesso ao BSP
+    mov (ap_entry_val - trampoline_start + 0x8000), %rax
+    movq $1, (ap_status - trampoline_start + 0x8000)
+    
+    # Salta para a função C de inicialização do núcleo AP
+    jmp *%rax
+```
+
+#### 4. Variáveis Per-CPU e Armazenamento Local (`%gs`)
+
+No modelo multi-core, variáveis globais críticas como `current_task` (a tarefa em execução ativa) não podem ser compartilhadas de forma idêntica entre os cores. Cada CPU física deve gerenciar de forma independente o seu próprio estado.
+
+Implementamos a estrutura `cpu_local_t` para agrupar as informações locais de cada processador:
+
+```c
+typedef struct {
+    int cpu_id;
+    int padding;
+    task_t *current_task_ptr;
+    uint64_t kernel_stack;
+} __attribute__((packed)) cpu_local_t;
+```
+
+##### O uso do Segmento `GS` no x86_64
+Para fornecer acesso ultra-rápido a essa estrutura local sem buscas complexas em tabelas hash, vinculamos a struct `cpu_local_t` de cada núcleo ao registrador de segmento **GS**. A arquitetura `x86_64` elimina a maior parte do mecanismo clássico de segmentação, mas preserva os registradores `FS` e `GS` para permitir endereçamento base por meio de Model-Specific Registers (MSRs).
+
+Durante a fase de inicialização do BSP e do `ap_kernel_main()` de cada AP, escrevemos o endereço físico/virtual da estrutura `cpu_local_t` correspondente no MSR **`IA32_GS_BASE` (`0xC0000101`)**:
+
+```c
+void init_cpu_local(int cpu_id) {
+    cpu_local_t *local = &cpus_local[cpu_id];
+    memset(local, 0, sizeof(cpu_local_t));
+    local->cpu_id = cpu_id;
+
+    uint64_t val = (uint64_t)local;
+    uint32_t low = val & 0xFFFFFFFF;
+    uint32_t high = val >> 32;
+    // Escrita no MSR IA32_GS_BASE
+    asm volatile("wrmsr" : : "a"(low), "d"(high), "c"(0xC0000101));
+}
+```
+
+##### Acesso Transparente via Macro
+Para que o restante das camadas do kernel continuasse operando sem modificação, definimos `current_task` como uma macro de compilação direta baseada em inline assembly relativo ao registrador `%gs`. A leitura busca diretamente o ponteiro no offset `8` (onde reside `current_task_ptr`):
+
+```c
+static inline uint64_t read_gs_qword(uint32_t offset) {
+    uint64_t val;
+    // O modificador %c1 expande para o imediato numérico sem prefixo (ex: 8)
+    asm volatile("movq %%gs:%c1, %0" : "=r"(val) : "i"(offset));
+    return val;
+}
+
+#define current_task ((task_t *)read_gs_qword(8))
+```
+
+#### 5. Sincronização e Primitivas Atômicas (Spinlocks)
+
+Sem o suporte a interrupções de hardware centralizadas no PIC, múltiplos cores podem disputar e alterar estruturas de dados comuns ao mesmo tempo. A sincronização no LiwusOS é gerenciada por meio de **Spinlocks de exclusão mútua ativa (Busy-Waiting)**.
+
+A estrutura de dados e as funções de manipulação atômica são declaradas usando as primitivas embutidas do compilador GCC (`__sync` builtins):
+
+```c
+typedef struct {
+    volatile int lock;
+} spinlock_t;
+
+static inline void spinlock_acquire(spinlock_t *lock) {
+    // __sync_lock_test_and_set executa de forma atômica (com prefixo LOCK em x86)
+    // a troca do valor e retorna o estado anterior.
+    while (__sync_lock_test_and_set(&lock->lock, 1)) {
+        // A instrução 'pause' avisa ao pipeline da CPU que está em loop de spinlock,
+        // economizando energia e evitando penalidades de violação de ordem de memória.
+        asm volatile("pause");
+    }
+}
+
+static inline void spinlock_release(spinlock_t *lock) {
+    __sync_lock_release(&lock->lock);
+}
+```
+
+##### Prevenção de Deadlocks e Mascaramento de Interrupções
+O maior perigo no uso de spinlocks dentro do espaço de kernel ocorre quando um núcleo adquire uma trava e é interrompido por um tratador de interrupção local (como o timer ou driver de disco) que tenta adquirir a **mesma** trava. Isso causa um deadlock instantâneo e irrecuperável.
+
+Para evitar isso, as funções críticas de controle de recursos bloqueiam as interrupções locais (`cli`) **antes** de adquirir a trava atômica e as restauram (`sti`) apenas **após** a liberação.
+
+Essas proteções foram implementadas nos seguintes componentes estruturais críticos:
+- **Physical Memory Manager (PMM)**: Sincronizado sob `pmm_lock` para proteger as listas de alocação e liberação de frames físicos de página.
+- **Kernel Heap Allocator (KHeap)**: Sincronizado sob `kheap_lock` para garantir a consistência física dos metadados de blocos livres e ocupados (`kmalloc` / `kfree`).
+- **Scheduler Queue**: Sincronizado sob `scheduler_lock` para proteger a integridade da lista encadeada circular `task_list` durante operações de troca de contexto (`schedule`), criação de tarefas, finalização (`sys_exit_process`) e forks de processos.
+#### 6. Per-CPU Segmentation, Resource Isolation, and Memory Safety
+
+To support a robust and secure Symmetric Multiprocessing (SMP) environment, several critical architectural enhancements were introduced to achieve memory isolation, prevent physical page overlaps, eliminate race conditions, and secure the boundary between User Space (Ring 3) and Kernel Space (Ring 0).
+
+---
+
+##### A. Per-CPU GDT and TSS (Kernel Stack Isolation)
+
+In a multi-core processor layout, sharing a single Global Descriptor Table (GDT) or Task State Segment (TSS) is highly vulnerable. If two CPU cores executing user-mode threads receive a hardware interrupt or page fault simultaneously, they would load the exact same kernel stack pointer (`rsp0`) from the shared TSS, resulting in catastrophic stack corruption.
+
+- **Isolation Strategy:** The kernel allocates private GDT descriptors (`cpus_gdt[16]`), GDT pointers (`cpus_gdt_ptr[16]`), and private TSS structures (`cpus_tss[16]`) for each core. Each core loads its own private segment descriptors during local initialization.
+- **Dynamic Stack Relocation:** During context switching inside the Round-Robin scheduler, only the local CPU's TSS is updated with the stack pointer of the incoming thread:
+  ```c
+  cpus_tss[get_cpu_id()].rsp0 = new_curr->kernel_stack;
+  ```
+
+```mermaid
+graph LR
+    subgraph "Core 0 (BSP)"
+        GDTR0[GDTR Register] -->|Loads| GDT0[cpus_gdt[0]]
+        GDT0 -->|TSS Segment Descriptor| TSS0[cpus_tss[0]]
+        TSS0 -->|Privilege Level Transition| RSP0_0[Core 0 Private Kernel Stack]
+    end
+    subgraph "Core 1 (AP)"
+        GDTR1[GDTR Register] -->|Loads| GDT1[cpus_gdt[1]]
+        GDT1 -->|TSS Segment Descriptor| TSS1[cpus_tss[1]]
+        TSS1 -->|Privilege Level Transition| RSP0_1[Core 1 Private Kernel Stack]
+    end
+    style GDTR0 fill:#1f1f2e,stroke:#33b5e5,stroke-width:2px,color:#fff
+    style GDTR1 fill:#1f1f2e,stroke:#ffbb33,stroke-width:2px,color:#fff
+    style GDT0 fill:#2d2d3d,stroke:#33b5e5,color:#fff
+    style GDT1 fill:#2d2d3d,stroke:#ffbb33,color:#fff
+    style TSS0 fill:#2d2d3d,stroke:#33b5e5,color:#fff
+    style TSS1 fill:#2d2d3d,stroke:#ffbb33,color:#fff
+    style RSP0_0 fill:#003300,stroke:#33b5e5,color:#fff
+    style RSP0_1 fill:#003300,stroke:#ffbb33,color:#fff
+```
+
+---
+
+##### B. Process-Isolated File Descriptor Tables
+
+The legacy kernel utilized a single, shared global array `fd_table[32]` to track open file descriptions, pipes, and sockets. This lacked process-level boundaries and allowed any process to close or overwrite descriptors belonging to other running tasks.
+
+- **Architectural Fix:** We replaced the global array with a task-isolated descriptor table (`file_descriptors[32]` of type `kfile_t` inside `task_t`).
+- **Deep Copy on Fork:** When a process executes a `fork()`, the child inherits the file descriptors via a deep copy of the array, and reference counters for shared resources (such as `pipe_t`) are atomically incremented.
+
+| Descriptor Design | Scope | Isolation Boundary | Concurrency Safety |
+| :--- | :--- | :--- | :--- |
+| **Legacy Global Design** | System-Wide (`static fd_table[32]`) | None (arbitrary cross-task access) | High risk of race conditions |
+| **Isolated Design** | Per-Process (`task_t.file_descriptors[32]`) | Absolute (isolated at task level) | Thread-safe through private structures |
+
+---
+
+##### C. Page Directory Lifecycle (Reclamation & Cloning)
+
+The virtual memory manager (VMM) and physical memory manager (PMM) cooperate to handle address space creation, copying, and teardown:
+
+- **Virtual Address Space Cloning (`vmm_copy_directory`):** When creating a child process via `fork()`, the kernel replicates the virtual mappings of the user-space portion (lower half of PML4, entries 0 to 255). It allocates new physical page frames, maps them into the child's PML4 directory, and performs a byte-level copy of data sections.
+- **Resource Reclamation (`vmm_free_directory`):** When a process terminates, the kernel walks the lower 256 entries of its PML4. It recursively traverses Page Directory Pointers (PDP), Page Directories (PD), and Page Tables (PT), freeing all mapped user physical frames back to the PMM (`pmm_free_block`) and reclaiming table structures.
+- **Parent Use-After-Free Prevention:** Upon process termination, all child tasks are automatically reparented to the kernel's initialization task (PID 0), preventing children from dereferencing a freed parent structure.
+
+```mermaid
+graph TD
+    subgraph "Parent Address Space"
+        PPML4[Parent PML4 Directory] -->|Entries 256-511| SharedKern[Shared Kernel Mappings]
+        PPML4 -->|Entries 0-255| PUser[Parent User Memory Pages]
+    end
+    subgraph "Child Address Space"
+        CPML4[Child PML4 Directory] -->|Entries 256-511| SharedKern
+        CPML4 -->|Entries 0-255| CUser[Child User Memory Pages]
+    end
+    PPML4 -.->|Deep Clones Mappings| CPML4
+    PUser ===>|Clones Physical Frames & Copies Content| CUser
+    style SharedKern fill:#4d4d4d,stroke:#fff,color:#fff
+    style PUser fill:#004d40,stroke:#fff,color:#fff
+    style CUser fill:#004d40,stroke:#fff,color:#fff
+    style PPML4 fill:#1a237e,stroke:#fff,color:#fff
+    style CPML4 fill:#1a237e,stroke:#fff,color:#fff
+```
+
+---
+
+##### D. Ring 3 Pointer Validation Guards
+
+To prevent malicious user-space programs from passing kernel virtual addresses (higher-half addresses) to syscalls to read or overwrite kernel memory (Privilege Escalation / Confused Deputy Attack), we introduced strict input sanitizers.
+
+- **Pointer Boundaries:** The kernel validates user-provided pointer arguments in `sys_open`, `sys_read`, and `sys_write` by checking that the memory ranges fall strictly below the User Stack Limit (`0xC0000000`).
+
+| Validator | Boundary Check Formula | Enforced Syscalls | Security Benefit |
+| :--- | :--- | :--- | :--- |
+| `validate_user_range` | `(addr < 0xC0000000) && (addr + size <= 0xC0000000)` | `sys_read`, `sys_write` | Prevents writing file data into kernel segments |
+| `validate_user_string` | Scans up to `0xC0000000` for a null-terminator `\0` | `sys_open` | Prevents kernel path traversal / out-of-bounds reading |
 
 ### Syscalls
 

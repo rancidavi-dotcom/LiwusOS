@@ -31,6 +31,20 @@ Node text_create(const char* text);
 Node button_create(const char* text);
 Node panel_create(void);
 
+/* Create an image node with a raw ARGB pixel buffer inside a canvas.
+ * pixels: width * height uint32_t values in 0xAARRGGBB format.
+ * The pixel data is COPIED into kernel memory.
+ * Returns the image node ID, or 0 on failure.
+ */
+Node image_create(Canvas parent, int width, int height, const uint32_t *pixels);
+
+/* Update the pixel buffer of an existing image node.
+ * count: number of pixels (width * height).
+ * The pixel data is COPIED into kernel memory.
+ * Returns 0 on success, -1 on failure.
+ */
+int image_update(Node image, const uint32_t *pixels, uint32_t count);
+
 /* Hierarchy and Spatial */
 void canvas_add(Canvas canvas, Node child);
 void node_add_child(Node parent, Node child);

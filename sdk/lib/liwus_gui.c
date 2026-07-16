@@ -52,6 +52,29 @@ void node_move(Node node, int x, int y) {
     syscall3(123, (uint64_t)node, (uint64_t)x, (uint64_t)y);
 }
 
+Node image_create(Canvas parent, int width, int height, const uint32_t *pixels) {
+    // syscall 125: image_create(parent_id, width, height, pixels)
+    // Using syscall5 since we need 4 args beyond the syscall number
+    uint64_t ret;
+    asm volatile(
+        "mov $125, %%rax\n"
+        "mov %1, %%rdi\n"   // parent
+        "mov %2, %%rsi\n"   // width
+        "mov %3, %%rdx\n"   // height
+        "mov %4, %%r10\n"   // pixels
+        "syscall\n"
+        "mov %%rax, %0\n"
+        : "=r"(ret)
+        : "r"((uint64_t)parent), "r"((uint64_t)width),
+          "r"((uint64_t)height), "r"((uint64_t)pixels)
+        : "rax", "rdi", "rsi", "rdx", "r10", "rcx", "r11", "memory");
+    return (Node)ret;
+}
+
+int image_update(Node image, const uint32_t *pixels, uint32_t count) {
+    return (int)syscall3(126, (uint64_t)image, (uint64_t)pixels, (uint64_t)count);
+}
+
 void camera_zoom(float zoom) {
     // Pass as integer scaled by 1000
     int z = (int)(zoom * 1000.0f);
