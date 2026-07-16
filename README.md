@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="assets/LiwusOSlogo.png" alt="LiwusOS Logo" width="200"/>
-</p>
+
 
 <h1 align="center">LiwusOS</h1>
 
