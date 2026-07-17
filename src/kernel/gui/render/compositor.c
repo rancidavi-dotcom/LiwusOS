@@ -390,3 +390,16 @@ void compositor_frame(compositor_t *c) {
     /* Yield to other kernel tasks */
     switch_task();
 }
+
+void compositor_draw_image(compositor_t *comp, int x, int y, int width, int height, const uint32_t *buffer) {
+    if (!comp || !buffer) return;
+    for (int j = 0; j < height; j++) {
+        for (int i = 0; i < width; i++) {
+            uint32_t c = buffer[j * width + i];
+            uint8_t a = (c >> 24) & 0xFF;
+            if (a > 0) { // Simple alpha test
+                fb_renderer_draw_pixel(comp->renderer, x + i, y + j, c);
+            }
+        }
+    }
+}

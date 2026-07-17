@@ -53,4 +53,11 @@ void node_move(Node node, int x, int y);
 /* Camera */
 void camera_zoom(float zoom);
 
+/* Keyboard */
+bool keyboard_is_pressed(uint8_t scancode);
+
+/* Image */
+Node image_create(Canvas canvas, int width, int height, uint32_t *buffer);
+void image_update(Node image, uint32_t *buffer, int buffer_size);
+
 #endif /* LIWUS_GUI_H */

@@ -145,12 +145,6 @@ void terminal_app_start(void) {
     }
 }
 
-void doom_app_start(void) {
-    int launch_initrd_program_argv(const char *filename, char *const argv[]);
-    static char *doom_argv[] = { "doom_rust", NULL };
-    launch_initrd_program_argv("doom_rust", doom_argv);
-}
-
 
 
 
@@ -190,10 +184,11 @@ void gui_init(void) {
     /* Register Apps */
     extern void terminal_app_start(void);
     extern void demo_app_start(void);
-    extern void doom_app_start(void);
     app_registry_add("Demo Window", NULL, demo_app_start);
     app_registry_add("Terminal", NULL, terminal_app_start);
-    app_registry_add("DOOM", NULL, doom_app_start);
+    
+    extern void lde_app_start(void);
+    app_registry_add("Liwus Desktop Engine", NULL, lde_app_start);
 
 
     /* 7. Managers (must subscribe BEFORE tools to intercept focus events) */
@@ -220,6 +215,12 @@ void gui_init(void) {
 /* --------------------------------------------------------------------------
  * Task do compositor (loop infinito, chamado como kernel task)
  * -------------------------------------------------------------------------- */
+
+void lde_app_start(void) {
+    extern int launch_initrd_program_argv(const char *filename, char *const argv[]);
+    char *lde_argv[] = { "lde", NULL };
+    launch_initrd_program_argv("lde", lde_argv);
+}
 
 void gui_compositor_task(void) {
     if (!s_comp) return;

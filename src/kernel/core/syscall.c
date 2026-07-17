@@ -5,19 +5,21 @@
 #include "io.h"
 #include "kheap.h"
 #include "keyboard.h"
+#include "netstack.h"
 #include "serial.h"
 #include "string.h"
 #include "task.h"
+#include "tcp.h"
 #include "timer.h"
 #include "vga.h"
 #include "vmm.h"
 #include "vfs.h"
 #include "termios.h"
-#include "pmm.h"
 
 extern int elf_class(void *file_buffer);
 extern uint64_t elf32_load_file(void *file_buffer);
 extern uint64_t elf64_load_file(void *file_buffer);
+extern task_t *current_task;
 
 static char *launch_last_error = "nenhum erro";
 const char *get_launch_last_error() { return launch_last_error; }
@@ -95,7 +97,7 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
   uint64_t stack_top = 0xC0000000;
   uint64_t stack_base = stack_top - stack_size;
   for (uint64_t vaddr = stack_base; vaddr < stack_top; vaddr += 4096) {
-    void *phys = pmm_alloc_block();
+    void *phys = kmalloc_a(4096);
     vmm_map_page(phys, (void *)vaddr, 0x07);
     memset((void *)vaddr, 0, 4096);
   }
@@ -212,6 +214,7 @@ int launch_initrd_program_argv(const char *filename, char *const argv[]) {
   
   // Temporarily update current_task's directory so the timer interrupt
   // doesn't revert current_directory while sys_execve maps memory!
+  extern task_t *current_task;
   page_directory_t *task_old_dir = current_task ? current_task->page_directory : old_dir;
   if (current_task) current_task->page_directory = new_dir;
   
@@ -309,36 +312,32 @@ int launch_initrd_program_argv(const char *filename, char *const argv[]) {
 #define FD_TYPE_SOCKET 2
 #define FD_TYPE_PIPE 3
 
-#define fd_table (current_task->file_descriptors)
+#define PIPE_BUF_SIZE 4096
 
-static bool validate_user_range(const void *ptr, size_t size) {
-  if (!ptr) return false;
-  uint64_t addr = (uint64_t)ptr;
-  if (addr >= 0xC0000000 || (addr + size) > 0xC0000000 || (addr + size) < addr) {
-    return false;
-  }
-  return true;
-}
+typedef struct {
+  uint8_t buffer[PIPE_BUF_SIZE];
+  uint32_t read_pos;
+  uint32_t write_pos;
+  uint32_t bytes_avail;
+  int refcount;
+} pipe_t;
 
-static bool validate_user_string(const char *str) {
-  if (!str) return false;
-  uint64_t addr = (uint64_t)str;
-  if (addr >= 0xC0000000) return false;
-  while (addr < 0xC0000000) {
-    if (*(const char *)addr == '\0') return true;
-    addr++;
-  }
-  return false;
-}
+typedef struct {
+  int type;
+  uint32_t base_addr;
+  uint32_t size;
+  uint32_t offset;
+  int owned_buffer;
+  void *socket_ptr;
+} kfile_t;
 
-#define O_CREAT 0x0200
+static kfile_t fd_table[32];
+
+#define O_CREAT 0x0200 // Definido conforme padrão comum, ajuste se necessário
 #define O_TRUNC 0x0400
 #define O_APPEND 0x0008
 
 int sys_open(const char *filename, int flags) {
-  if (current_task && current_task->user_mode) {
-    if (!validate_user_string(filename)) return -1;
-  }
   int fd = -1;
   for (int i = 3; i < 32; i++) {
     if (fd_table[i].type == FD_TYPE_FREE) {
@@ -377,28 +376,6 @@ int sys_open(const char *filename, int flags) {
     fd_table[fd].owned_buffer = 0;
     return fd;
   }
-
-  /* Fallback: try initrd */
-  {
-    uint32_t initrd_size = 0;
-    const char *initrd_path = resolved;
-    if (initrd_path && initrd_path[0] == '/')
-      initrd_path++;
-    void *initrd_data = initrd_get_file(initrd_path, &initrd_size);
-    if (initrd_data && initrd_size > 0) {
-      fd_table[fd].type = FD_TYPE_FILE;
-      fd_table[fd].socket_ptr = NULL;
-      fd_table[fd].offset = 0;
-      fd_table[fd].size = initrd_size;
-      fd_table[fd].base_addr = (uint64_t)initrd_data;
-      fd_table[fd].owned_buffer = 0;
-      serial_print("[syscall] sys_open initrd fallback: ");
-      serial_print(filename);
-      serial_print("\n");
-      return fd;
-    }
-  }
-
   serial_print("[syscall] sys_open failed: ");
   serial_print(filename);
   serial_print("\n");
@@ -406,9 +383,6 @@ int sys_open(const char *filename, int flags) {
 }
 
 int sys_read(int fd, void *buf, uint32_t count) {
-  if (current_task && current_task->user_mode) {
-    if (!validate_user_range(buf, count)) return -1;
-  }
   if (fd >= 0 && fd < 32 && fd_table[fd].type == FD_TYPE_PIPE) {
     pipe_t *p = (pipe_t *)fd_table[fd].socket_ptr;
     if (!p) return -1;
@@ -534,9 +508,6 @@ int sys_read(int fd, void *buf, uint32_t count) {
 extern void write_serial(char a);
 
 int sys_write(int fd, const void *buf, uint32_t count) {
-  if (current_task && current_task->user_mode) {
-    if (!validate_user_range(buf, count)) return -1;
-  }
   if (fd == 1 || fd == 2) {
     for (uint32_t i = 0; i < count; i++) {
       char c = ((const char*)buf)[i];
@@ -573,7 +544,7 @@ int sys_write(int fd, const void *buf, uint32_t count) {
 int sys_close(int fd) {
   if (fd < 0 || fd >= 32) return -1;
   kfile_t *f = &fd_table[fd];
-
+  if (f->type == FD_TYPE_SOCKET) tcp_close((tcp_socket_t *)f->socket_ptr);
   if (f->type == FD_TYPE_PIPE) {
     pipe_t *p = (pipe_t *)f->socket_ptr;
     if (p) {
@@ -696,7 +667,7 @@ static int do_execve(registers_t *regs, const char *filename, char *const argv[]
   uint64_t stack_top = 0xC0000000;
   uint64_t stack_base = stack_top - stack_size;
   for (uint64_t vaddr = stack_base; vaddr < stack_top; vaddr += 4096) {
-    void *phys = pmm_alloc_block();
+    void *phys = kmalloc_a(4096);
     vmm_map_page(phys, (void *)vaddr, 0x07);
     memset((void *)vaddr, 0, 4096);
   }
@@ -748,13 +719,12 @@ static int do_execve(registers_t *regs, const char *filename, char *const argv[]
   return 0;
 }
 
-#include "../gui/scene/node.h"
-#include "../gui/widgets/window_node.h"
-#include "../gui/widgets/button.h"
-#include "../gui/widgets/label.h"
-#include "../gui/widgets/panel.h"
-#include "../gui/widgets/image_node.h"
-#include "../gui/render/compositor.h"
+#include "gui/scene/node.h"
+#include "gui/widgets/window_node.h"
+#include "gui/widgets/button.h"
+#include "gui/widgets/label.h"
+#include "gui/widgets/panel.h"
+#include "gui/render/compositor.h"
 
 extern compositor_t *g_compositor;
 
@@ -780,6 +750,10 @@ uint32_t sys_gui_canvas_create(int width, int height, const char* title) {
     win->padding[0] = 30; // Title bar space
     
     node_add_child(g_compositor->scene_root, win);
+    
+    extern void focus_manager_set_focus(node_t *node);
+    focus_manager_set_focus(win);
+    
     return win->id;
 }
 
@@ -829,42 +803,6 @@ int sys_gui_camera_zoom(float zoom) {
     g_compositor->camera->zoom_fp = (int)(zoom * 65536.0f);
     compositor_invalidate_full(g_compositor);
     return 0;
-}
-
-// 125: image_create() -> creates an image node with pixel buffer
-uint32_t sys_gui_image_create(uint32_t parent_id, int width, int height,
-                               const uint32_t *pixels) {
-    if (!g_compositor || !g_compositor->scene_root) return 0;
-    if (width <= 0 || height <= 0 || !pixels) return 0;
-
-    /* Find the parent node (the window canvas) */
-    node_t *parent = node_find_by_id(g_compositor->scene_root, parent_id);
-    if (!parent) return 0;
-
-    /* Create image node positioned at (0,0) inside the parent */
-    node_t *img = image_node_create("app_img", 0, 0, width, height, pixels);
-    if (!img) return 0;
-
-    /* Bind to current process */
-    if (current_task) {
-        /* image nodes don't need PID binding — they're children of a window
-         * that is already bound. But we store it for reference. */
-    }
-
-    node_add_child(parent, img);
-    node_mark_dirty(parent, NODE_DIRTY_LAYOUT | NODE_DIRTY_PAINT);
-    return img->id;
-}
-
-// 126: image_update() -> updates pixel buffer of an existing image node
-int sys_gui_image_update(uint32_t node_id, const uint32_t *pixels,
-                          uint32_t count) {
-    if (!g_compositor || !g_compositor->scene_root) return -1;
-    node_t *n = node_find_by_id(g_compositor->scene_root, node_id);
-    if (!n || n->type != NODE_IMAGE) return -1;
-    if (!pixels || count == 0) return -1;
-
-    return image_node_update(n, pixels, count);
 }
 
 // ============================================================
@@ -1234,6 +1172,7 @@ void syscall_handler(registers_t *regs) {
     case 31: regs->rax = sys_pipe((int *)regs->rdi); break;
     case 32: regs->rax = sys_dup((int)regs->rdi); break;
     case 33: regs->rax = sys_dup2((int)regs->rdi, (int)regs->rsi); break;
+    case 34: regs->rax = task_snapshot((void *)regs->rdi, (int)regs->rsi); break;
     
     // Fase 5: OSDev GUI Syscalls (Modern Scene Graph SDK)
     case 120: regs->rax = sys_gui_canvas_create((int)regs->rdi, (int)regs->rsi, (const char *)regs->rdx); break;
@@ -1246,14 +1185,47 @@ void syscall_handler(registers_t *regs) {
         regs->rax = sys_gui_camera_zoom(zoom);
         break;
     }
-
-    // Image node syscalls — pixel buffer rendering for apps like Doom
-    case 125: regs->rax = sys_gui_image_create((uint32_t)regs->rdi, (int)regs->rsi, (int)regs->rdx, (const uint32_t *)regs->r10); break;
-    case 126: regs->rax = sys_gui_image_update((uint32_t)regs->rdi, (const uint32_t *)regs->rsi, (uint32_t)regs->rdx); break;
+    case 125: regs->rax = sys_gui_image_create((int)regs->rdi, (int)regs->rsi, (int)regs->rdx, (uint32_t *)regs->rcx); break;
+    case 126: regs->rax = sys_gui_image_update((uint32_t)regs->rdi, (uint32_t *)regs->rsi, (int)regs->rdx); break;
   }
 }
 
+#include "gui/widgets/image_node.h"
+
+int sys_gui_image_create(int canvas_id, int width, int height, uint32_t *buffer) {
+    node_t *canvas_node = NULL;
+    extern scene_graph_t *g_scene;
+    if (!g_scene || !g_scene->root) return -1;
+    // Find canvas in root children
+    for (int i = 0; i < g_scene->root->child_count; i++) {
+        if (g_scene->root->children[i]->id == (uint32_t)canvas_id) {
+            canvas_node = g_scene->root->children[i];
+            break;
+        }
+    }
+    if (!canvas_node) return -1;
+    
+    node_t *img = image_node_create("LDE_Render", width, height, buffer);
+    if (!img) return -1;
+    
+    node_add_child(canvas_node, img);
+    return (int)img->id;
+}
+
+int sys_gui_image_update(uint32_t node_id, uint32_t *buffer, int buffer_size) {
+    extern compositor_t *g_compositor;
+    if (!g_compositor || !g_compositor->scene_root) return -1;
+    extern node_t *node_find_by_id(node_t *root, uint32_t id);
+    node_t *node = node_find_by_id(g_compositor->scene_root, node_id);
+    if (node) {
+        image_node_update(node, buffer, buffer_size);
+        return 0;
+    }
+    return -1;
+}
+
 void init_syscalls() {
+  memset(fd_table, 0, sizeof(fd_table));
   kernel_termios.c_cc[VMIN] = 1;
   kernel_termios.c_cc[VTIME] = 0;
 }

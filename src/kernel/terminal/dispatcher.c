@@ -3,6 +3,16 @@
 #include "vga.h"
 #include "serial.h"
 
+extern void lde_app_start(void);
+extern const char *get_launch_last_error(void);
+void cmd_lde(int argc, char **argv) {
+    (void)argc; (void)argv;
+    lde_app_start();
+    vga_puts("LDE app started. Last launch error: ");
+    vga_puts((char*)get_launch_last_error());
+    vga_puts("\n");
+}
+
 // Define command table
 static const terminal_command_t commands[] = {
     {"help", cmd_help, "Shows this help message"},
@@ -13,7 +23,13 @@ static const terminal_command_t commands[] = {
     {"reboot", cmd_reboot, "Reboots the system"},
     {"version", cmd_version, "Shows the OS version"},
     {"meminfo", cmd_meminfo, "Shows memory information"},
-    {"diskinfo", cmd_diskinfo, "Shows disk space information"}
+    {"diskinfo", cmd_diskinfo, "Shows disk space information"},
+    {"ip", cmd_ip, "Shows current IP address"},
+    {"ping", cmd_ping, "Send ICMP ECHO_REQUEST to network hosts"},
+    {"wget", cmd_wget, "Download files from the web (HTTP)"},
+    {"host", cmd_host, "DNS lookup utility"},
+    {"/lde", cmd_lde, "Launch Liwus Desktop Engine"},
+    {"lde", cmd_lde, "Launch Liwus Desktop Engine"}
 };
 
 #define NUM_COMMANDS (sizeof(commands) / sizeof(terminal_command_t))

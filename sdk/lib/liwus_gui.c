@@ -8,10 +8,26 @@ static inline uint64_t syscall3(uint64_t n, uint64_t a1, uint64_t a2, uint64_t a
         "mov %2, %%rdi\n"
         "mov %3, %%rsi\n"
         "mov %4, %%rdx\n"
-        "syscall\n"
+        "int $0x80\n"
         "mov %%rax, %0\n"
         : "=r"(ret)
         : "r"(n), "r"(a1), "r"(a2), "r"(a3)
+        : "rax", "rdi", "rsi", "rdx", "rcx", "r11", "memory");
+    return ret;
+}
+
+static inline uint64_t syscall4(uint64_t n, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
+    uint64_t ret;
+    asm volatile(
+        "mov %1, %%rax\n"
+        "mov %2, %%rdi\n"
+        "mov %3, %%rsi\n"
+        "mov %4, %%rdx\n"
+        "mov %5, %%rcx\n"
+        "int $0x80\n"
+        "mov %%rax, %0\n"
+        : "=r"(ret)
+        : "r"(n), "r"(a1), "r"(a2), "r"(a3), "r"(a4)
         : "rax", "rdi", "rsi", "rdx", "rcx", "r11", "memory");
     return ret;
 }
@@ -76,7 +92,18 @@ int image_update(Node image, const uint32_t *pixels, uint32_t count) {
 }
 
 void camera_zoom(float zoom) {
-    // Pass as integer scaled by 1000
-    int z = (int)(zoom * 1000.0f);
-    syscall1(124, (uint64_t)z);
+    int izoom = (int)(zoom * 1000.0f);
+    syscall3(124, (uint64_t)izoom, 0, 0);
+}
+
+Node image_create(Canvas canvas, int width, int height, uint32_t *buffer) {
+    return (Node)syscall4(125, (uint64_t)canvas, (uint64_t)width, (uint64_t)height, (uint64_t)buffer);
+}
+
+void image_update(Node image, uint32_t *buffer, int buffer_size) {
+    syscall3(126, (uint64_t)image, (uint64_t)buffer, (uint64_t)buffer_size);
+}
+
+bool keyboard_is_pressed(uint8_t scancode) {
+    return (bool)syscall1(11, (uint64_t)scancode);
 }

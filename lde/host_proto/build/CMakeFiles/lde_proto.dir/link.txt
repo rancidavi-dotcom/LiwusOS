@@ -1,0 +1,1 @@
+/usr/bin/cc CMakeFiles/lde_proto.dir/main.c.o CMakeFiles/lde_proto.dir/mock_bridge.c.o -o lde_proto  /usr/lib/x86_64-linux-gnu/libSDL2.so -lm 

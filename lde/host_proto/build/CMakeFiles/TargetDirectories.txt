@@ -1,0 +1,3 @@
+/mnt/c/Users/ranci/Desktop/LiwusOS/LiwusOS/lde/host_proto/build/CMakeFiles/lde_proto.dir
+/mnt/c/Users/ranci/Desktop/LiwusOS/LiwusOS/lde/host_proto/build/CMakeFiles/edit_cache.dir
+/mnt/c/Users/ranci/Desktop/LiwusOS/LiwusOS/lde/host_proto/build/CMakeFiles/rebuild_cache.dir

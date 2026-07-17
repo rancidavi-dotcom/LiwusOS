@@ -240,3 +240,31 @@ uint32_t *fb_renderer_backbuf(gui_renderer_t *r) {
     if (!r) return NULL;
     return ((fb_state_t *)r->backend)->backbuf;
 }
+
+void fb_renderer_draw_pixel(gui_renderer_t *r, int x, int y, uint32_t color) {
+    if (!r || !r->backend) return;
+    fb_state_t *s = (fb_state_t *)r->backend;
+    if (x < 0 || x >= (int)s->width || y < 0 || y >= (int)s->height) return;
+
+    // Simple alpha blending
+    uint8_t a = (color >> 24) & 0xFF;
+    if (a == 0) return;
+    if (a == 255) {
+        s->backbuf[y * s->pitch_px + x] = color;
+    } else {
+        uint32_t bg = s->backbuf[y * s->pitch_px + x];
+        uint32_t sr = (color >> 16) & 0xFF;
+        uint32_t sg = (color >> 8) & 0xFF;
+        uint32_t sb = color & 0xFF;
+        
+        uint32_t dr = (bg >> 16) & 0xFF;
+        uint32_t dg = (bg >> 8) & 0xFF;
+        uint32_t db = bg & 0xFF;
+        
+        dr = (sr * a + dr * (255 - a)) / 255;
+        dg = (sg * a + dg * (255 - a)) / 255;
+        db = (sb * a + db * (255 - a)) / 255;
+        
+        s->backbuf[y * s->pitch_px + x] = (0xFF000000) | (dr << 16) | (dg << 8) | db;
+    }
+}
