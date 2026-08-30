@@ -43,8 +43,12 @@ typedef struct task {
   struct task *parent;
   struct task *next;
   page_directory_t *page_directory;
+  void *fpu_ctx;
   uint64_t heap_start;
   uint64_t heap_end;
+  // Topo (endereço mais alto) da região de mmap anônimo. Começa logo
+  // abaixo da stack do usuário (0xC0000000) e cresce para baixo.
+  uint64_t mmap_top;
   uint64_t cpu_ticks;
   uint64_t switch_count;
   bool user_mode;
@@ -73,6 +77,7 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
                             const char *name);
 int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
                                const char *name);
+void task_set_fpu(void *fpu_area);
 void switch_task();
 uint64_t schedule(uint64_t current_rsp);
 void move_to_user_mode();

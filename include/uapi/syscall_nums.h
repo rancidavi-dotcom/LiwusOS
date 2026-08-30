@@ -31,6 +31,8 @@
 #define SYS_PIPE       31
 #define SYS_DUP        32
 #define SYS_DUP2       33
+#define SYS_MMAP       35
+#define SYS_MUNMAP     36
 
 #define SYS_GUI_CANVAS_CREATE  120
 #define SYS_GUI_NODE_CREATE    121

@@ -1,7 +1,7 @@
 #include "pci.h"
 #include "io.h"
+#include "kheap.h"
 #include "serial.h"
-#include "serial.h" // Serial Log
 
 static pci_device_t *devices[32];
 static int pci_count = 0;
@@ -136,6 +136,16 @@ pci_device_t *pci_get_ahci() {
       if (prog_if == 0x01) { // AHCI
         return devices[i];
       }
+    }
+  }
+  return (void *)0;
+}
+
+pci_device_t *pci_get_audio() {
+  for (int i = 0; i < pci_count; i++) {
+    // Class 0x04 (Multimedia), Subclass 0x01 (Audio)
+    if (devices[i]->class_id == 0x04 && devices[i]->subclass_id == 0x01) {
+      return devices[i];
     }
   }
   return (void *)0;

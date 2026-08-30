@@ -6,6 +6,13 @@
 #include "task.h"
 #include "vfs.h"
 
+/* Pluggable block I/O (defaults to the IDE disk) — set via
+ * fat32_set_block_io() so other block drivers (e.g. the virtual pendrive)
+ * can feed the FAT32 layer. */
+static fat32_read_block_fn file_system_read_block;
+static fat32_read_blocks_fn file_system_read_blocks;
+static fat32_write_block_fn file_system_write_block;
+
 // Variáveis globais para o filesystem montado
 static fat32_boot_sector_t boot_sector;
 static uint32_t fat_begin_lba;
@@ -58,7 +65,7 @@ fs_node_t *fat32_mount(uint16_t bus, uint8_t drive,
 
   // Buffer para ler o setor de boot
   uint16_t boot_sector_buffer[256];
-  if (ata_read_sector(ata_bus, ata_drive, partition_lba_start,
+  if (file_system_read_block( partition_lba_start,
                       boot_sector_buffer) != 0) {
     serial_print("FAT32: Falha ao ler o setor de boot.\n");
     return NULL;
@@ -116,7 +123,7 @@ int fat32_format(int *progress) {
   // 1. Limpa o início do disco
   memset(aligned_buffer, 0, sector_size);
   for (uint32_t i = 0; i < 33; i++) {
-    ata_write_sector(bus, drive, i, aligned_buffer);
+    file_system_write_block( i, aligned_buffer);
     *progress = (i * 10) / 33;
     fat32_maybe_yield();
   }
@@ -156,8 +163,8 @@ int fat32_format(int *progress) {
   backup_boot_sector = bpb->BPB_BkBootSec;
 
   memcpy(aligned_buffer, bpb, sector_size);
-  ata_write_sector(bus, drive, 0, aligned_buffer);
-  ata_write_sector(bus, drive, backup_boot_sector, aligned_buffer);
+  file_system_write_block( 0, aligned_buffer);
+  file_system_write_block( backup_boot_sector, aligned_buffer);
   *progress = 25;
   fat32_maybe_yield();
 
@@ -171,8 +178,8 @@ int fat32_format(int *progress) {
   fsinfo->FSI_TrailSig = 0xAA550000;
 
   memcpy(aligned_buffer, fsinfo, sector_size);
-  ata_write_sector(bus, drive, fsinfo_sector, aligned_buffer);
-  ata_write_sector(bus, drive, backup_boot_sector + 1, aligned_buffer);
+  file_system_write_block( fsinfo_sector, aligned_buffer);
+  file_system_write_block( backup_boot_sector + 1, aligned_buffer);
   *progress = 40;
   fat32_maybe_yield();
 
@@ -182,14 +189,14 @@ int fat32_format(int *progress) {
   fat_table[0] = 0x0FFFFFF8;
   fat_table[1] = 0xFFFFFFFF;
   fat_table[2] = 0x0FFFFFFF;
-  ata_write_sector(bus, drive, reserved_sectors, (uint16_t *)fat_table);
-  ata_write_sector(bus, drive, reserved_sectors + fat_sz32,
+  file_system_write_block( reserved_sectors, (uint16_t *)fat_table);
+  file_system_write_block( reserved_sectors + fat_sz32,
                    (uint16_t *)fat_table);
 
   memset(aligned_buffer, 0, sector_size);
   for (uint32_t i = 1; i < fat_sz32; i++) {
-    ata_write_sector(bus, drive, reserved_sectors + i, aligned_buffer);
-    ata_write_sector(bus, drive, reserved_sectors + fat_sz32 + i,
+    file_system_write_block( reserved_sectors + i, aligned_buffer);
+    file_system_write_block( reserved_sectors + fat_sz32 + i,
                      aligned_buffer);
     if ((i % 8) == 0) {
       *progress = 40 + (i * 40) / fat_sz32;
@@ -204,7 +211,7 @@ int fat32_format(int *progress) {
   uint32_t root_dir_lba =
       data_area_start + ((root_cluster - 2) * sectors_per_cluster);
   for (uint32_t i = 0; i < sectors_per_cluster; i++) {
-    ata_write_sector(bus, drive, root_dir_lba + i, aligned_buffer);
+    file_system_write_block( root_dir_lba + i, aligned_buffer);
     *progress = 80 + (i * 20) / sectors_per_cluster;
     fat32_maybe_yield();
   }
@@ -309,6 +316,115 @@ static void fat32_entry_name_to_string(const fat32_directory_entry_t *entry,
   out[pos] = '\0';
 }
 
+static void fat32_utf16_to_utf8(uint16_t code, char *out, uint32_t *pos,
+                                uint32_t cap) {
+  if (code == 0x0000 || code == 0xFFFF) {
+    return;
+  }
+  if (code < 0x80) {
+    if (*pos < cap) {
+      out[(*pos)++] = (char)code;
+    }
+  } else if (code < 0x800) {
+    if (*pos + 1 < cap) {
+      out[(*pos)++] = (char)(0xC0 | (code >> 6));
+      out[(*pos)++] = (char)(0x80 | (code & 0x3F));
+    }
+  } else if (code < 0x10000) {
+    if (*pos + 2 < cap) {
+      out[(*pos)++] = (char)(0xE0 | (code >> 12));
+      out[(*pos)++] = (char)(0x80 | ((code >> 6) & 0x3F));
+      out[(*pos)++] = (char)(0x80 | (code & 0x3F));
+    }
+  }
+}
+
+static int dirent_is_long(const fat32_directory_entry_t *e) {
+  return e->DIR_Attr == 0x0F;
+}
+
+static int fat32_ascii_iequals(const char *a, const char *b) {
+  while (*a && *b) {
+    char ca = *a;
+    char cb = *b;
+    if (ca >= 'a' && ca <= 'z') ca = (char)(ca - 32);
+    if (cb >= 'a' && cb <= 'z') cb = (char)(cb - 32);
+    if (ca != cb) return 0;
+    a++;
+    b++;
+  }
+  return *a == *b;
+}
+
+/* Rebuilds the long file name that precedes the entry at `entry_index` in a
+ * loaded directory buffer. Returns 1 and fills `out` if LFN entries exist
+ * immediately before the entry; returns 0 otherwise. */
+static int fat32_get_long_name(const uint8_t *directory_buffer,
+                               uint32_t directory_size, uint32_t entry_index,
+                               char *out, uint32_t out_size) {
+  const fat32_directory_entry_t *dirent;
+  uint32_t count;
+  uint32_t start;
+  char buf[768];
+  uint32_t wrote = 0;
+
+  if (!out || out_size == 0 || entry_index == 0) {
+    return 0;
+  }
+  count = directory_size / sizeof(fat32_directory_entry_t);
+  if (entry_index >= count) {
+    return 0;
+  }
+
+  dirent = (const fat32_directory_entry_t *)directory_buffer;
+  start = entry_index;
+  while (start > 0 && dirent_is_long(&dirent[start - 1])) {
+    start--;
+  }
+  if (start == entry_index) {
+    return 0;
+  }
+
+  for (uint32_t i = entry_index; i-- > start;) {
+    const uint8_t *l = (const uint8_t *)&dirent[i];
+    int done = 0;
+    for (int c = 0; c < 10 && !done; c += 2) {
+      uint16_t u = (uint16_t)(l[1 + c] | ((uint16_t)l[2 + c] << 8));
+      if (u == 0x0000 || u == 0xFFFF) {
+        done = 1;
+      } else {
+        fat32_utf16_to_utf8(u, buf, &wrote, sizeof(buf) - 1);
+      }
+    }
+    for (int c = 0; c < 12 && !done; c += 2) {
+      uint16_t u = (uint16_t)(l[14 + c] | ((uint16_t)l[15 + c] << 8));
+      if (u == 0x0000 || u == 0xFFFF) {
+        done = 1;
+      } else {
+        fat32_utf16_to_utf8(u, buf, &wrote, sizeof(buf) - 1);
+      }
+    }
+    for (int c = 0; c < 4 && !done; c += 2) {
+      uint16_t u = (uint16_t)(l[28 + c] | ((uint16_t)l[29 + c] << 8));
+      if (u == 0x0000 || u == 0xFFFF) {
+        done = 1;
+      } else {
+        fat32_utf16_to_utf8(u, buf, &wrote, sizeof(buf) - 1);
+      }
+    }
+  }
+
+  if (wrote == 0) {
+    return 0;
+  }
+  if (wrote >= out_size) {
+    wrote = out_size - 1;
+  }
+  memcpy(out, buf, wrote);
+  out[wrote] = '\0';
+  return 1;
+}
+
 static uint32_t fat32_next_cluster(uint32_t current_cluster) {
   uint32_t fat_sector;
   uint32_t fat_offset;
@@ -317,7 +433,7 @@ static uint32_t fat32_next_cluster(uint32_t current_cluster) {
   fat_sector =
       fat_begin_lba + (current_cluster * 4 / boot_sector.BPB_BytsPerSec);
   fat_offset = (current_cluster * 4) % boot_sector.BPB_BytsPerSec;
-  ata_read_sector(ata_bus, ata_drive, fat_sector, (uint16_t *)fat_buffer);
+  file_system_read_block( fat_sector, (uint16_t *)fat_buffer);
   return fat_buffer[fat_offset / 4] & 0x0FFFFFFF;
 }
 
@@ -340,7 +456,7 @@ static int fat32_load_root_dir(uint8_t **buffer_out, uint32_t *size_out,
   cluster_lba =
       cluster_begin_lba + (root_dir_first_cluster - 2) * boot_sector.BPB_SecPerClus;
   for (int i = 0; i < boot_sector.BPB_SecPerClus; i++) {
-    ata_read_sector(ata_bus, ata_drive, cluster_lba + i,
+    file_system_read_block( cluster_lba + i,
                     (uint16_t *)(buffer + i * 512));
   }
 
@@ -385,7 +501,7 @@ static int fat32_load_directory(uint32_t start_cluster, uint8_t **buffer_out,
     uint32_t cluster_lba =
         cluster_begin_lba + (current_cluster - 2) * boot_sector.BPB_SecPerClus;
     for (int i = 0; i < boot_sector.BPB_SecPerClus; i++) {
-      ata_read_sector(ata_bus, ata_drive, cluster_lba + i,
+      file_system_read_block( cluster_lba + i,
                       (uint16_t *)(buffer + total_size +
                                    i * boot_sector.BPB_BytsPerSec));
     }
@@ -433,7 +549,7 @@ static uint32_t fat32_read(fs_node_t *node, uint32_t offset, uint32_t size,
         fat_begin_lba + (current_cluster * 4 / boot_sector.BPB_BytsPerSec);
     uint32_t fat_offset = (current_cluster * 4) % boot_sector.BPB_BytsPerSec;
     uint16_t fat_buffer[256];
-    ata_read_sector(ata_bus, ata_drive, fat_sector, fat_buffer);
+    file_system_read_block( fat_sector, fat_buffer);
     current_cluster = ((uint32_t *)fat_buffer)[fat_offset / 4] & 0x0FFFFFFF;
 
     if (current_cluster >= 0x0FFFFFF8) {
@@ -443,6 +559,56 @@ static uint32_t fat32_read(fs_node_t *node, uint32_t offset, uint32_t size,
 
   uint32_t bytes_read = 0;
   uint32_t bytes_to_read = size;
+
+  if (file_system_read_blocks && offset_in_cluster == 0) {
+    /* Fast path: read contiguous cluster runs as batched transfers. For
+     * freshly written contiguous files this collapses thousands of
+     * one-sector SCSI/ATA reads into a handful of 16-sector transfers.
+     * The FAT chain itself is walked in batches too (128 entries per
+     * 512-byte sector) so the contiguity scan doesn't cost one SCSI
+     * command per cluster. */
+    uint32_t fat_buf[128];
+    uint32_t fat_sec = (uint32_t)-1; /* cached FAT sector */
+
+    while (bytes_to_read > 0 && current_cluster < 0x0FFFFFF8) {
+      uint32_t run_start = current_cluster;
+      uint32_t run_clusters = 1;
+      uint32_t next;
+
+      for (;;) {
+        uint32_t sec = fat_begin_lba +
+                       (current_cluster * 4 / boot_sector.BPB_BytsPerSec);
+        uint32_t off = (current_cluster * 4) % boot_sector.BPB_BytsPerSec;
+        if (sec != fat_sec) {
+          file_system_read_block(sec, (uint16_t *)fat_buf);
+          fat_sec = sec;
+        }
+        next = fat_buf[off / 4] & 0x0FFFFFFF;
+        if (next == current_cluster + 1 && next < 0x0FFFFFF8) {
+          run_clusters++;
+          current_cluster = next;
+        } else {
+          break;
+        }
+      }
+
+      uint32_t run_bytes =
+          run_clusters * boot_sector.BPB_SecPerClus * boot_sector.BPB_BytsPerSec;
+      uint32_t take = run_bytes;
+      if (take > bytes_to_read) take = bytes_to_read;
+      uint32_t take_sectors = (take + boot_sector.BPB_BytsPerSec - 1) /
+                              boot_sector.BPB_BytsPerSec;
+      uint32_t run_lba =
+          cluster_begin_lba + (run_start - 2) * boot_sector.BPB_SecPerClus;
+      file_system_read_blocks(run_lba, take_sectors,
+                              (uint8_t *)(buffer + bytes_read));
+      bytes_read += take;
+      bytes_to_read -= take;
+      current_cluster = next;
+      /* the cached FAT sector will be refreshed if the next lookup needs it */
+    }
+    return bytes_read;
+  }
 
   // Allocate cluster buffer on heap to avoid stack overflow with large clusters
   uint8_t *cluster_buffer = (uint8_t *)kmalloc(cluster_size);
@@ -455,8 +621,8 @@ static uint32_t fat32_read(fs_node_t *node, uint32_t offset, uint32_t size,
         cluster_begin_lba + (current_cluster - 2) * boot_sector.BPB_SecPerClus;
 
     for (int i = 0; i < boot_sector.BPB_SecPerClus; i++) {
-      ata_read_sector(
-          ata_bus, ata_drive, cluster_lba + i,
+      file_system_read_block(
+          cluster_lba + i,
           (uint16_t *)(cluster_buffer + i * boot_sector.BPB_BytsPerSec));
     }
 
@@ -476,7 +642,7 @@ static uint32_t fat32_read(fs_node_t *node, uint32_t offset, uint32_t size,
         fat_begin_lba + (current_cluster * 4 / boot_sector.BPB_BytsPerSec);
     uint32_t fat_offset = (current_cluster * 4) % boot_sector.BPB_BytsPerSec;
     uint16_t fat_buffer[256];
-    ata_read_sector(ata_bus, ata_drive, fat_sector, fat_buffer);
+    file_system_read_block( fat_sector, fat_buffer);
     current_cluster = ((uint32_t *)fat_buffer)[fat_offset / 4] & 0x0FFFFFFF;
   }
 
@@ -497,7 +663,7 @@ static uint32_t fat32_find_free_cluster() {
   uint32_t fat_buffer[128]; // 512 bytes
 
   for (uint32_t s = 0; s < fat_size; s++) {
-    ata_read_sector(ata_bus, ata_drive, fat_sector_start + s,
+    file_system_read_block( fat_sector_start + s,
                     (uint16_t *)fat_buffer);
     for (uint32_t i = 0; i < entries_per_sector; i++) {
       if ((fat_buffer[i] & 0x0FFFFFFF) == 0) {
@@ -514,19 +680,46 @@ static void fat32_write_fat_entry(uint32_t cluster, uint32_t value) {
   uint32_t fat_offset = (cluster * 4) % boot_sector.BPB_BytsPerSec;
 
   uint32_t buffer[128];
-  ata_read_sector(ata_bus, ata_drive, fat_sector, (uint16_t *)buffer);
+  file_system_read_block( fat_sector, (uint16_t *)buffer);
 
   buffer[fat_offset / 4] = value;
 
   // Write to all FATs
   for (int i = 0; i < boot_sector.BPB_NumFATs; i++) {
-    ata_write_sector(ata_bus, ata_drive,
+    file_system_write_block(
                      fat_sector + i * boot_sector.BPB_FATSz32,
                      (uint16_t *)buffer);
   }
 }
 
 static struct dirent fat32_dirent;
+
+static int fs_block_read_ata(uint32_t lba, uint16_t *buffer) {
+  return ata_read_sector(
+      ata_bus, ata_drive, lba, buffer);
+}
+static int fs_block_write_ata(uint32_t lba, uint16_t *buffer) {
+  return ata_write_sector(
+      ata_bus, ata_drive, lba, buffer);
+}
+
+static fat32_read_block_fn file_system_read_block = fs_block_read_ata;
+static fat32_write_block_fn file_system_write_block = fs_block_write_ata;
+static fat32_read_blocks_fn file_system_read_blocks = NULL;
+
+void fat32_set_block_io(fat32_read_block_fn read_fn,
+                        fat32_write_block_fn write_fn) {
+  if (read_fn) {
+    file_system_read_block = read_fn;
+  }
+  if (write_fn) {
+    file_system_write_block = write_fn;
+  }
+}
+
+void fat32_set_block_io_blocks(fat32_read_blocks_fn read_blocks_fn) {
+  file_system_read_blocks = read_blocks_fn;
+}
 
 static struct dirent *fat32_readdir(fs_node_t *node, uint32_t index) {
   uint32_t dir_cluster = node->inode;
@@ -551,7 +744,11 @@ static struct dirent *fat32_readdir(fs_node_t *node, uint32_t index) {
     if (dirent[i].DIR_Name[0] == 0xE5 || dirent[i].DIR_Attr == 0x0F || (dirent[i].DIR_Attr & 0x08)) continue;
 
     if (current == (int)index) {
-      fat32_entry_name_to_string(&dirent[i], fat32_dirent.name, sizeof(fat32_dirent.name));
+      if (!fat32_get_long_name(buffer, size, i, fat32_dirent.name,
+                               sizeof(fat32_dirent.name))) {
+        fat32_entry_name_to_string(&dirent[i], fat32_dirent.name,
+                                   sizeof(fat32_dirent.name));
+      }
       fat32_dirent.ino = fat32_entry_start_cluster(&dirent[i]);
       kfree(buffer);
       return &fat32_dirent;
@@ -597,7 +794,7 @@ static void fat32_zero_cluster(uint32_t cluster) {
       cluster_begin_lba + (cluster - 2) * boot_sector.BPB_SecPerClus;
   memset(buffer, 0, cluster_size);
   for (int i = 0; i < boot_sector.BPB_SecPerClus; i++) {
-    ata_write_sector(ata_bus, ata_drive, cluster_lba + i,
+    file_system_write_block( cluster_lba + i,
                      (uint16_t *)(buffer + i * boot_sector.BPB_BytsPerSec));
   }
   kfree(buffer);
@@ -741,7 +938,7 @@ static int fat32_write_directory_cluster(uint32_t cluster, uint8_t *buffer) {
   uint32_t cluster_lba =
       cluster_begin_lba + (cluster - 2) * boot_sector.BPB_SecPerClus;
   for (int i = 0; i < boot_sector.BPB_SecPerClus; i++) {
-    ata_write_sector(ata_bus, ata_drive, cluster_lba + i,
+    file_system_write_block( cluster_lba + i,
                      (uint16_t *)(buffer + i * boot_sector.BPB_BytsPerSec));
   }
   return 0;
@@ -751,7 +948,7 @@ static int fat32_read_directory_cluster(uint32_t cluster, uint8_t *buffer) {
   uint32_t cluster_lba =
       cluster_begin_lba + (cluster - 2) * boot_sector.BPB_SecPerClus;
   for (int i = 0; i < boot_sector.BPB_SecPerClus; i++) {
-    ata_read_sector(ata_bus, ata_drive, cluster_lba + i,
+    file_system_read_block( cluster_lba + i,
                     (uint16_t *)(buffer + i * boot_sector.BPB_BytsPerSec));
   }
   return 0;
@@ -793,13 +990,25 @@ static int fat32_find_entry_in_dir(uint32_t dir_cluster, const char *name,
           (dirent[i].DIR_Attr & 0x08)) {
         continue;
       }
-      if (strncmp((char *)dirent[i].DIR_Name, dos_name, 11) == 0) {
-        result->entry_cluster = current_cluster;
-        result->entry_index = i;
-        memcpy(&result->entry, &dirent[i], sizeof(result->entry));
-        result->found = 1;
-        kfree(buffer);
-        return 1;
+      {
+        int matched = (strncmp((char *)dirent[i].DIR_Name, dos_name, 11) == 0);
+        if (!matched) {
+          char lfn_name[255];
+          if (fat32_get_long_name(buffer, cluster_size, (uint32_t)i, lfn_name,
+                                  sizeof(lfn_name))) {
+            if (fat32_ascii_iequals(lfn_name, name)) {
+              matched = 1;
+            }
+          }
+        }
+        if (matched) {
+          result->entry_cluster = current_cluster;
+          result->entry_index = i;
+          memcpy(&result->entry, &dirent[i], sizeof(result->entry));
+          result->found = 1;
+          kfree(buffer);
+          return 1;
+        }
       }
     }
 
@@ -847,10 +1056,7 @@ static int fat32_resolve_directory(const char *path, uint32_t *cluster_out) {
       memcpy(part, path + start, part_len);
       part[part_len] = '\0';
 
-      if (!fat32_is_valid_name(part)) {
-        return -1;
-      }
-      if (fat32_find_entry_in_dir(current_cluster, part, &lookup) <= 0) {
+      if (!fat32_find_entry_in_dir(current_cluster, part, &lookup) <= 0) {
         return -1;
       }
       if ((lookup.entry.DIR_Attr & 0x10) == 0) {
@@ -879,7 +1085,7 @@ static int fat32_resolve_path(const char *path, fat32_lookup_result_t *result) {
   }
 
   fat32_path_parent(path, parent, sizeof(parent), leaf, sizeof(leaf));
-  if (!leaf[0] || !fat32_is_valid_name(leaf)) {
+  if (!leaf[0]) {
     return -1;
   }
   if (fat32_resolve_directory(parent[0] ? parent : "/", &parent_cluster) != 0) {
@@ -1101,7 +1307,7 @@ static uint32_t fat32_write_cluster_chain(uint32_t start_cluster,
     cluster_lba =
         cluster_begin_lba + (current_cluster - 2) * boot_sector.BPB_SecPerClus;
     for (int s = 0; s < boot_sector.BPB_SecPerClus; s++) {
-      ata_write_sector(ata_bus, ata_drive, cluster_lba + s,
+      file_system_write_block( cluster_lba + s,
                        (uint16_t *)(cluster_buffer +
                                     s * boot_sector.BPB_BytsPerSec));
     }
@@ -1145,7 +1351,9 @@ int fat32_list_dir_entry(const char *path, int index, char *name_out,
     }
     if (current == index) {
       if (name_out) {
-        fat32_entry_name_to_string(&dirent[i], name_out, 32);
+        if (!fat32_get_long_name(buffer, size, (uint32_t)i, name_out, 32)) {
+          fat32_entry_name_to_string(&dirent[i], name_out, 32);
+        }
       }
       if (is_dir_out) {
         *is_dir_out = (dirent[i].DIR_Attr & 0x10) ? 1 : 0;
@@ -1181,12 +1389,14 @@ void *fat32_read_file_path(const char *path, uint32_t *size_out) {
 
   file_size = lookup.entry.DIR_FileSize;
   start_cluster = fat32_entry_start_cluster(&lookup.entry);
-  buffer = (uint8_t *)kmalloc(file_size + 1);
+  /* +512 headroom: batched reads fetch whole (final) sectors, which can
+   * overshoot a file whose size isn't a multiple of the sector size. */
+  buffer = (uint8_t *)kmalloc(file_size + 1 + 512);
   if (!buffer) {
     return NULL;
   }
 
-  memset(buffer, 0, file_size + 1);
+  memset(buffer, 0, file_size + 1 + 512);
   if (file_size > 0 && start_cluster >= 2) {
     fs_node_t fake_node;
     memset(&fake_node, 0, sizeof(fake_node));

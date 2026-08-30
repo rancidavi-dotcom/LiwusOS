@@ -67,6 +67,21 @@ fs_node_t *fat32_mount(uint16_t bus, uint8_t drive,
 int fat32_format(int *progress);
 int fat32_is_mounted(void);
 
+// Pluggable block I/O. Defaults to the IDE (ATA) disk. Pass NULL for either
+// callback to keep the current one.
+typedef int (*fat32_read_block_fn)(uint32_t lba, uint16_t *buffer);
+typedef int (*fat32_write_block_fn)(uint32_t lba, uint16_t *buffer);
+void fat32_set_block_io(fat32_read_block_fn read_fn,
+                        fat32_write_block_fn write_fn);
+
+// Pluggable multi-block read (reads `count` CONSECUTIVE 512-byte sectors
+// starting at `lba` into `buffer`). Used to batch whole FAT clusters into a
+// single controller transfer instead of one-sector-at-a-time. NULL = fall
+// back to `read_fn` called once per sector.
+typedef int (*fat32_read_blocks_fn)(uint32_t lba, uint32_t count,
+                                    uint8_t *buffer);
+void fat32_set_block_io_blocks(fat32_read_blocks_fn read_blocks_fn);
+
 // Write API
 int fat32_create_file(const char *name); // Create in root
 uint32_t fat32_write_file(const char *name, uint8_t *buffer, uint32_t size);

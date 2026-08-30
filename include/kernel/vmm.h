@@ -48,6 +48,7 @@ static inline uint64_t vaddr_pti(uint64_t vaddr)   { return (vaddr >> 12) & 0x1F
 
 void init_vmm(uint64_t memory_size);
 void vmm_map_page(void *phys, void *virt, uint64_t flags);
+int vmm_unmap_page(void *virt);
 void vmm_map_framebuffer(uint64_t phys_addr, uint64_t size);
 void switch_page_directory(page_directory_t *dir);
 page_directory_t *vmm_create_directory();

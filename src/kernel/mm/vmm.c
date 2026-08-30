@@ -111,6 +111,34 @@ void vmm_map_page(void *phys, void *virt, uint64_t flags) {
   }
 }
 
+// Desmapeia uma única página (4 KB) do diretório de páginas ativo e
+// libera o frame físico correspondente de volta ao PMM. Útil para munmap.
+int vmm_unmap_page(void *virt) {
+  uint64_t v = (uint64_t)virt;
+  pml4_t *pml4 = current_directory->pml4_virt;
+  uint64_t pml4_i = vaddr_pml4i(v);
+  uint64_t pdp_i = vaddr_pdpi(v);
+  uint64_t pd_i = vaddr_pdi(v);
+  uint64_t pt_i = vaddr_pti(v);
+
+  if (!(pml4->entries[pml4_i] & PTE_P)) return -1;
+  pdp_t *pdp = (pdp_t *)(uint64_t)(pml4->entries[pml4_i] & ~0xFFFULL);
+  if (!(pdp->entries[pdp_i] & PTE_P)) return -1;
+  pd_t *pd = (pd_t *)(uint64_t)(pdp->entries[pdp_i] & ~0xFFFULL);
+  if (!(pd->entries[pd_i] & PTE_P)) return -1;
+
+  // Não desmapear dentro de um mapping 2 MB (large page)
+  if (pd->entries[pd_i] & PTE_PS) return -1;
+
+  pt_t *pt = (pt_t *)(uint64_t)(pd->entries[pd_i] & ~0xFFFULL);
+  if (!(pt->entries[pt_i] & PTE_P)) return -1;
+
+  pmm_free_block((void *)(pt->entries[pt_i] & ~0xFFFULL));
+  pt->entries[pt_i] = 0;
+  asm volatile("invlpg (%0)" : : "r"(v) : "memory");
+  return 0;
+}
+
 void vmm_map_framebuffer(uint64_t phys_addr, uint64_t size) {
   for (uint64_t i = 0; i < size; i += 4096) {
     /* Map with PTE_PWT to select PAT1 (WC - Write Combining) */

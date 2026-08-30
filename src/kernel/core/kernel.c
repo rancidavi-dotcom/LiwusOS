@@ -11,6 +11,9 @@
 #include "keyboard.h"
 #include "multiboot.h"
 #include "pci.h"
+#include "gpu.h"
+#include "audio.h"
+#include "mp3.h"
 #include "pmm.h"
 #include "serial.h"
 #include "string.h"
@@ -276,6 +279,22 @@ void init_fpu() {
     asm volatile("finit");
 }
 
+/* Boot chime: emits the audio driver's welcome tone once the GUI is up. */
+void audio_boot_chime_task() {
+    static const audio_note_t chime[] = {
+        { 523, 90 },  /* C5 */
+        { 659, 90 },  /* E5 */
+        { 784, 90 },  /* G5 */
+        { 1047, 160 }, /* C6 */
+        { 0, 60 }
+    };
+    audio_play_notes(chime, sizeof(chime) / sizeof(chime[0]),
+                      AUDIO_DEFAULT_RATE, 70);
+    while (1) {
+        asm volatile("hlt");
+    }
+}
+
 void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   (void)magic;
   uint64_t reserved_start = (uint64_t)end + 0x1000;
@@ -348,6 +367,8 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   
   extern void usb_init();
   usb_init();
+
+  audio_init();     /* AC'97 audio driver (PC speaker fallback) */
 
   if (mb2_mods_count > 0) {
     struct {
@@ -434,6 +455,13 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   init_tasking();
   init_syscalls();
 
+  /* Sync music MP3s from the initrd to SDFS + seed the media song list. */
+  mp3_init();
+
+  /* Apply saved Sound settings (volume/rate) from SDFS. */
+  extern void sound_config_apply(void);
+  sound_config_apply();
+
   extern void usb_start_polling(void);
   usb_start_polling();
 
@@ -441,6 +469,14 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   extern void gui_compositor_task(void);
   gui_init();
   create_task_named(gui_compositor_task, "gui");
+  create_task_named(audio_boot_chime_task, "audioboot");
+  create_task_named(media_task, "media");
+
+  /* Virtual pendrive: probe the SCSI bus and start the hot-plug watcher. */
+  extern void pen_init(void);
+  extern void pen_task(void);
+  pen_init();
+  create_task_named(pen_task, "pen");
   // extern void terminal_task();
   // create_task_named(terminal_task, "terminal");
 

@@ -98,6 +98,15 @@ isr_common_stub:
   mov %ax, %es
   mov %ax, %fs
   mov %ax, %gs
+  /* Loading a data selector into %gs cleared the GS base. Re-point
+     IA32_GS_BASE at the BSP per-CPU block (cpus_local in sched/task.c).
+     NOTE: SMP APs would need their own base here. */
+  movabs $cpus_local, %rax
+  mov %rax, %r10
+  shr $32, %r10
+  mov %r10d, %edx
+  mov $0xC0000101, %ecx
+  wrmsr
 
   mov %rsp, %rdi         /* First arg: pointer to registers_t */
   call isr_handler
@@ -141,6 +150,13 @@ irq_common_stub:
   mov %ax, %es
   mov %ax, %fs
   mov %ax, %gs
+  /* Restore GS base (see comment in isr_common_stub) */
+  movabs $cpus_local, %rax
+  mov %rax, %r10
+  shr $32, %r10
+  mov %r10d, %edx
+  mov $0xC0000101, %ecx
+  wrmsr
 
   mov %rsp, %rdi          /* First arg: pointer to registers_t */
   call irq_handler

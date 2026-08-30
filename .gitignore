@@ -6,6 +6,9 @@ initrd.tar
 kernel.bin
 liwus_disk.img
 liwusos.iso
+pendrive.img
+pen/*.mp3
+pen/*.MP3
 
 # Binaries and packages
 *.elf

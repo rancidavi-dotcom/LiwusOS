@@ -182,6 +182,26 @@ void cmd_diskinfo(int argc, char **argv) {
     vga_puts(use_kb ? " KB\n" : " MB\n");
 }
 
+void cmd_ip(int argc, char **argv) {
+    (void)argc; (void)argv;
+    vga_puts("Network stack not available in this build.\n");
+}
+
+void cmd_ping(int argc, char **argv) {
+    (void)argc; (void)argv;
+    vga_puts("ping: Network stack not available in this build.\n");
+}
+
+void cmd_wget(int argc, char **argv) {
+    (void)argc; (void)argv;
+    vga_puts("wget: Network stack not available in this build.\n");
+}
+
+void cmd_host(int argc, char **argv) {
+    (void)argc; (void)argv;
+    vga_puts("host: Network stack not available in this build.\n");
+}
+
 static void print_ip(uint32_t ip) {
     char buf[16];
     extern char *itoa(int value, char *str, int base);

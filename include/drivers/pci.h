@@ -21,6 +21,7 @@ pci_device_t *pci_get_device(uint16_t vendor_id, uint16_t device_id);
 pci_device_t *pci_get_wireless();
 pci_device_t *pci_get_usb(uint8_t interface_type);
 pci_device_t *pci_get_ahci();
+pci_device_t *pci_get_audio();
 uint32_t pci_read_config(uint16_t bus, uint16_t device, uint16_t function,
                          uint16_t offset);
 void pci_write_config(uint16_t bus, uint16_t device, uint16_t function,

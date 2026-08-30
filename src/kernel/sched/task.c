@@ -36,6 +36,25 @@ void init_cpu_local(int cpu_id) {
 // Helper function to convert int to string if not in string.h
 extern char *itoa(int value, char *str, int base);
 
+static inline void fpu_context_save(void *area) {
+  asm volatile("fxsave64 (%0)" :: "r"(area) : "memory");
+}
+
+static inline void fpu_context_restore(void *area) {
+  asm volatile("fxrstor64 (%0)" :: "r"(area) : "memory");
+}
+
+void task_set_fpu(void *fpu_area) {
+  if (!current_task) return;
+  current_task->fpu_ctx = fpu_area;
+  if (fpu_area) {
+    uint32_t m = 0x1F80; /* default MXCSR: all exceptions masked */
+    asm volatile("fninit");
+    asm volatile("ldmxcsr (%0)" :: "r"(&m));
+    fpu_context_save(fpu_area);
+  }
+}
+
 static void task_assign_name(task_t *task, const char *name, bool user_mode) {
   if (!task) {
     return;
@@ -96,7 +115,11 @@ int create_task_named(void (*entry_point)(), const char *name) {
   regs->rflags = 0x202;
   regs->cs = 0x08;
   regs->rip = (uint64_t)entry_point;
-  regs->rsp = stack;
+  /* x86-64 SysV: a C function is entered with rsp == 8 (mod 16) (return
+   * address already pushed). kmalloc only guarantees 4-byte alignment, so
+   * align the fresh task stack or 16-byte-aligned ops (movaps, used by the
+   * -msse MP3 decoder) fault with #GP on every other allocation. */
+  regs->rsp = (uint64_t)((stack & ~(uint64_t)0xF) - 8);
   regs->ss = 0x10;
 
   new_task->stack_top = (uint64_t)regs;
@@ -145,6 +168,7 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
   new_task->stack_top = (uint64_t)regs;
   new_task->heap_start = 0x40000000;
   new_task->heap_end = 0x40000000;
+  new_task->mmap_top = 0xBFFF0000;
 
   serial_print("DBG_TASK: pid=");
   char nbuf[12];
@@ -196,6 +220,7 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
   new_task->stack_top = (uint64_t)regs;
   new_task->heap_start = 0x40000000;
   new_task->heap_end = 0x40000000;
+  new_task->mmap_top = 0xBFFF0000;
 
   serial_print("DBG_TASK64: pid=");
   char nbuf[12];
@@ -275,6 +300,18 @@ uint64_t schedule(uint64_t current_rsp) {
   /* Atualiza TSS ESP0 para a pilha de kernel da nova tarefa */
   extern tss_entry_t cpus_tss[16];
   cpus_tss[get_cpu_id()].rsp0 = new_curr->kernel_stack;
+
+  /* FPU/SSE contexto: o kernel é -mno-sse, mas tasks que usam FP (ex. o
+   * decoder MP3, compilado com -msse) precisam ter o estado XMM/x87 salvo
+   * e restaurado, ou ele é corrompido por outra task (fast_memcpy usa SSE2). */
+  if (new_curr != curr) {
+    if (curr->fpu_ctx) {
+      fpu_context_save(curr->fpu_ctx);
+    }
+    if (new_curr->fpu_ctx) {
+      fpu_context_restore(new_curr->fpu_ctx);
+    }
+  }
 
   spinlock_release(&scheduler_lock);
 
@@ -382,6 +419,7 @@ int fork_process(registers_t *regs) {
   // Copy heap limits and cwd
   new_task->heap_start = parent->heap_start;
   new_task->heap_end = parent->heap_end;
+  new_task->mmap_top = parent->mmap_top;
   new_task->user_mode = parent->user_mode;
   strcpy(new_task->cwd, parent->cwd);
 

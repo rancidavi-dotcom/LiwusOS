@@ -5,7 +5,13 @@ HOSTCC = gcc
 M32 = -m32
 M64 = -m64 -mno-red-zone
 
-CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Iinclude $(M64) -fno-pie -fno-pic -mcmodel=large -mno-sse -mno-sse2 -mno-mmx
+KERNEL_INCLUDES = -Iinclude -Iinclude/kernel -Iinclude/drivers -Iinclude/fs -Iinclude/gui -Iinclude/uapi \
+  -Isrc/kernel -Isrc/kernel/gui -Isrc/kernel/gui/core -Isrc/kernel/gui/scene -Isrc/kernel/gui/render \
+  -Isrc/kernel/gui/input -Isrc/kernel/gui/input/tools -Isrc/kernel/gui/widgets -Isrc/kernel/gui/layout \
+  -Isrc/kernel/gui/window -Isrc/kernel/gui/assets -Isrc/kernel/gui/math -Isrc/kernel/gui/apps \
+  -Isrc/kernel/terminal -Isrc/drivers -Isrc/fs -Isrc/net
+
+CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra $(KERNEL_INCLUDES) $(M64) -fno-pie -fno-pic -mcmodel=large -mno-sse -mno-sse2 -mno-mmx
 LDFLAGS = -Wl,-no-pie
 USER_CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -m64 -mno-red-zone -fno-pie -fno-pic
 LIBGCC = -lgcc
@@ -43,6 +49,11 @@ LDE_ELF = lde/src/lde.elf
 
 BOOT_SRCS = $(BOOT_DIR)/boot.s $(BOOT_DIR)/interrupt.s
 KERNEL_SRCS = $(wildcard $(KERNEL_DIR)/*.c) $(wildcard $(KERNEL_DIR)/*.s) \
+              $(wildcard $(KERNEL_DIR)/arch/x86_64/*.c) $(wildcard $(KERNEL_DIR)/arch/x86_64/*.s) \
+              $(wildcard $(KERNEL_DIR)/core/*.c) \
+              $(wildcard $(KERNEL_DIR)/lib/*.c) $(wildcard $(KERNEL_DIR)/lib/*.s) \
+              $(wildcard $(KERNEL_DIR)/mm/*.c) \
+              $(wildcard $(KERNEL_DIR)/sched/*.c) \
               $(wildcard $(KERNEL_DIR)/terminal/*.c) \
               $(wildcard $(KERNEL_DIR)/gui/*.c) \
               $(wildcard $(KERNEL_DIR)/gui/core/*.c) \
@@ -55,6 +66,7 @@ KERNEL_SRCS = $(wildcard $(KERNEL_DIR)/*.c) $(wildcard $(KERNEL_DIR)/*.s) \
               $(wildcard $(KERNEL_DIR)/gui/window/*.c) \
               $(wildcard $(KERNEL_DIR)/gui/assets/*.c) \
               $(wildcard $(KERNEL_DIR)/gui/apps/*.c) \
+              $(wildcard $(KERNEL_DIR)/gui/math/*.c) $(wildcard $(KERNEL_DIR)/gui/math/*.s) \
               src/kernel/gui/core/app_registry.o
 DRIVERS_SRCS = $(wildcard $(DRIVERS_DIR)/*.c)
 FS_SRCS = $(wildcard $(FS_DIR)/*.c)
@@ -83,7 +95,18 @@ ZLIB_DIR = third_party/zlib
 PNG_DIR = third_party/libpng
 JPEG_DIR = third_party/libjpeg
 
-.PHONY: all run clean zlib libpng libjpeg
+.PHONY: all run run-serial run-log clean zlib libpng libjpeg
+
+# ---- Audio (AC'97 -> host) ----
+# O kernel toca o audio pela placa virtual AC'97; para ouvir no host o
+# QEMU precisa de um "audio backend":
+#   Windows (MSYS2/Git Bash) -> dsound
+#   WSL2 com WSLg             -> pa (PulseAudio -> alto-falantes do Windows)
+#   outro Linux               -> sdl
+# Para forcar:  make run AUDIO_BACKEND=none   (e.g. sem som)
+UNAME_S := $(shell uname -s)
+AUDIO_BACKEND ?= $(if $(findstring MINGW,$(UNAME_S)),dsound,$(if $(wildcard /mnt/wslg/PulseServer),pa,sdl))
+AUDIO_FLAGS = -audiodev $(AUDIO_BACKEND),id=aud0 -device AC97,audiodev=aud0
 
 
 zlib:
@@ -128,6 +151,15 @@ $(KERNEL_BIN): $(KERNEL_OBJS) $(BOOT_DIR)/linker.ld
 $(OBJ_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $< -o $@ $(CFLAGS)
+
+# mp3.c uses float (minimp3). GCC 15 refuses float returns under -mno-sse,
+# so this translation unit gets SSE enabled (still no SIMD intrinsics via
+# MINIMP3_NO_SIMD). -mstackrealign guarantees 16-byte stack alignment in
+# every function, so its movaps stores never fault (#GP) on the misaligned
+# task stacks some allocations produce.
+$(OBJ_DIR)/$(DRIVERS_DIR)/mp3.o: $(DRIVERS_DIR)/mp3.c
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ $(CFLAGS) -msse -mstackrealign
 
 $(OBJ_DIR)/%.o: %.s
 	@mkdir -p $(dir $@)
@@ -189,7 +221,7 @@ $(LDE_ELF): lde/src/main.c lde/src/system_bridge.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk
 	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) lde/src/main.c lde/src/system_bridge.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(DEMO_GUI_ELF) $(LDE_ELF)
-	$(HOSTCC) -Iinclude sdk/tools/liw-builder.c -o sdk/tools/liw-builder
+	$(HOSTCC) -Iinclude -Iinclude/uapi sdk/tools/liw-builder.c -o sdk/tools/liw-builder
 	$(HOSTCC) sdk/tools/img-gen.c -o sdk/tools/img-gen
 	./sdk/tools/liw-builder src/boot/test.liw src/boot/test.elf src/boot/test_manifest.json
 	grub-file --is-x86-multiboot2 $(KERNEL_BIN)
@@ -214,19 +246,22 @@ $(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(DEMO_GUI_ELF) $(LDE_ELF)
 # ============================================================
 
 $(BOOT_DIR)/test.elf: $(BOOT_DIR)/test.s
-	$(CC) -nostdlib -static $< -o $@ $(LIBGCC) $(M32) -Ttext 0x100000
+	$(CC) -nostdlib -static $< -o $@ -m32 -Ttext 0x100000
 
 run: $(ISO_IMAGE)
 	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
-	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512
+	PULSE_SERVER=$(if $(filter pa,$(AUDIO_BACKEND)),/mnt/wslg/PulseServer,) \
+	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 $(AUDIO_FLAGS)
 
 run-serial: $(ISO_IMAGE)
 	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
-	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 -serial stdio -d guest_errors -no-reboot
+	PULSE_SERVER=$(if $(filter pa,$(AUDIO_BACKEND)),/mnt/wslg/PulseServer,) \
+	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 $(AUDIO_FLAGS) -serial stdio -d guest_errors -no-reboot
 
 run-log: $(ISO_IMAGE)
 	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
-	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 -serial file:qemu_serial.log -D qemu_debug.log -d int,cpu_reset
+	PULSE_SERVER=$(if $(filter pa,$(AUDIO_BACKEND)),/mnt/wslg/PulseServer,) \
+	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 $(AUDIO_FLAGS) -serial file:qemu_serial.log -D qemu_debug.log -d int,cpu_reset
 
 clean:
 	rm -rf $(OBJ_DIR)

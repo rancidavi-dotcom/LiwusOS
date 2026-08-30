@@ -36,14 +36,12 @@ Node panel_create(void);
  * The pixel data is COPIED into kernel memory.
  * Returns the image node ID, or 0 on failure.
  */
-Node image_create(Canvas parent, int width, int height, const uint32_t *pixels);
+Node image_create(Canvas canvas, int width, int height, uint32_t *buffer);
 
 /* Update the pixel buffer of an existing image node.
- * count: number of pixels (width * height).
  * The pixel data is COPIED into kernel memory.
- * Returns 0 on success, -1 on failure.
  */
-int image_update(Node image, const uint32_t *pixels, uint32_t count);
+void image_update(Node image, uint32_t *buffer, int buffer_size);
 
 /* Hierarchy and Spatial */
 void canvas_add(Canvas canvas, Node child);
@@ -55,9 +53,5 @@ void camera_zoom(float zoom);
 
 /* Keyboard */
 bool keyboard_is_pressed(uint8_t scancode);
-
-/* Image */
-Node image_create(Canvas canvas, int width, int height, uint32_t *buffer);
-void image_update(Node image, uint32_t *buffer, int buffer_size);
 
 #endif /* LIWUS_GUI_H */

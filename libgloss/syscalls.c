@@ -20,6 +20,23 @@ static inline long __liw_syscall(long num, long arg1, long arg2, long arg3) {
     return ret;
 }
 
+/* Variante com 6 argumentos (usada por mmap). Passa:
+   rdi=a1, rsi=a2, rdx=a3, rcx=a4, r8=a5, r9=a6.
+   O kernel (via PUSH_ALL/POP_ALL) preserva todos os registradores, então
+   não é preciso declarar clobber além de "memory". */
+static inline long __liw_syscall6(long num, long a1, long a2, long a3,
+                                  long a4, long a5, long a6) {
+    register long out __asm__("rax");
+    register long a5r __asm__("r8") = a5;
+    register long a6r __asm__("r9") = a6;
+    __asm__ volatile ("int $0x80"
+        : "=a"(out)
+        : "a"(num), "D"(a1), "S"(a2), "d"(a3), "c"(a4),
+          "r"(a5r), "r"(a6r)
+        : "memory");
+    return out;
+}
+
 void _exit(int status) {
     __liw_syscall(1, status, 0, 0);
     while (1);
@@ -377,8 +394,17 @@ int dup2(int oldfd, int newfd) {
 
 #include <sys/mman.h>
 void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
-    errno = ENOMEM;
-    return (void *)-1;
+    long ret = __liw_syscall6(35, (long)addr, (long)length, prot,
+                              flags, fd, (long)offset);
+    if (ret == -1) {
+        errno = ENOMEM;
+        return MAP_FAILED;
+    }
+    return (void *)ret;
+}
+
+int munmap(void *addr, size_t length) {
+    return (int)__liw_syscall(36, (long)addr, (long)length, 0);
 }
 
 int fcntl(int fd, int cmd, ...) {
