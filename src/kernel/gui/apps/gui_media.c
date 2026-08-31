@@ -35,6 +35,21 @@ static uint32_t s_last_song_gen = 0;
 
 static void app_media_start(void);
 
+/* The same track can be visible both in the bundled /music directory and
+ * on the pendrive.  The player is source-agnostic, so present it only once
+ * instead of making the library look as though it contains duplicates. */
+static int song_name_equal(const char *a, const char *b) {
+    if (!a || !b) return 0;
+    while (*a && *b) {
+        char ca = *a++;
+        char cb = *b++;
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca + ('a' - 'A'));
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb + ('a' - 'A'));
+        if (ca != cb) return 0;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
 static void play_song_click(node_t *btn, void *userdata) {
     (void)btn;
     uint32_t idx = (uint32_t)(uint64_t)userdata;
@@ -98,6 +113,14 @@ static void rebuild_song_list(void) {
     } else {
         for (i = 0; i < count; i++) {
             const char *name = mp3_song_name(i);
+            int duplicate = 0;
+            for (uint32_t j = 0; j < i; j++) {
+                if (song_name_equal(name, mp3_song_name(j))) {
+                    duplicate = 1;
+                    break;
+                }
+            }
+            if (duplicate) continue;
             node_t *b = button_create("song", 0, 0, 300, 32,
                                       name ? name : "Unknown");
             b->margin[2] = 6;

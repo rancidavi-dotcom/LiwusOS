@@ -28,6 +28,18 @@ static int pen_is_mp3(const char *name) {
          (p[3] == '3');
 }
 
+static int pen_same_name(const char *a, const char *b) {
+  if (!a || !b) return 0;
+  while (*a && *b) {
+    char ca = *a++;
+    char cb = *b++;
+    if (ca >= 'A' && ca <= 'Z') ca = (char)(ca + ('a' - 'A'));
+    if (cb >= 'A' && cb <= 'Z') cb = (char)(cb + ('a' - 'A'));
+    if (ca != cb) return 0;
+  }
+  return *a == '\0' && *b == '\0';
+}
+
 static int pen_block_read(uint32_t lba, uint16_t *buffer) {
   return scsi_read_blocks(s_volume_lba + lba, 1, (uint8_t *)buffer);
 }
@@ -55,6 +67,16 @@ static void pen_rescan_root(void) {
     if (is_dir || !pen_is_mp3(name)) {
       continue;
     }
+    /* Some FAT images retain repeated directory entries after files are
+     * copied or replaced.  Do not expose a track more than once. */
+    int duplicate = 0;
+    for (uint32_t j = 0; j < s_count; j++) {
+      if (pen_same_name(s_names[j], name)) {
+        duplicate = 1;
+        break;
+      }
+    }
+    if (duplicate) continue;
     strncpy(s_names[s_count], name, PEN_NAME_MAX - 1);
     s_names[s_count][PEN_NAME_MAX - 1] = '\0';
     s_sizes[s_count] = size;

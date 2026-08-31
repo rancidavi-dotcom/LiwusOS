@@ -55,7 +55,6 @@
 #define AC97_PO_SR_DCH  0x01 /* DMA controller halted         */
 
 #define AC97_RING_ENTRIES 32
-#define AC97_RING_PREFILL 4   /* chunks ready before DMA starts (latency) */
 #define AC97_CHUNK_FRAMES 1024 /* frames (stereo/16-bit) per chunk */
 #define AC97_CHUNK_BYTES  (AC97_CHUNK_FRAMES * 4)
 
@@ -286,14 +285,15 @@ static void ring_arm_descriptor(uint32_t idx) {
 static int playback_run(audio_src_t *s) {
     uint32_t eof_chunk = 0;
     int eof = 0;
-    int free_slots = AC97_RING_ENTRIES - AC97_RING_PREFILL;
+    int free_slots = 0;
     uint32_t last_civ = 0;
 
-    /* Prime only a few chunks so playback starts almost immediately; the
-     * refill loop below tops the rest of the ring up right after the DMA
-     * starts (keeps startup latency low while the ring stays deep). */
+    /* Every descriptor advertised through LVI must be valid.  The old code
+     * prepared only four but set LVI to 31, so a long stream reached empty
+     * descriptors and the AC'97 engine halted.  Fill the complete ring
+     * before starting DMA; subsequent iterations recycle completed slots. */
     audio_fill_idx = 0;
-    for (uint32_t i = 0; i < AC97_RING_PREFILL; i++) {
+    for (uint32_t i = 0; i < AC97_RING_ENTRIES; i++) {
         if (!eof) {
             uint32_t got = fill_chunk(s, i);
             if (got < AC97_CHUNK_FRAMES) {
@@ -302,16 +302,15 @@ static int playback_run(audio_src_t *s) {
             }
         }
         ring_arm_descriptor(i);
+        audio_fill_idx = (i + 1) & (AC97_RING_ENTRIES - 1);
+        if (eof)
+            break;
     }
-    for (uint32_t i = AC97_RING_PREFILL; i < AC97_RING_ENTRIES; i++)
-        memset(audio_chunks[i], 0, AC97_CHUNK_BYTES);
 
-    if (eof && eof_chunk < AC97_RING_PREFILL && s->total_frames == 0) {
+    if (eof && eof_chunk == 0 && s->total_frames == 0) {
         /* Nothing to play (empty source). */
         return 0;
     }
-    if (eof)
-        free_slots = 0;
 
     /* Start the PCM-out stream. */
     outl(audio_nabm_base + AC97_PO_BDBAR, (uint32_t)(uintptr_t)audio_ring);
