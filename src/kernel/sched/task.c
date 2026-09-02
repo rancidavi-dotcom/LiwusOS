@@ -1,19 +1,22 @@
 #include "task.h"
-#include "gdt.h" // TSS
-#include "isr.h" // registers_t
+#include "gdt.h"
+#include "isr.h"
 #include "kheap.h"
 #include "serial.h"
 #include "string.h"
 #include "syscall.h"
-#include "vmm.h" // page_directory_t
+#include "vmm.h"
 #include "keyboard.h"
 #include <stddef.h>
 #include "spinlock.h"
+#include "elf.h"
 
 cpu_local_t cpus_local[16];
 spinlock_t scheduler_lock = {0};
 task_t *task_list = NULL;
 extern page_directory_t *current_directory;
+
+extern uint64_t last_elf_heap_start;
 
 static int next_pid = 1;
 static uint32_t global_switch_count = 0;
@@ -78,7 +81,7 @@ void init_tasking() {
   init_task->state = TASK_RUNNING;
   init_task->page_directory = current_directory;
   init_task->user_mode = false;
-  strcpy(init_task->cwd, "/");
+  strcpy(init_task->cwd, "/house/localhost");
   task_assign_name(init_task, "kernel", false);
 
   init_task->next = init_task;
@@ -218,8 +221,9 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
   regs->rsp = user_stack;
 
   new_task->stack_top = (uint64_t)regs;
-  new_task->heap_start = 0x40000000;
-  new_task->heap_end = 0x40000000;
+  uint64_t hstart = last_elf_heap_start ? last_elf_heap_start : 0x40000000;
+  new_task->heap_start = hstart;
+  new_task->heap_end = hstart;
   new_task->mmap_top = 0xBFFF0000;
 
   serial_print("DBG_TASK64: pid=");
@@ -228,6 +232,7 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
   serial_print(" name="); serial_print(name);
   serial_print(" entry="); serial_print_hex(entry_point);
   serial_print(" rsp="); serial_print_hex(user_stack);
+  serial_print(" heap_start="); serial_print_hex(hstart);
   serial_print("\n");
 
   spinlock_acquire(&scheduler_lock);
@@ -271,7 +276,7 @@ uint64_t schedule(uint64_t current_rsp) {
       curr->state = TASK_READY;
   }
 
-  /* Encontrar próxima tarefa em READY */
+  /* Round-robin: pick next READY task in list */
   task_t *next = curr->next;
   while (next->state != TASK_READY) {
     if (next == curr)
@@ -390,7 +395,6 @@ void move_to_user_mode() {
 }
 
 int fork_process(registers_t *regs) {
-  asm volatile("cli");
 
   task_t *parent = (task_t *)current_task;
   task_t *new_task = (task_t *)kmalloc(sizeof(task_t));
@@ -432,11 +436,7 @@ int fork_process(registers_t *regs) {
     }
   }
 
-  spinlock_acquire(&scheduler_lock);
-  new_task->next = task_list->next;
-  task_list->next = new_task;
-  spinlock_release(&scheduler_lock);
-
+  
   asm volatile("sti");
   return new_task->id;
 }

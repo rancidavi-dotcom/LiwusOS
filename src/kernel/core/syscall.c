@@ -18,6 +18,7 @@
 extern int elf_class(void *file_buffer);
 extern uint64_t elf32_load_file(void *file_buffer);
 extern uint64_t elf64_load_file(void *file_buffer);
+extern uint64_t last_elf_heap_start;
 
 static char *launch_last_error = "nenhum erro";
 const char *get_launch_last_error() { return launch_last_error; }
@@ -101,6 +102,7 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
   }
 
   uint8_t *stack_bytes = (uint8_t *)stack_top;
+  char nbuf[12];
 
   int argc = 0;
   if (argv) {
@@ -148,11 +150,6 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
     extern uint64_t execve_new_esp;
     execve_new_esp = (uint64_t)rsp;
   }
-
-  serial_print("EXEC: "); serial_print(filename);
-  serial_print(" argc="); char nbuf[12]; itoa(argc, nbuf, 10); serial_print(nbuf);
-  serial_print(" class="); serial_print(eclass == ELFCLASS32 ? "32" : "64");
-  serial_print("\n");
 
   launch_last_error = "ok";
   return entry;
@@ -237,6 +234,7 @@ int launch_initrd_program_argv(const char *filename, char *const argv[]) {
   
   sys_execve_is_64 = 0;
   execve_new_esp = 0;
+  last_elf_heap_start = 0;
   last_foreground_pid = pid;
   serial_print("[kernel] launch_initrd_program_argv created pid=");
   char pidbuf[16];
@@ -352,13 +350,6 @@ int sys_open(const char *filename, int flags) {
   }
 
   if (node) {
-    serial_print("[syscall] sys_open success: ");
-    serial_print(filename);
-    serial_print(" fd=");
-    char fdbuf[16];
-    itoa(fd, fdbuf, 10);
-    serial_print(fdbuf);
-    serial_print("\n");
     if (flags & O_TRUNC) {
       vfs_truncate(node);
     }

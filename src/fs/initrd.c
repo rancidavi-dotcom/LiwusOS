@@ -277,6 +277,19 @@ void initrd_copy_to_sdfs(copy_progress_cb cb) {
         serial_print(sdfs_path);
         serial_print("\n");
 
+        // Garante que os diretórios pais existam (o tar nao enumera
+        // diretorios como entradas, entao os criamos conforme necessario).
+        {
+            for (char *p = sdfs_path + 1; *p; p++) {
+                if (*p == '/') {
+                    *p = '\0';
+                    extern int sdfs_create_dir(const char *path);
+                    sdfs_create_dir(sdfs_path);
+                    *p = '/';
+                }
+            }
+        }
+
         // Cria o arquivo (start block + entrada no diretório pai)
         if (sdfs_create_file(sdfs_path) == 0) {
             // Escreve o conteúdo binário no SDFS via block chain

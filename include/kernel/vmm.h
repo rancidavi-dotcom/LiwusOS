@@ -56,4 +56,7 @@ page_directory_t *vmm_copy_directory(page_directory_t *src);
 void vmm_free_directory(page_directory_t *dir);
 uint64_t sys_brk(uint64_t addr);
 
+extern page_directory_t *current_directory;
+extern page_directory_t *kernel_directory;
+
 #endif

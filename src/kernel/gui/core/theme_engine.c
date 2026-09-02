@@ -19,6 +19,11 @@ void theme_engine_init(void) {
     s_palette[THEME_COLOR_BUTTON_BORDER]   = 0xFF64748B; /* Slate-500 */
     s_palette[THEME_COLOR_BUTTON_TEXT]     = 0xFFFFFFFF; /* White */
     s_palette[THEME_COLOR_CLOSE_BTN]       = 0xFFEF4444; /* Red-500 */
+    s_palette[THEME_COLOR_INPUT_BG]        = 0xFF0E1623;
+    s_palette[THEME_COLOR_INPUT_BG_FOCUS]  = 0xFF1A2A3A;
+    s_palette[THEME_COLOR_INPUT_BORDER]    = 0xFF355070;
+    s_palette[THEME_COLOR_INPUT_TEXT]      = 0xFFF8FAFC;
+    s_palette[THEME_COLOR_INPUT_CURSOR]    = 0xFF9CCBFF;
 }
 
 uint32_t theme_engine_get_color(theme_color_id_t id) {

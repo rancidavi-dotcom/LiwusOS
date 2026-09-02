@@ -21,6 +21,11 @@ typedef enum {
     THEME_COLOR_BUTTON_BORDER,      /* Button border */
     THEME_COLOR_BUTTON_TEXT,        /* Button text */
     THEME_COLOR_CLOSE_BTN,          /* Window close button */
+    THEME_COLOR_INPUT_BG,           /* Input background */
+    THEME_COLOR_INPUT_BG_FOCUS,     /* Input background focused */
+    THEME_COLOR_INPUT_BORDER,       /* Input border */
+    THEME_COLOR_INPUT_TEXT,         /* Input text */
+    THEME_COLOR_INPUT_CURSOR,       /* Input cursor */
     THEME_COLOR_MAX                 /* Sentinel */
 } theme_color_id_t;
 

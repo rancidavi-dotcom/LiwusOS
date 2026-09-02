@@ -181,7 +181,7 @@ page_directory_t *vmm_copy_directory(page_directory_t *src) {
   pml4_t *src_pml4 = src->pml4_virt;
   pml4_t *dest_pml4 = dest->pml4_virt;
 
-  for (int i = 0; i < 256; i++) {
+  for (int i = 0; i < 512; i++) {
     if (src_pml4->entries[i] & PTE_P) {
       pdp_t *new_pdp = (pdp_t *)kmalloc_a(4096);
       memset(new_pdp, 0, 4096);
@@ -228,7 +228,7 @@ void vmm_free_directory(page_directory_t *dir) {
     kfree(dir);
     return;
   }
-  for (int i = 0; i < 256; i++) {
+  for (int i = 0; i < 512; i++) {
     if (pml4->entries[i] & PTE_P) {
       pdp_t *pdp = (pdp_t *)(uint64_t)(pml4->entries[i] & ~0xFFFULL);
       for (int j = 0; j < 512; j++) {
@@ -262,16 +262,17 @@ void vmm_free_directory(page_directory_t *dir) {
 #include "task.h"
 uint64_t sys_brk(uint64_t addr) {
   if (!current_task) return 0;
-  if (addr == 0 || addr < current_task->heap_start) return current_task->heap_end;
-  if (addr > current_task->heap_end) {
-    uint64_t start = (current_task->heap_end + 0xFFF) & ~0xFFFULL;
-    uint64_t end = (addr + 0xFFF) & ~0xFFFULL;
-    for (uint64_t p = start; p < end; p += 4096) {
-      void *phys = pmm_alloc_block();
-      vmm_map_page(phys, (void *)p, 0x7);
-      memset((void *)p, 0, 4096);
-    }
-    current_task->heap_end = end;
+  if (addr == 0) return current_task->heap_end;
+  uint64_t brk_top = current_task->heap_end;
+  if (brk_top < current_task->heap_start) brk_top = current_task->heap_start;
+  if (addr <= brk_top) return brk_top;
+  uint64_t start = (brk_top + 0xFFF) & ~0xFFFULL;
+  uint64_t end = (addr + 0xFFF) & ~0xFFFULL;
+  for (uint64_t p = start; p < end; p += 4096) {
+    void *phys = pmm_alloc_block();
+    vmm_map_page(phys, (void *)p, 0x7);
+    memset((void *)p, 0, 4096);
   }
+  current_task->heap_end = end;
   return current_task->heap_end;
 }

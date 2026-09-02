@@ -9,7 +9,7 @@ KERNEL_INCLUDES = -Iinclude -Iinclude/kernel -Iinclude/drivers -Iinclude/fs -Iin
   -Isrc/kernel -Isrc/kernel/gui -Isrc/kernel/gui/core -Isrc/kernel/gui/scene -Isrc/kernel/gui/render \
   -Isrc/kernel/gui/input -Isrc/kernel/gui/input/tools -Isrc/kernel/gui/widgets -Isrc/kernel/gui/layout \
   -Isrc/kernel/gui/window -Isrc/kernel/gui/assets -Isrc/kernel/gui/math -Isrc/kernel/gui/apps \
-  -Isrc/kernel/terminal -Isrc/drivers -Isrc/fs -Isrc/net
+  -Isrc/kernel/terminal -Isrc/drivers -Isrc/fs -Isrc/net -Itests
 
 CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra $(KERNEL_INCLUDES) $(M64) -fno-pie -fno-pic -mcmodel=large -mno-sse -mno-sse2 -mno-mmx
 LDFLAGS = -Wl,-no-pie
@@ -95,7 +95,39 @@ ZLIB_DIR = third_party/zlib
 PNG_DIR = third_party/libpng
 JPEG_DIR = third_party/libjpeg
 
-.PHONY: all run run-serial run-log clean zlib libpng libjpeg
+# ============================================================
+# Test infrastructure
+# ============================================================
+TEST_DIR = tests
+TEST_FW = $(TEST_DIR)/framework.h
+
+KERNEL_TEST_CFLAGS = $(CFLAGS) -DKERNEL_TEST -I$(TEST_DIR)
+
+KERNEL_TEST_SRCS = $(TEST_DIR)/test_runner_kernel.c \
+                   $(TEST_DIR)/test_sdfs_create.c \
+                   $(TEST_DIR)/test_sdfs_rw.c \
+                   $(TEST_DIR)/test_sdfs_dir.c \
+                   $(TEST_DIR)/test_sdfs_rename.c \
+                   $(TEST_DIR)/test_sdfs_delete.c \
+                   $(TEST_DIR)/test_sdfs_persist.c \
+                   $(TEST_DIR)/test_sdfs_diskfull.c \
+                   $(TEST_DIR)/test_sdfs_crc32.c \
+                   $(TEST_DIR)/test_sdfs_journal.c \
+                   $(TEST_DIR)/test_sdfs_perms.c \
+                   $(TEST_DIR)/test_sdfs_v2.c
+
+KERNEL_TEST_OBJS = $(patsubst %.c, $(OBJ_DIR)/%.o, $(KERNEL_TEST_SRCS))
+
+USER_TEST_SRCS = $(TEST_DIR)/test_runner_user.c \
+                 $(TEST_DIR)/test_user_open.c \
+                 $(TEST_DIR)/test_user_fork.c \
+                 $(TEST_DIR)/test_user_pipe.c \
+                 $(TEST_DIR)/test_user_misc.c \
+                 $(TEST_DIR)/test_user_process.c
+
+TEST_USER_ELF = $(TEST_DIR)/test_runner.elf
+
+.PHONY: all run run-serial run-log qa-boot-persistence clean zlib libpng libjpeg test test-sdfs test-user test-clean
 
 # ---- Audio (AC'97 -> host) ----
 # O kernel toca o audio pela placa virtual AC'97; para ouvir no host o
@@ -145,8 +177,8 @@ libjpeg: $(CRT0_OBJ)
 		cp .libs/libjpeg.a ../../$(JPEG_LIB) && cp *.h ../../sdk/include/; \
 	fi
 
-$(KERNEL_BIN): $(KERNEL_OBJS) $(BOOT_DIR)/linker.ld
-	$(CC) -T $(BOOT_DIR)/linker.ld -o $@ $(CFLAGS) $(LDFLAGS) -nostdlib -static -Wl,--build-id=none $(KERNEL_OBJS) $(LIBGCC)
+$(KERNEL_BIN): $(KERNEL_OBJS) $(KERNEL_TEST_OBJS) $(BOOT_DIR)/linker.ld
+	$(CC) -T $(BOOT_DIR)/linker.ld -o $@ $(CFLAGS) $(LDFLAGS) -nostdlib -static -Wl,--build-id=none $(KERNEL_OBJS) $(KERNEL_TEST_OBJS) $(LIBGCC)
 
 $(OBJ_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -204,9 +236,16 @@ $(CALC_ELF): apps/calc/calc.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/libliwus_gui.a
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/calc/calc.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
 
+TCC_DIR = third_party/tcc
+TCC_CFLAGS = $(USER_CFLAGS) -I$(TCC_DIR) -DONE_SOURCE=1 -DTCC_TARGET_X86_64 \
+             -DCONFIG_TCCDIR=\"/house/localhost/tccsdk\" -DCONFIG_TCC_SEMLOCK=0 \
+             -DCONFIG_TCC_BACKTRACE=0 -DCONFIG_TCC_BCHECK=0
+
 $(TCC_ELF): apps/tcc/tcc.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -DONE_SOURCE=1 -DTCC_TARGET_X86_64 -DCONFIG_TCCDIR=\"/usr/lib/tcc\" -DCONFIG_TCC_SEMLOCK=0 -DCONFIG_TCC_BACKTRACE=0 -DCONFIG_TCC_BCHECK=0 -nostdlib -static $(CRT0_OBJ) apps/tcc/tcc.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) $(TCC_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/tcc/tcc.c -L$(NEWLIB_DIR) -lgloss -lc -lm -Wl,--allow-multiple-definition -o $@ $(LIBGCC)
+
+
 
 sdk/lib/libliwus_gui.a: sdk/lib/liwus_gui.c
 	$(CC) -c $< -o sdk/lib/liwus_gui.o $(USER_CFLAGS) -I$(CURDIR)/sdk/include
@@ -220,7 +259,7 @@ $(LDE_ELF): lde/src/main.c lde/src/system_bridge.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) lde/src/main.c lde/src/system_bridge.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
 
-$(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(DEMO_GUI_ELF) $(LDE_ELF)
+$(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(DEMO_GUI_ELF) $(LDE_ELF) $(TCC_ELF)
 	$(HOSTCC) -Iinclude -Iinclude/uapi sdk/tools/liw-builder.c -o sdk/tools/liw-builder
 	$(HOSTCC) sdk/tools/img-gen.c -o sdk/tools/img-gen
 	./sdk/tools/liw-builder src/boot/test.liw src/boot/test.elf src/boot/test_manifest.json
@@ -229,6 +268,17 @@ $(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(DEMO_GUI_ELF) $(LDE_ELF)
 	./sdk/tools/img-gen
 	if [ -f $(DEMO_GUI_ELF) ]; then cp $(DEMO_GUI_ELF) repo/demo_gui; fi
 	if [ -f $(LDE_ELF) ]; then cp $(LDE_ELF) repo/lde; fi
+	if [ -f $(TCC_ELF) ]; then cp $(TCC_ELF) repo/tcc; fi
+
+	# Instala o SDK do TCC dentro do initrd (CONFIG_TCCDIR=/tccsdk).
+	# estrutura: /tccsdk/include/*.h e /tccsdk/lib/libtcc1.a + libc/libm/gloss
+	mkdir -p repo/tccsdk/lib repo/tccsdk/include
+	if [ -f $(TCC_DIR)/tcclib.h ]; then cp $(TCC_DIR)/tcclib.h repo/tccsdk/include/; fi
+	cp $(TCC_DIR)/include/*.h repo/tccsdk/include/ 2>/dev/null || true
+	cp -r sdk/include/. repo/tccsdk/include/ 2>/dev/null || true
+	if [ -f $(TCC_DIR)/lib/libtcc1.a ]; then cp $(TCC_DIR)/lib/libtcc1.a repo/tccsdk/lib/; fi
+	if [ -f $(TCC_DIR)/libtcc1.a ]; then cp $(TCC_DIR)/libtcc1.a repo/tccsdk/lib/; fi
+	cp $(LIBC_A) $(LIBM_A) $(LIBGLOSS_A) libgloss/crt0.o repo/tccsdk/lib/ 2>/dev/null || true
 
 	tar -cvf initrd.tar -C repo . --format=ustar
 	mkdir -p isodir/boot/grub
@@ -248,6 +298,30 @@ $(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(DEMO_GUI_ELF) $(LDE_ELF)
 $(BOOT_DIR)/test.elf: $(BOOT_DIR)/test.s
 	$(CC) -nostdlib -static $< -o $@ -m32 -Ttext 0x100000
 
+# ---- Kernel-side test objects (SDFS tests) ----
+$(OBJ_DIR)/$(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(TEST_FW)
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ $(KERNEL_TEST_CFLAGS)
+
+# ---- Userspace test runner ----
+$(TEST_USER_ELF): $(USER_TEST_SRCS) $(CRT0_OBJ) $(LIBGLOSS_A)
+	$(CC) $(USER_CFLAGS) -I$(TEST_DIR) -nostdlib -static $(CRT0_OBJ) \
+	    $(USER_TEST_SRCS) -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
+
+# ---- Test targets ----
+test-sdfs: $(KERNEL_BIN)
+	bash scripts/run_tests.sh --sdfs
+
+test-user: $(KERNEL_BIN) $(TEST_USER_ELF)
+	bash scripts/run_tests.sh --user
+
+test: $(KERNEL_BIN) $(TEST_USER_ELF)
+	bash scripts/run_tests.sh --full
+
+test-clean:
+	rm -f $(TEST_USER_ELF)
+	rm -f $(KERNEL_TEST_OBJS)
+
 run: $(ISO_IMAGE)
 	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
 	PULSE_SERVER=$(if $(filter pa,$(AUDIO_BACKEND)),/mnt/wslg/PulseServer,) \
@@ -263,9 +337,14 @@ run-log: $(ISO_IMAGE)
 	PULSE_SERVER=$(if $(filter pa,$(AUDIO_BACKEND)),/mnt/wslg/PulseServer,) \
 	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 $(AUDIO_FLAGS) -serial file:qemu_serial.log -D qemu_debug.log -d int,cpu_reset
 
+qa-boot-persistence: $(ISO_IMAGE)
+	bash ./scripts/qa_boot_persistence.sh
+
 clean:
 	rm -rf $(OBJ_DIR)
-	rm -f $(KERNEL_BIN) $(ISO_IMAGE) initrd.tar src/boot/test.elf src/boot/test.liw $(CALC_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(LUA_ELF) $(CRUN_ELF) $(EDITOR_NANO_ELF) $(DEMO_GUI_ELF) $(LDE_ELF) $(LIBGLOSS_A) $(LIBGLOSS_OBJS) $(CRT0_OBJ)
+	rm -f $(KERNEL_BIN) $(ISO_IMAGE) initrd.tar src/boot/test.elf src/boot/test.liw $(CALC_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(LUA_ELF) $(CRUN_ELF) $(EDITOR_NANO_ELF) $(DEMO_GUI_ELF) $(LDE_ELF) $(TCC_ELF) $(LIBGLOSS_A) $(LIBGLOSS_OBJS) $(CRT0_OBJ)
+	rm -f $(TEST_USER_ELF) $(KERNEL_TEST_OBJS) test_serial.log test_disk.img
+	rm -f repo/test_mode repo/test_runner
 	@echo "  NOTA: liwus_disk.img preservado (remova manualmente se quiser disco limpo)"
 	rm -f sdk/tools/liw-builder sdk/tools/img-gen
 	rm -rf isodir repo

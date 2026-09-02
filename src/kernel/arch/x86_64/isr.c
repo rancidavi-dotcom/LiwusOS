@@ -27,14 +27,30 @@ void isr_handler(registers_t *regs) {
       serial_print(" cr2=");
       serial_print_hex(cr2);
     }
-    serial_print(" rip=");
-    serial_print_hex(regs->rip);
-    serial_print("\n");
+serial_print(" rip=");
+      serial_print_hex(regs->rip);
+      serial_print(" rsp=");
+      serial_print_hex(regs->rsp);
+      serial_print(" rax=");
+      serial_print_hex(regs->rax);
+      serial_print(" rbx=");
+      serial_print_hex(regs->rbx);
+      serial_print(" rcx=");
+      serial_print_hex(regs->rcx);
+      serial_print(" rdx=");
+      serial_print_hex(regs->rdx);
+      serial_print(" rdi=");
+      serial_print_hex(regs->rdi);
+      serial_print(" rsi=");
+      serial_print_hex(regs->rsi);
+      serial_print(" rbp=");
+      serial_print_hex(regs->rbp);
+      serial_print("\n");
 
-    if ((regs->cs & 0x3) == 0x3 && current_task && current_task->user_mode) {
-      serial_print("user task killed after exception\n");
-      sys_exit_process(128 + (int)regs->int_no);
-    } else {
+      if ((regs->cs & 0x3) == 0x3 && current_task && current_task->user_mode) {
+        serial_print("user task killed after exception\n");
+        sys_exit_process(128 + (int)regs->int_no);
+      } else {
       extern void kernel_panic(const char *msg);
       char buf[64];
       strcpy(buf, "Unhandled CPU exception (ISR ");

@@ -20,7 +20,14 @@ void cmd_help(int argc, char **argv);
 void cmd_clear(int argc, char **argv);
 void cmd_echo(int argc, char **argv);
 void cmd_ls(int argc, char **argv);
+void cmd_cd(int argc, char **argv);
 void cmd_pwd(int argc, char **argv);
+void cmd_cat(int argc, char **argv);
+void cmd_mkdir(int argc, char **argv);
+void cmd_touch(int argc, char **argv);
+void cmd_rm(int argc, char **argv);
+void cmd_mv(int argc, char **argv);
+void cmd_cp(int argc, char **argv);
 void cmd_reboot(int argc, char **argv);
 void cmd_version(int argc, char **argv);
 void cmd_meminfo(int argc, char **argv);
@@ -29,6 +36,7 @@ void cmd_ip(int argc, char **argv);
 void cmd_ping(int argc, char **argv);
 void cmd_wget(int argc, char **argv);
 void cmd_host(int argc, char **argv);
+void cmd_tcc(int argc, char **argv);
 
 // Command structure
 typedef struct {

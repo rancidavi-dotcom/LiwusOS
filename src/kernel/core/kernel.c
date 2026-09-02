@@ -451,9 +451,104 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
     }
   }
 
+  /* ---- Detect test mode from initrd ---- */
+  int kernel_test_mode = 0;
+  {
+    uint32_t tm_size = 0;
+    void *tm_flag = initrd_get_file("test_mode", &tm_size);
+    if (tm_flag) {
+      kernel_test_mode = 1;
+      serial_print("[boot] TEST MODE detected (test_mode in initrd)\n");
+    }
+  }
+
   init_timer(100);
   init_tasking();
   init_syscalls();
+
+  if (kernel_test_mode) {
+    /* ---- TCC integration test: if 'test_tcc' is present in the initrd,
+       launch the Tiny C Compiler (userspace) to compile a C file and then
+       run the resulting ELF. Exercised end-to-end by scripts/tcc_test.sh. */
+    {
+      extern int launch_initrd_program_argv(const char *filename, char *const argv[]);
+      extern void switch_task(void);
+      uint32_t tcc_marker_size = 0;
+      if (initrd_get_file("test_tcc", &tcc_marker_size)) {
+        serial_print("[boot] TCC integration test detected\n");
+
+        /* Compile hello_tcc.c (only, -c): exercises preprocessor +
+           parser + codegen + ELF output without needing crt/libs. */
+        char *c_argv[] = { "tcc", "-c", "/house/localhost/hello_tcc.c", "-o", "/house/localhost/hello_tcc.o", NULL };
+        int cpid = launch_initrd_program_argv("tcc", c_argv);
+        serial_print("[tcc] launch -c pid=");
+        char cb[16]; itoa(cpid, cb, 10); serial_print(cb);
+        serial_print("\n");
+
+        /* Give the user process time to run under the round-robin
+           scheduler (yield via switch_task so TCC gets CPU). We poll for
+           the output object file so we don't depend on a blocking wait
+           that could deadlock when the child exits. */
+        {
+          int found = 0;
+          for (int spins = 0; spins < 200000 && !found; spins++) {
+            switch_task();
+            uint32_t osize = 0;
+            void *odata = sdfs_read_file("/hello_tcc.o", &osize);
+            if (odata && osize > 0) {
+              kfree(odata);
+              found = 1;
+            }
+          }
+          serial_print("[tcc] poll done\n");
+
+          /* Report whether the object file was produced on the SDFS. */
+          uint32_t osize = 0;
+          void *odata = sdfs_read_file("/hello_tcc.o", &osize);
+          if (odata && osize > 0) {
+            serial_print("OK: libtcc compiled successfully\n");
+            kfree(odata);
+          } else {
+            serial_print("FAIL: hello_tcc.o missing\n");
+          }
+        }
+      }
+    }
+
+    /* ---- TEST MODE: run test suites, skip normal boot ---- */
+    extern void test_runner_task(void);
+    extern volatile int test_runner_done;
+    extern int launch_initrd_program(const char *filename);
+    extern int sys_waitpid(int pid, int *status, int options);
+
+    /* If a userspace test_runner ELF is present in the initrd, launch it
+       as a Ring 3 process and wait for it to finish. Otherwise run the
+       kernel-side SDFS tests. */
+    uint32_t ur_size = 0;
+    if (initrd_get_file("test_runner", &ur_size)) {
+      serial_print("[boot] Launching userspace test_runner\n");
+      int pid = launch_initrd_program("/test_runner");
+      if (pid > 0) {
+        /* Wait for the user test process to exit (reap zombie). */
+        sys_waitpid(pid, NULL, 0);
+      } else {
+        serial_print("[boot] ERROR: could not launch /test_runner\n");
+      }
+    } else {
+      create_task_named(test_runner_task, "test_runner");
+      /* Wait for tests to finish */
+      while (!test_runner_done) {
+        switch_task();
+      }
+    }
+
+    serial_print("LIWUS_BOOT_READY\n");
+    serial_print("[boot] Tests complete. Halting.\n");
+    asm volatile("sti");
+    while (1) {
+      asm volatile("hlt");
+    }
+  }
 
   /* Sync music MP3s from the initrd to SDFS + seed the media song list. */
   mp3_init();
@@ -480,6 +575,8 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   // extern void terminal_task();
   // create_task_named(terminal_task, "terminal");
 
+  /* Stable serial marker consumed by the headless regression suite. */
+  serial_print("LIWUS_BOOT_READY\n");
   serial_print("sti...\n");
   asm volatile("sti");
   while (1) {

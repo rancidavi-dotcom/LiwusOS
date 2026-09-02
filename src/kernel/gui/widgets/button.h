@@ -14,6 +14,7 @@ node_t *button_create(const char *name, int x, int y, int w, int h, const char *
 
 void button_set_text(node_t *button, const char *text);
 void button_set_on_click(node_t *button, button_click_cb_t cb, void *userdata);
+void button_set_on_double_click(node_t *button, button_click_cb_t cb, void *userdata);
 void button_set_highlight(node_t *button, bool highlighted);
 
 #endif /* GUI_BUTTON_H */

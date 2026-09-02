@@ -118,7 +118,7 @@ with code identifiers in **English**.
 **Applications**
 - Doom (doomgeneric port) with Freedoom data
 - Lua 5.4 interpreter
-- TCC (Tiny C Compiler) — compile C inside LiwusOS
+- TCC (Tiny C Compiler) — compile C inside LiwusOS (verificado: `tcc -c`)
 - Image viewer (PNG/JPEG)
 - Calculator (graphical, using Scene Graph SDK)
 - Kilo text editor
@@ -778,7 +778,7 @@ The terminal subsystem (`src/kernel/terminal/`) is a modular shell implementatio
 |-------------|--------|-------------|
 | **Doom** | `apps/doomgeneric/` | doomgeneric port with Freedoom data, renders via syscall 13 |
 | **Lua 5.4** | `apps/lua/` | Full Lua interpreter for scripting |
-| **TCC** | `apps/tcc/` | Tiny C Compiler — compile and run C programs inside LiwusOS |
+| **TCC** | `apps/tcc/` | Tiny C Compiler — compile C programs inside LiwusOS (`tcc -c` verified) |
 | **Calc** | `apps/calc/` | Graphical calculator using Scene Graph SDK |
 | **View** | `apps/view/` | Image viewer supporting PNG and JPEG |
 | **Kilo** | `apps/kilo/` | Kilo text editor (nano-like) |
@@ -1121,10 +1121,29 @@ whoami
 The `doomgeneric` binary and `freedoom1.wad` are included in the initrd.
 
 **Compiling C inside LiwusOS:**
+
+The Tiny C Compiler (TCC) runs as a Ring-3 user process and compiles C source
+inside the OS. Compiling a translation unit to an object file is verified
+end-to-end:
+
 ```
-tcc hello.c -o hello
-./hello
+tcc -c /house/localhost/hello_tcc.c -o /house/localhost/hello_tcc.o
 ```
+
+An automated end-to-end test is provided:
+
+```bash
+make liwusos.iso
+timeout 120 bash scripts/tcc_test.sh
+# Expect: [PASS] libtcc API compilou com sucesso dentro do LiwusOS
+#          OK: libtcc compiled successfully
+```
+
+This boots the OS in QEMU, runs `tcc -c` on `hello_tcc.c` inside the kernel,
+and checks that the resulting object file (`hello_tcc.o`) is written to the
+SDFS disk. Full compile → link (`tcc -o prog`) → run is planned next; the
+linker (embedded in TCC) and the SDK (`crt0.o`/`libc.a` in
+`/house/localhost/tccsdk`) are already in place.
 
 ---
 

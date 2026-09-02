@@ -26,11 +26,15 @@ else
 fi
 
 # ---- Disco persistente (so cria se nao existir) ----
-if [ ! -f liwus_disk.img ]; then
+# Por padrao, o mesmo arquivo acompanha o projeto entre todos os boots.
+# Defina LIWUS_DISK_IMAGE=/caminho/outro/disco.img para usar outro disco.
+DISK_IMAGE="${LIWUS_DISK_IMAGE:-$PWD/liwus_disk.img}"
+if [ ! -f "$DISK_IMAGE" ]; then
     has qemu-img || die "qemu-img nao encontrado. Instale: apt-get install qemu-utils"
-    echo "==> Criando disco persistente liwus_disk.img (512MB) ..."
-    qemu-img create -f raw liwus_disk.img 512M
+    echo "==> Criando disco persistente $DISK_IMAGE (512MB) ..."
+    qemu-img create -f raw "$DISK_IMAGE" 512M
 fi
+echo "==> Disco persistente: $DISK_IMAGE"
 
 # ---- Audio ----
 # O som interno (AC'97) so chega aos alto-falantes do host se o QEMU
@@ -76,7 +80,7 @@ fi
 # Adiciona: serial (log), SCSI (pendrive virtual), audio e rede.
 exec qemu-system-x86_64 \
     -cdrom liwusos.iso \
-    -drive id=disk,file=liwus_disk.img,if=none,format=raw \
+    -drive id=disk,file="$DISK_IMAGE",if=none,format=raw \
     -device ahci,id=ahci \
     -device ide-hd,drive=disk,bus=ahci.0 \
     -blockdev "driver=raw,node-name=pen,file.driver=file,file.filename=$PWD/pendrive.img" \

@@ -38,6 +38,7 @@
 #include "core/app_registry.h"
 #include "apps/gui_settings.h"
 #include "apps/gui_media.h"
+#include "apps/gui_explorer.h"
 
 /* VGA globals (de vga.c) */
 extern uint32_t vga_fb_width;
@@ -157,6 +158,7 @@ void gui_init(void) {
     app_registry_init();
     app_settings_init();
     app_media_init();
+    app_explorer_init();
 
     /* 1.5. Theme Engine */
     theme_engine_init();

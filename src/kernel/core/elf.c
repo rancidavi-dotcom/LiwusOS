@@ -3,6 +3,9 @@
 #include "string.h"
 #include "vmm.h"
 #include "pmm.h"
+#include "serial.h"
+
+uint64_t last_elf_heap_start = 0;
 
 int elf_class(void *file_buffer) {
   if (!file_buffer) return -1;
@@ -55,6 +58,8 @@ uint64_t elf64_load_file(void *file_buffer) {
 
   Elf64_Phdr *phdr = (Elf64_Phdr *)((uint64_t)file_buffer + hdr->e_phoff);
 
+  uint64_t max_end = 0;
+
   for (int i = 0; i < hdr->e_phnum; i++) {
     if (phdr[i].p_type == PT_LOAD) {
       uint64_t vaddr = phdr[i].p_vaddr;
@@ -64,6 +69,8 @@ uint64_t elf64_load_file(void *file_buffer) {
 
       uint64_t start_page = vaddr & ~0xFFFULL;
       uint64_t end_page = (vaddr + memsz + 0xFFF) & ~0xFFFULL;
+
+      if (end_page > max_end) max_end = end_page;
 
       for (uint64_t p = start_page; p < end_page; p += 4096) {
         void *phys = pmm_alloc_block();
@@ -76,8 +83,26 @@ uint64_t elf64_load_file(void *file_buffer) {
       if (memsz > filesz) {
         memset((void *)(vaddr + filesz), 0, (size_t)(memsz - filesz));
       }
+      serial_print("  [elf64_load] LOAD vaddr="); serial_print_hex(vaddr);
+      serial_print(" filesz="); serial_print_hex(filesz);
+      serial_print(" memsz="); serial_print_hex(memsz);
+      serial_print(" flags="); serial_print_hex(phdr[i].p_flags);
+      serial_print("\n");
+      if (phdr[i].p_flags & 0x2) {
+        uint64_t *reallocator_ptr = (uint64_t *)0x471000;
+        serial_print("  [elf64_load] reallocator at 0x471000 = "); serial_print_hex(*reallocator_ptr); serial_print("\n");
+        uint8_t *data_bytes = (uint8_t *)vaddr;
+        serial_print("  [elf64_load] first 32 bytes of RW segment: ");
+        for (int k = 0; k < 32; k++) {
+          serial_print_hex(data_bytes[k]); serial_print(" ");
+        }
+        serial_print("\n");
+      }
     }
   }
 
+  last_elf_heap_start = max_end;
+
+  serial_print("  [elf64_load] entry="); serial_print_hex(hdr->e_entry); serial_print("\n");
   return hdr->e_entry;
 }

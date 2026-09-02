@@ -15,6 +15,9 @@ typedef struct {
     bool               pressed;
     button_click_cb_t  on_click;
     void              *click_ud;
+    button_click_cb_t  on_double_click;
+    void              *double_click_ud;
+    uint32_t           last_click_time;
     const glyph_t     *font;
     uint32_t           current_bg_color;
 } button_data_t;
@@ -86,9 +89,16 @@ static bool button_on_event(node_t *self, const gui_event_t *e) {
             d->pressed = false;
             uint32_t target_color = d->hovered ? theme_engine_get_color(THEME_COLOR_BUTTON_BG_HOVER) : theme_engine_get_color(THEME_COLOR_BUTTON_BG);
             animation_start(self, ANIM_PROP_COLOR, &d->current_bg_color, d->current_bg_color, target_color, 15);
-            if (d->hovered && d->on_click) {
+            
+            /* Double-click detection: if last click was within 400ms */
+            extern uint32_t timer_ticks;
+            uint32_t now = timer_ticks;
+            if (d->on_double_click && d->hovered && (now - d->last_click_time) <= 40) {  // 100Hz ticks, 40 = ~400ms
+                d->on_double_click(self, d->double_click_ud);
+            } else if (d->hovered && d->on_click) {
                 d->on_click(self, d->click_ud);
             }
+            d->last_click_time = now;
             return true;
         }
     }
@@ -156,6 +166,14 @@ void button_set_on_click(node_t *button, button_click_cb_t cb, void *userdata) {
         button_data_t *d = (button_data_t *)button->userdata;
         d->on_click = cb;
         d->click_ud = userdata;
+    }
+}
+
+void button_set_on_double_click(node_t *button, button_click_cb_t cb, void *userdata) {
+    if (button && button->type == NODE_BUTTON) {
+        button_data_t *d = (button_data_t *)button->userdata;
+        d->on_double_click = cb;
+        d->double_click_ud = userdata;
     }
 }
 
