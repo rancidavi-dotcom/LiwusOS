@@ -43,9 +43,11 @@ static void text_input_draw(node_t *self, struct gui_renderer *r) {
     
     self->screen_bounds = rect_make(screen_x, screen_y, screen_w, screen_h);
 
+    /* Solid background — CRT style */
     uint32_t bg = d->focused ? theme_engine_get_color(THEME_COLOR_INPUT_BG_FOCUS) : theme_engine_get_color(THEME_COLOR_INPUT_BG);
-    renderer_fill_rect(r, self->screen_bounds, bg);
-    renderer_draw_rect(r, self->screen_bounds, theme_engine_get_color(THEME_COLOR_INPUT_BORDER), 1);
+    renderer_fill_rect(r, self->screen_bounds, bg | 0xFF000000);
+    renderer_draw_rect(r, self->screen_bounds,
+        d->focused ? theme_engine_get_color(THEME_COLOR_INPUT_BORDER) : theme_engine_get_color(THEME_COLOR_BUTTON_BG_PRESS), 1);
 
     if (d->text) {
         int char_w = 8;
@@ -85,11 +87,14 @@ static void text_input_draw(node_t *self, struct gui_renderer *r) {
             p++;
         }
 
+        /* CRT block cursor — full character cell, not a thin line */
         if (d->focused) {
             int cursor_x = start_x + (d->cursor_pos % max_chars_per_line) * char_w;
             int cursor_y = start_y + (d->cursor_pos / max_chars_per_line) * char_h + d->scroll_offset;
             if (cursor_y >= start_y && cursor_y < start_y + screen_h) {
-                renderer_fill_rect(r, rect_make(cursor_x, cursor_y, 1, char_h), theme_engine_get_color(THEME_COLOR_INPUT_CURSOR));
+                /* Draw solid block cursor (8x16) */
+                gui_rect_t cursor_rect = rect_make(cursor_x, cursor_y, char_w, char_h);
+                renderer_fill_rect(r, cursor_rect, theme_engine_get_color(THEME_COLOR_INPUT_CURSOR));
             }
         }
     }

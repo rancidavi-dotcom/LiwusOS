@@ -2,6 +2,7 @@
 #include "pmm.h"
 #include "serial.h"
 #include "spinlock.h"
+#include "string.h"
 
 static uint64_t kheap_start = 0;
 static uint64_t kheap_current = 0;
@@ -173,4 +174,37 @@ void kfree(void *ptr) {
   free_list = header;
   spinlock_release(&kheap_lock);
   pop_interrupts(eflags);
+}
+
+void *krealloc(void *ptr, size_t new_size) {
+  if (!ptr)
+    return kmalloc(new_size);
+  if (new_size == 0) {
+    kfree(ptr);
+    return NULL;
+  }
+
+  uint64_t eflags = push_interrupts();
+  spinlock_acquire(&kheap_lock);
+
+  free_header_t *header = (free_header_t *)((uint64_t)ptr - HEADER_SIZE);
+  if ((uint64_t)header < kheap_start) {
+    spinlock_release(&kheap_lock);
+    pop_interrupts(eflags);
+    return NULL;
+  }
+
+  size_t old_size = header->size > HEADER_SIZE ? header->size - HEADER_SIZE : 0;
+  spinlock_release(&kheap_lock);
+  pop_interrupts(eflags);
+
+  if (new_size <= old_size)
+    return ptr;
+
+  void *np = kmalloc(new_size);
+  if (!np)
+    return NULL;
+  memcpy(np, ptr, old_size);
+  kfree(ptr);
+  return np;
 }

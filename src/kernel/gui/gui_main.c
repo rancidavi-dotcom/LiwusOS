@@ -25,7 +25,6 @@
 #include "layout/layout_engine.h"
 #include "input/input_manager.h"
 #include "input/tools/tool_manager.h"
-#include "input/tools/pan_tool.h"
 #include "input/tools/select_tool.h"
 #include "input/tools/move_tool.h"
 
@@ -36,9 +35,12 @@
 #include "window/focus_manager.h"
 #include "window/window_manager.h"
 #include "core/app_registry.h"
+#include "core/taskbar.h"
+#include "core/desktop.h"
 #include "apps/gui_settings.h"
 #include "apps/gui_media.h"
 #include "apps/gui_explorer.h"
+#include "apps/gui_imageviewer.h"
 
 /* VGA globals (de vga.c) */
 extern uint32_t vga_fb_width;
@@ -73,7 +75,7 @@ void demo_app_start(void) {
         win->padding[2] = 10;
         win->padding[3] = 10;
 
-        node_t *lbl = label_create("lbl", 0, 0, "Hello, Infinite Canvas!", 0xFFFFFFFF);
+        node_t *lbl = label_create("lbl", 0, 0, "Hello, Infinite Canvas!", 0xFF00FF41);
         lbl->margin[2] = 10;
         lbl->layout_align = ALIGN_CENTER;
 
@@ -81,8 +83,8 @@ void demo_app_start(void) {
         btn->margin[2] = 10;
         btn->layout_align = ALIGN_CENTER;
 
-        node_t *panel = panel_create("pnl", 0, 0, 260, 40, 0x88000000);
-        panel_set_border(panel, 0xFF475569, 1);
+        node_t *panel = panel_create("pnl", 0, 0, 260, 40, 0xFF0A1510);
+        panel_set_border(panel, 0xFF00AA00, 1);
         panel->flex_weight = 1;
         panel->layout_align = ALIGN_STRETCH;
         
@@ -112,11 +114,11 @@ void settings_app_start(void) {
         win->padding[2] = 10;
         win->padding[3] = 10;
 
-        node_t *lbl = label_create("lbl_set", 0, 0, "Settings Panel", 0xFFFFFFFF);
+        node_t *lbl = label_create("lbl_set", 0, 0, "Settings Panel", 0xFF00FF41);
         lbl->margin[2] = 10;
         lbl->layout_align = ALIGN_CENTER;
 
-        node_t *lbl2 = label_create("lbl_set2", 0, 0, "Theme: Dark Mode", 0xFFAAAAAA);
+        node_t *lbl2 = label_create("lbl_set2", 0, 0, "Theme: CRT Green", 0xFF00CC33);
         lbl2->margin[2] = 20;
         lbl2->layout_align = ALIGN_CENTER;
 
@@ -159,6 +161,7 @@ void gui_init(void) {
     app_settings_init();
     app_media_init();
     app_explorer_init();
+    app_imageviewer_init();
 
     /* 1.5. Theme Engine */
     theme_engine_init();
@@ -199,21 +202,24 @@ void gui_init(void) {
     g_focus_manager = focus_manager_create(g_event_bus, root);
     s_wm    = window_manager_create(g_event_bus, root);
 
-    /* 8. Tools */
+    /* 8. Tools (desktop normal: mover/arrastar janelas e selecionar, sem
+     *    pan/zoom infinito da câmera — camera fica fixa na origem) */
     s_tools = tool_manager_create(g_event_bus, g_camera, root);
     if (s_tools) {
         tool_t *select = select_tool_create(g_camera, root);
         tool_t *move   = move_tool_create(g_camera, root, select);
-        tool_t *pan    = pan_tool_create(g_camera, root);
 
-        /* A ordem importa: primeiro tentamos Move, depois Select, depois Pan */
+        /* A ordem importa: primeiro tentamos Move, depois Select */
         tool_manager_add_tool(s_tools, move);
         tool_manager_add_tool(s_tools, select);
-        tool_manager_add_tool(s_tools, pan);
     }
 
     /* 9. Compositor */
     s_comp = compositor_create(s_renderer, g_camera, g_event_bus, g_input_manager, root);
+
+    /* 10. Desktop (ícones de apps) e barra de tarefas */
+    desktop_create(sw, sh);
+    taskbar_create(sw, sh);
 }
 
 /* --------------------------------------------------------------------------

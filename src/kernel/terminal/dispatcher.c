@@ -62,6 +62,46 @@ void cmd_tcc(int argc, char **argv) {
     vga_puts(buf);
 }
 
+// Executa um programa compilado (ELF) a partir do filesystem SDFS, repassando
+// argumentos. Uso: run <programa> [args...]
+//
+// O caminho é relativo à raiz do SDFS (que corresponde ao mount VFS
+// /house/localhost). Ex.: "run hello" roda /house/localhost/hello.
+// Também aceita caminhos completos VFS, ex.: "run /house/localhost/hello".
+void cmd_run(int argc, char **argv) {
+    extern int launch_initrd_program_argv(const char *filename, char *const argv[]);
+    if (argc < 2 || !argv[1]) return;
+
+    // Normaliza o caminho para a forma esperada por sys_execve (SDFS-relativo).
+    static char prog_path[256];
+    const char *p = argv[1];
+    static const char mount_prefix[] = "/house/localhost/";
+    if (strncmp(p, mount_prefix, sizeof(mount_prefix) - 1) == 0) {
+        p += sizeof(mount_prefix) - 1;          // "hello" relativo ao SDFS root
+    }
+    if (p[0] == '/') p++;                        // sem barra inicial (sys_execve a adiciona)
+    strncpy(prog_path, p, 255);
+    prog_path[255] = '\0';
+
+    // Monta argv: [programa, args..., NULL]
+    char *prog_argv[17];
+    int i;
+    prog_argv[0] = prog_path;
+    for (i = 1; i < argc && i < 16; i++) {
+        prog_argv[i] = argv[i + 1];
+    }
+    prog_argv[i] = NULL;
+
+    int pid = launch_initrd_program_argv(prog_path, prog_argv);
+
+    vga_puts("[kernel] run ");
+    vga_puts(prog_path);
+    vga_puts(" pid=");
+    char pidbuf[16];
+    if (pid < 0) vga_puts("error\n");
+    else { itoa(pid, pidbuf, 10); vga_puts(pidbuf); vga_puts("\n"); }
+}
+
 // Define command table
 static const terminal_command_t commands[] = {
     {"help", cmd_help, "Shows this help message"},
@@ -85,6 +125,7 @@ static const terminal_command_t commands[] = {
     {"wget", cmd_wget, "Download files from the web (HTTP)"},
     {"host", cmd_host, "DNS lookup utility"},
     {"tcc", cmd_tcc, "Tiny C Compiler - compila C dentro do OS"},
+    {"run", cmd_run, "Run a compiled ELF program (ex: run hello)"},
     {"/lde", cmd_lde, "Launch Liwus Desktop Engine"},
     {"lde", cmd_lde, "Launch Liwus Desktop Engine"}
 };

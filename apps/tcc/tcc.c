@@ -218,9 +218,34 @@ int main(int argc, char **argv) {
     /* Override TCC's reallocator with our simple sys_brk-based allocator */
     extern void tcc_set_realloc(void *(*realloc_func)(void*, unsigned long));
     tcc_set_realloc(tcc_simple_realloc);
-    
+
+    /* Force static linking so TCC uses the .a archives in tccsdk/lib
+       (crt1.o/crti.o/crtn.o/libc.a/libm.a/libgloss.a) instead of looking
+       for dynamic libc.so. Only needed when producing an executable, so
+       skip it for -c/-S/-E (object/asm/preprocess only). Inject "-static"
+       as the first arg. */
+    static char static_flag[] = "-static";
+    int need_static = 1;
+    for (int i = 1; i < argc; i++)
+        if (argv[i] && (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "-S") == 0
+                        || strcmp(argv[i], "-E") == 0))
+            { need_static = 0; break; }
+
+    char *newargv[32];
+    int cap = argc < 30 ? argc : 30;
+    int nargc = argc + (need_static ? 1 : 0);
+    if (nargc > 31) nargc = 31;
+    newargv[0] = argv[0];
+    if (need_static) {
+        newargv[1] = static_flag;
+        for (int i = 1; i <= cap; i++) newargv[i + 1] = argv[i];
+    } else {
+        for (int i = 1; i <= cap; i++) newargv[i] = argv[i];
+    }
+    newargv[nargc] = NULL;
+
     /* Initialize TCC callbacks to prevent NULL derefs */
-    int r = tcc_original_main(argc, argv);
+    int r = tcc_original_main(nargc, newargv);
     kprintf("TCC: main() exit");
     return r;
 }

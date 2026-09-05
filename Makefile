@@ -24,6 +24,15 @@ CRT0_OBJ = libgloss/crt0.o
 $(CRT0_OBJ): libgloss/crt0.S
 	$(CC) -c $< -o $@ $(USER_CFLAGS)
 
+CRTI_OBJ = libgloss/crti.o
+CRTN_OBJ = libgloss/crtn.o
+
+$(CRTI_OBJ): libgloss/crti.S
+	$(CC) -c $< -o $@ $(USER_CFLAGS)
+
+$(CRTN_OBJ): libgloss/crtn.S
+	$(CC) -c $< -o $@ $(USER_CFLAGS)
+
 SRC_DIR = src
 BOOT_DIR = $(SRC_DIR)/boot
 KERNEL_DIR = $(SRC_DIR)/kernel
@@ -239,7 +248,10 @@ $(CALC_ELF): apps/calc/calc.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/libliwus_gui.a
 TCC_DIR = third_party/tcc
 TCC_CFLAGS = $(USER_CFLAGS) -I$(TCC_DIR) -DONE_SOURCE=1 -DTCC_TARGET_X86_64 \
              -DCONFIG_TCCDIR=\"/house/localhost/tccsdk\" -DCONFIG_TCC_SEMLOCK=0 \
-             -DCONFIG_TCC_BACKTRACE=0 -DCONFIG_TCC_BCHECK=0
+             -DCONFIG_TCC_BACKTRACE=0 -DCONFIG_TCC_BCHECK=0 \
+             -DCONFIG_TCC_LIBPATHS=\"/house/localhost/tccsdk/lib\" \
+             -DCONFIG_TCC_CRTPREFIX=\"/house/localhost/tccsdk/lib\" \
+             -DCONFIG_TCC_ELFINTERP=\"-\"
 
 $(TCC_ELF): apps/tcc/tcc.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
 	@mkdir -p $(dir $@)
@@ -279,6 +291,10 @@ $(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(DEMO_GUI_ELF) $(LDE_ELF) $(TC
 	if [ -f $(TCC_DIR)/lib/libtcc1.a ]; then cp $(TCC_DIR)/lib/libtcc1.a repo/tccsdk/lib/; fi
 	if [ -f $(TCC_DIR)/libtcc1.a ]; then cp $(TCC_DIR)/libtcc1.a repo/tccsdk/lib/; fi
 	cp $(LIBC_A) $(LIBM_A) $(LIBGLOSS_A) libgloss/crt0.o repo/tccsdk/lib/ 2>/dev/null || true
+	# Objetos CRT exigidos pelo TCC ao linkar executáveis (crt1 = crt0)
+	cp libgloss/crt0.o repo/tccsdk/lib/crt1.o 2>/dev/null || true
+	$(MAKE) $(CRTI_OBJ) $(CRTN_OBJ)
+	cp $(CRTI_OBJ) $(CRTN_OBJ) repo/tccsdk/lib/ 2>/dev/null || true
 
 	tar -cvf initrd.tar -C repo . --format=ustar
 	mkdir -p isodir/boot/grub

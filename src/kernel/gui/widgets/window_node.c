@@ -49,20 +49,15 @@ void window_node_draw(node_t *self, struct gui_renderer *r) {
     /* Title bar height */
     int title_h = camera_scale(cam, 24);
 
-    /* Background */
+    /* Window body — solid dark green-black, no transparency */
     gui_rect_t bg_rect = rect_make(screen_x, screen_y + title_h, screen_w, screen_h - title_h);
     renderer_fill_rect(r, bg_rect, theme_engine_get_color(THEME_COLOR_WINDOW_BG));
 
-    /* Title Bar */
+    /* Title Bar — dark green */
     gui_rect_t title_rect = rect_make(screen_x, screen_y, screen_w, title_h);
     renderer_fill_rect(r, title_rect, theme_engine_get_color(THEME_COLOR_WINDOW_TITLEBAR));
 
-    /* Coloured traffic light (Close only) */
-    int dot_s = camera_scale(cam, 12);
-    int dot_y = screen_y + camera_scale(cam, 6);
-    renderer_fill_rect(r, rect_make(screen_x + camera_scale(cam, 8),  dot_y, dot_s, dot_s), theme_engine_get_color(THEME_COLOR_CLOSE_BTN));
-
-    /* Title Text */
+    /* Title Text — bright green, centered */
     if (d->title) {
         int text_len = strlen(d->title);
         int text_w = text_len * 8;
@@ -72,18 +67,27 @@ void window_node_draw(node_t *self, struct gui_renderer *r) {
 
         for (int i = 0; i < text_len; i++) {
             unsigned char c = d->title[i];
-            renderer_draw_glyph(r, cx, cy, theme_engine_get_color(THEME_COLOR_TEXT_SECONDARY), 0x00000000, &d->font[c]);
+            renderer_draw_glyph(r, cx, cy, theme_engine_get_color(THEME_COLOR_TEXT_PRIMARY), 0x00000000, &d->font[c]);
             cx += 8;
         }
     }
 
-    /* Outer border */
-    gui_rect_t outer = rect_make(screen_x - 1, screen_y - 1, screen_w + 2, screen_h + 2);
-    if (d->focused) {
-        renderer_draw_rect(r, outer, 0xFFFFFFFF, 2); // Bright white, 2px thick
-    } else {
-        renderer_draw_rect(r, outer, theme_engine_get_color(THEME_COLOR_WINDOW_BORDER), 1);
+    /* Close button: single [X] red glyph at right of titlebar — no extra block */
+    if (d->font) {
+        int close_x = screen_x + screen_w - camera_scale(cam, 20);
+        int close_y = screen_y + (title_h - 16) / 2;
+        renderer_draw_glyph(r, close_x, close_y,
+            theme_engine_get_color(THEME_COLOR_CLOSE_BTN), 0x00000000,
+            &d->font['X']);
     }
+
+    /* Single outer border — lightest possible: one draw_rect */
+    gui_rect_t outer = rect_make(screen_x, screen_y, screen_w, screen_h);
+    renderer_draw_rect(r, outer, theme_engine_get_color(THEME_COLOR_WINDOW_BORDER), 1);
+
+    /* Separator under titlebar */
+    gui_rect_t sep = rect_make(screen_x, screen_y + title_h - 1, screen_w, 1);
+    renderer_fill_rect(r, sep, theme_engine_get_color(THEME_COLOR_WINDOW_BORDER));
 }
 
 static void window_destroy(node_t *self) {
@@ -135,12 +139,15 @@ bool window_node_on_event(node_t *self, const gui_event_t *e) {
         int screen_x = camera_world_to_screen_x(cam, pt.x);
         int screen_y = camera_world_to_screen_y(cam, pt.y);
 
-        int dot_s = camera_scale(cam, 12);
-        int dot_x = screen_x + camera_scale(cam, 8);
-        int dot_y = screen_y + camera_scale(cam, 6);
-        gui_rect_t dot_rect = rect_make(dot_x, dot_y, dot_s, dot_s);
+        int title_h = camera_scale(cam, 24);
+        int screen_w = camera_scale(cam, self->width);
 
-        if (rect_contains_point(dot_rect, e->mouse.x, e->mouse.y)) {
+        /* Close button: [X] at right side of titlebar */
+        int close_x = screen_x + screen_w - camera_scale(cam, 20);
+        int close_y = screen_y + (title_h - 16) / 2;
+        gui_rect_t close_rect = rect_make(close_x, close_y, 16, 16);
+
+        if (rect_contains_point(close_rect, e->mouse.x, e->mouse.y)) {
             // Post window close event
             extern gui_event_bus_t *g_event_bus;
             if (g_event_bus) {
@@ -154,8 +161,6 @@ bool window_node_on_event(node_t *self, const gui_event_t *e) {
         }
 
         /* Title bar drag detection */
-        int title_h = camera_scale(cam, 24);
-        int screen_w = camera_scale(cam, self->width);
         gui_rect_t title_rect = rect_make(screen_x, screen_y, screen_w, title_h);
         if (rect_contains_point(title_rect, e->mouse.x, e->mouse.y)) {
             d->dragging = true;
@@ -238,6 +243,14 @@ void window_node_set_pid(node_t *win, int pid) {
         window_node_data_t *d = (window_node_data_t *)win->userdata;
         if (d) d->process_id = pid;
     }
+}
+
+const char *window_node_get_title(node_t *win) {
+    if (win && win->type == NODE_WINDOW) {
+        window_node_data_t *d = (window_node_data_t *)win->userdata;
+        if (d) return d->title;
+    }
+    return NULL;
 }
 
 void window_node_set_key_handler(node_t *win,

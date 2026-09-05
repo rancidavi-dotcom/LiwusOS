@@ -198,14 +198,14 @@ static void app_media_start(void) {
     s_media_win->padding[2] = 16;
     s_media_win->padding[3] = 16;
 
-    node_t *title = label_create("media_title", 0, 0, "Music (MP3)", 0xFFFFFFFF);
+    node_t *title = label_create("media_title", 0, 0, "Music (MP3)", 0xFF00FF41);
     title->margin[2] = 12;
     node_add_child(s_media_win, title);
     s_title_lbl = title;
 
     rebuild_song_list();
 
-    s_status_lbl = label_create("media_status", 0, 0, "Idle", 0xFFAAAAAA);
+    s_status_lbl = label_create("media_status", 0, 0, "Idle", 0xFF00CC33);
     s_status_lbl->margin[2] = 8;
     node_add_child(s_media_win, s_status_lbl);
 

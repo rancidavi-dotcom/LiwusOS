@@ -9,7 +9,55 @@
 #include <sys/times.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <reent.h>
+
+/* __errno function (expected by newlib's errno.h) - weak to avoid conflicts */
+__attribute__((weak)) int *__errno(void) {
+    static int __errno_val = 0;
+    return &__errno_val;
+}
+
+/* Forward declaration */
+static inline long __liw_syscall6(long num, long a1, long a2, long a3,
+                                   long a4, long a5, long a6);
+
+/* syscall wrapper (glibc style) */
+long syscall(long num, ...) {
+    va_list ap;
+    va_start(ap, num);
+    long a1 = va_arg(ap, long);
+    long a2 = va_arg(ap, long);
+    long a3 = va_arg(ap, long);
+    long a4 = va_arg(ap, long);
+    long a5 = va_arg(ap, long);
+    long a6 = va_arg(ap, long);
+    va_end(ap);
+    return __liw_syscall6(num, a1, a2, a3, a4, a5, a6);
+}
+
+/* Dummy libc init array (prevents NULL call from static linking) */
+void __libc_init_array(void) {}
+
+/* Trampoline: if linker chooses __libc_start_main as entry point,
+   jump to _start which expects argc/argv on stack per ABI */
+__attribute__((naked)) void __libc_start_main(void) {
+    asm("jmp _start");
+}
+
+/* Simple memcpy/memset for malloc implementation */
+static void *memcpy(void *dst, const void *src, size_t n) {
+    char *d = (char *)dst;
+    const char *s = (const char *)src;
+    while (n--) *d++ = *s++;
+    return dst;
+}
+
+static void *memset(void *s, int c, size_t n) {
+    char *p = (char *)s;
+    while (n--) *p++ = (char)c;
+    return s;
+}
 
 static inline long __liw_syscall(long num, long arg1, long arg2, long arg3) {
     long ret;
@@ -139,6 +187,93 @@ void *_sbrk(ptrdiff_t incr) {
     if (ret == -1) return (void *)-1;
     heap_end += incr;
     return prev;
+}
+
+/* Simple malloc/free implementation using _sbrk */
+typedef struct mem_block {
+    size_t size;
+    struct mem_block *next;
+    int free;
+} mem_block_t;
+
+static mem_block_t *heap_head = NULL;
+
+static void *malloc_impl(size_t size) {
+    if (size == 0) return NULL;
+    size = (size + 7) & ~7; /* align to 8 bytes */
+    
+    mem_block_t *curr = heap_head;
+    while (curr) {
+        if (curr->free && curr->size >= size) {
+            curr->free = 0;
+            return (void *)(curr + 1);
+        }
+        curr = curr->next;
+    }
+    
+    /* Allocate new block */
+    size_t total_size = sizeof(mem_block_t) + size;
+    mem_block_t *block = (mem_block_t *)_sbrk(total_size);
+    if (block == (void *)-1) return NULL;
+    
+    block->size = size;
+    block->next = NULL;
+    block->free = 0;
+    
+    if (!heap_head) {
+        heap_head = block;
+    } else {
+        curr = heap_head;
+        while (curr->next) curr = curr->next;
+        curr->next = block;
+    }
+    return (void *)(block + 1);
+}
+
+static void free_impl(void *ptr) {
+    if (!ptr) return;
+    mem_block_t *block = (mem_block_t *)ptr - 1;
+    block->free = 1;
+    
+    /* Coalesce adjacent free blocks */
+    mem_block_t *curr = heap_head;
+    while (curr && curr->next) {
+        if (curr->free && curr->next->free) {
+            curr->size += sizeof(mem_block_t) + curr->next->size;
+            curr->next = curr->next->next;
+        } else {
+            curr = curr->next;
+        }
+    }
+}
+
+/* Public malloc/free (without underscore) */
+void *malloc(size_t size) { return malloc_impl(size); }
+void free(void *ptr) { free_impl(ptr); }
+
+/* Underscore versions for compatibility */
+void *_malloc(size_t size) { return malloc_impl(size); }
+void _free(void *ptr) { free_impl(ptr); }
+
+/* realloc/calloc stubs */
+void *realloc(void *ptr, size_t size) {
+    if (!ptr) return malloc(size);
+    if (size == 0) { free(ptr); return NULL; }
+    void *new_ptr = malloc(size);
+    if (!new_ptr) return NULL;
+    /* Note: we don't know the old size, so this is a best-effort copy */
+    mem_block_t *block = (mem_block_t *)ptr - 1;
+    size_t copy_size = block->size < size ? block->size : size;
+    memcpy(new_ptr, ptr, copy_size);
+    free(ptr);
+    return new_ptr;
+}
+
+void *calloc(size_t nmemb, size_t size) {
+    size_t total = nmemb * size;
+    void *ptr = malloc(total);
+    if (ptr) memset(ptr, 0, total);
+    return ptr;
 }
 
 int _stat(const char *file, struct stat *st) {

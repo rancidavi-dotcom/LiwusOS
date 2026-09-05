@@ -94,4 +94,11 @@ void compositor_invalidate_full(compositor_t *c);
  * Convenience: the global compositor singleton (set by compositor_create) */
 extern compositor_t *g_compositor;
 
+/* --------------------------------------------------------------------------
+ * CRT Scanlines toggle
+ * -------------------------------------------------------------------------- */
+
+void compositor_set_scanlines(bool enabled);
+bool compositor_get_scanlines(void);
+
 #endif /* GUI_COMPOSITOR_H */

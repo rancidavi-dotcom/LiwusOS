@@ -117,7 +117,7 @@ static void gterm_puts(gui_terminal_t *t, const char *str, uint32_t color) {
 
 static void gterm_vga_hook(const char *str) {
     if (!s_active_terminal) return;
-    gterm_puts(s_active_terminal, str, 0xFFCCCCCC);
+    gterm_puts(s_active_terminal, str, 0xFF00CC33); /* Medium green for output */
 }
 
 /* --------------------------------------------------------------------------
@@ -125,7 +125,7 @@ static void gterm_vga_hook(const char *str) {
  * -------------------------------------------------------------------------- */
 
 static void gterm_print_prompt(gui_terminal_t *t) {
-    gterm_puts(t, "root@liwusos# ", 0xFF00FF88);
+    gterm_puts(t, "root@liwusos# ", 0xFF00FF41); /* Bright phosphor green */
 }
 
 /* --------------------------------------------------------------------------
@@ -146,13 +146,13 @@ static void gterm_execute(gui_terminal_t *t) {
 
     if (argc > 0) {
         /* Handle 'clear' internally */
-        if (strcmp(argv[0], "clear") == 0) {
-            for (int r = 0; r < GTERM_ROWS; r++) {
-                for (int c = 0; c < GTERM_COLS; c++) {
-                    t->cells[r][c].ch = ' ';
-                    t->cells[r][c].fg = 0xFFCCCCCC;
+            if (strcmp(argv[0], "clear") == 0) {
+                for (int r = 0; r < GTERM_ROWS; r++) {
+                    for (int c = 0; c < GTERM_COLS; c++) {
+                        t->cells[r][c].ch = ' ';
+                        t->cells[r][c].fg = 0xFF00CC33;
+                    }
                 }
-            }
             t->cur_row = 0;
             t->cur_col = 0;
         } else {
@@ -213,7 +213,7 @@ static bool gterm_key_char(node_t *self, char c, void *ctx) {
     if (c >= 32 && c <= 126 && t->input_len < GTERM_COLS - 1) {
         t->input_line[t->input_len++] = c;
         t->input_line[t->input_len]   = '\0';
-        gterm_putchar(t, c, 0xFFFFFFFF);
+        gterm_putchar(t, c, 0xFF00FF41); /* Bright green for user input */
         node_mark_dirty(t->win_node, NODE_DIRTY_PAINT);
     }
     return true;
@@ -251,10 +251,10 @@ static void gterm_draw(node_t *self, struct gui_renderer *r) {
 
     int top_margin = camera_scale(cam, 24); /* Leave space for watermark title */
 
-    /* Terminal background — deep blue/black to blend with glass */
+    /* Terminal background — solid dark green-black for CRT look */
     gui_rect_t content = rect_make(screen_x, screen_y + top_margin,
                                     screen_w, screen_h - top_margin);
-    renderer_fill_rect(r, content, 0xAA0A0A15); /* Slightly translucent */
+    renderer_fill_rect(r, content, 0xFF0A0A12); /* Solid near-black */
 
     /* --- Render all cells --- */
     if (!t->font) return;
@@ -281,12 +281,12 @@ static void gterm_draw(node_t *self, struct gui_renderer *r) {
         }
     }
 
-    /* Blinking cursor — draw a block on the current cell */
-    if (t->cur_row < rows_vis && t->cur_col < cols_vis) {
-        int cx = base_x + t->cur_col * GTERM_CHAR_W;
-        int cy = base_y + t->cur_row * GTERM_CHAR_H;
-        renderer_fill_rect(r, rect_make(cx, cy, GTERM_CHAR_W, 2), 0xFFDDDDDD);
-    }
+        /* Blinking cursor — CRT block cursor */
+        if (t->cur_row < rows_vis && t->cur_col < cols_vis) {
+            int cx = base_x + t->cur_col * GTERM_CHAR_W;
+            int cy = base_y + t->cur_row * GTERM_CHAR_H;
+            renderer_fill_rect(r, rect_make(cx, cy, GTERM_CHAR_W, GTERM_CHAR_H), 0xFF00FF41);
+        }
 }
 
 /* --------------------------------------------------------------------------
@@ -330,13 +330,13 @@ node_t *gui_terminal_create(const char *win_name, int x, int y, int w, int h) {
     for (int r = 0; r < GTERM_ROWS; r++) {
         for (int c = 0; c < GTERM_COLS; c++) {
             t->cells[r][c].ch = ' ';
-            t->cells[r][c].fg = 0xFFCCCCCC;
+            t->cells[r][c].fg = 0xFF00CC33;
         }
     }
 
     /* Print welcome banner */
-    gterm_puts(t, "LiwusOS Terminal v1.0\n", 0xFF00FFFF);
-    gterm_puts(t, "Type 'help' for available commands.\n\n", 0xFF888888);
+    gterm_puts(t, "LiwusOS Terminal v1.0\n", 0xFF00FF41);
+    gterm_puts(t, "Type 'help' for available commands.\n\n", 0xFF00CC33);
     gterm_print_prompt(t);
 
     /* Override vtable for custom drawing */

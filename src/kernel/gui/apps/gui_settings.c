@@ -63,19 +63,19 @@ static void show_system_settings(node_t *btn, void *userdata) {
     clear_content_panel();
     
     // Header
-    node_t *title = label_create("sys_title", 0, 0, "System Information", 0xFFFFFFFF);
+    node_t *title = label_create("sys_title", 0, 0, "System Information", 0xFF00FF41);
     title->margin[2] = 20; // Bottom margin
     node_add_child(s_content_panel, title);
     
-    node_add_child(s_content_panel, label_create("sys_os", 0, 0, "OS: LiwusOS x86_64", 0xFF00FF00));
-    node_add_child(s_content_panel, label_create("sys_ver", 0, 0, "Version: 1.0.0 (Pre-Alpha)", 0xFF00FF00));
+    node_add_child(s_content_panel, label_create("sys_os", 0, 0, "OS: LiwusOS x86_64", 0xFF00FF41));
+    node_add_child(s_content_panel, label_create("sys_ver", 0, 0, "Version: 1.0.0 (Pre-Alpha)", 0xFF00FF41));
     
     // CPU Info
     char cpu_brand[64] = "CPU: ";
     char brand_buf[49];
     get_cpuid_string(brand_buf);
     strcat(cpu_brand, brand_buf);
-    node_add_child(s_content_panel, label_create("sys_cpu", 0, 0, cpu_brand, 0xFFAAAAAA));
+    node_add_child(s_content_panel, label_create("sys_cpu", 0, 0, cpu_brand, 0xFF00CC33));
     
     // Memory Info
     extern char *itoa(int value, char *str, int base);
@@ -85,7 +85,7 @@ static void show_system_settings(node_t *btn, void *userdata) {
     uint32_t mem_used_mb = pmm_get_used_memory() * 4096 / (1024 * 1024);
     itoa(mem_used_mb, buf, 10); strcat(mem_str, buf); strcat(mem_str, " MB / ");
     itoa(mem_total_mb, buf, 10); strcat(mem_str, buf); strcat(mem_str, " MB");
-    node_add_child(s_content_panel, label_create("sys_mem", 0, 0, mem_str, 0xFFAAAAAA));
+    node_add_child(s_content_panel, label_create("sys_mem", 0, 0, mem_str, 0xFF00CC33));
     
     // Disk Info
     char disk_str[64] = "SDFS Disk: ";
@@ -95,19 +95,19 @@ static void show_system_settings(node_t *btn, void *userdata) {
     uint32_t disk_total_mb = (total_blks * 4096) / (1024 * 1024);
     itoa(disk_used_mb, buf, 10); strcat(disk_str, buf); strcat(disk_str, " MB / ");
     itoa(disk_total_mb, buf, 10); strcat(disk_str, buf); strcat(disk_str, " MB");
-    node_add_child(s_content_panel, label_create("sys_disk", 0, 0, disk_str, 0xFFAAAAAA));
+    node_add_child(s_content_panel, label_create("sys_disk", 0, 0, disk_str, 0xFF00CC33));
     
     // Display Info
     char disp_str[64] = "Display: ";
     itoa(vga_fb_width, buf, 10); strcat(disp_str, buf); strcat(disp_str, "x");
     itoa(vga_fb_height, buf, 10); strcat(disp_str, buf);
-    node_add_child(s_content_panel, label_create("sys_disp", 0, 0, disp_str, 0xFFAAAAAA));
+    node_add_child(s_content_panel, label_create("sys_disp", 0, 0, disp_str, 0xFF00CC33));
     
     // Uptime
     char up_str[64] = "Uptime: ";
     uint32_t up_secs = timer_ticks / 100;
     itoa(up_secs, buf, 10); strcat(up_str, buf); strcat(up_str, " seconds");
-    node_add_child(s_content_panel, label_create("sys_up", 0, 0, up_str, 0xFFAAAAAA));
+    node_add_child(s_content_panel, label_create("sys_up", 0, 0, up_str, 0xFF00CC33));
     
     layout_engine_compute(s_settings_win);
 }
@@ -116,7 +116,7 @@ static void show_display_settings(node_t *btn, void *userdata) {
     (void)btn; (void)userdata;
     clear_content_panel();
     
-    node_t *title = label_create("disp_title", 0, 0, "Display Settings", 0xFFFFFFFF);
+    node_t *title = label_create("disp_title", 0, 0, "Display Settings", 0xFF00FF41);
     title->margin[2] = 20;
     node_add_child(s_content_panel, title);
     
@@ -131,32 +131,32 @@ static void show_display_settings(node_t *btn, void *userdata) {
         strcat(mon_str, edid.manufacturer);
         strcat(mon_str, " ");
         strcat(mon_str, edid.monitor_name);
-        node_add_child(s_content_panel, label_create("disp_mon", 0, 0, mon_str, 0xFF00FF00));
+        node_add_child(s_content_panel, label_create("disp_mon", 0, 0, mon_str, 0xFF00FF41));
         
         // Year
         char year_str[64] = "Manufactured: Year ";
         itoa(edid.year_of_manufacture, buf, 10);
         strcat(year_str, buf);
-        node_add_child(s_content_panel, label_create("disp_year", 0, 0, year_str, 0xFFAAAAAA));
+        node_add_child(s_content_panel, label_create("disp_year", 0, 0, year_str, 0xFF00CC33));
         
         // Max Resolution
         char max_str[64] = "Max Resolution: ";
         itoa(edid.max_resolution_x, buf, 10); strcat(max_str, buf); strcat(max_str, "x");
         itoa(edid.max_resolution_y, buf, 10); strcat(max_str, buf);
-        node_add_child(s_content_panel, label_create("disp_max", 0, 0, max_str, 0xFFAAAAAA));
+        node_add_child(s_content_panel, label_create("disp_max", 0, 0, max_str, 0xFF00CC33));
         
         // Min Resolution
         char min_str[64] = "Min Resolution: ";
         itoa(edid.min_resolution_x, buf, 10); strcat(min_str, buf); strcat(min_str, "x");
         itoa(edid.min_resolution_y, buf, 10); strcat(min_str, buf);
-        node_add_child(s_content_panel, label_create("disp_min", 0, 0, min_str, 0xFFAAAAAA));
+        node_add_child(s_content_panel, label_create("disp_min", 0, 0, min_str, 0xFF00CC33));
         
         // Refresh Rate
         char hz_str[64] = "Refresh Rate: ";
         itoa(edid.refresh_rate_hz, buf, 10); strcat(hz_str, buf); strcat(hz_str, " Hz");
-        node_add_child(s_content_panel, label_create("disp_hz", 0, 0, hz_str, 0xFFAAAAAA));
+        node_add_child(s_content_panel, label_create("disp_hz", 0, 0, hz_str, 0xFF00CC33));
     } else {
-        node_add_child(s_content_panel, label_create("disp_err", 0, 0, "EDID: Monitor Detection Failed", 0xFFFF0000));
+        node_add_child(s_content_panel, label_create("disp_err", 0, 0, "EDID: Monitor Detection Failed", 0xFFFF4444));
     }
     
     // Some margin before buttons
@@ -424,19 +424,19 @@ static void show_sound_settings(node_t *btn, void *userdata) {
         snd_task_started = 1;
     }
 
-    node_t *title = label_create("snd_title", 0, 0, "Sound", 0xFFFFFFFF);
+    node_t *title = label_create("snd_title", 0, 0, "Sound", 0xFF00FF41);
     title->margin[2] = 8;
     node_add_child(s_content_panel, title);
 
     /* Hardware status */
     if (audio_available()) {
         node_t *hw = label_create("snd_hw", 0, 0,
-            "AC'97 controller (QEMU Intel 82801AA) - Analog Line Out", 0xFF00FF00);
+            "AC'97 controller (QEMU Intel 82801AA) - Analog Line Out", 0xFF00FF41);
         hw->margin[2] = 12;
         node_add_child(s_content_panel, hw);
     } else {
         node_t *warn = label_create("snd_warn", 0, 0,
-            "No AC'97 sound card. Start QEMU with: -device AC97,audiodev=aud0", 0xFFF59E0B);
+            "No AC'97 sound card. Start QEMU with: -device AC97,audiodev=aud0", 0xFFFF4444);
         warn->margin[2] = 12;
         node_add_child(s_content_panel, warn);
     }
@@ -448,7 +448,7 @@ static void show_sound_settings(node_t *btn, void *userdata) {
     int filled = (vol * 25) / 100;
     for (int i = 0; i < 25; i++) bar[i] = (i < filled) ? '#' : '.';
     bar[25] = '\0';
-    node_t *bar_lbl = label_create("snd_bar", 0, 0, bar, 0xFF4CAF50);
+    node_t *bar_lbl = label_create("snd_bar", 0, 0, bar, 0xFF00FF41);
     node_add_child(s_content_panel, bar_lbl);
 
     char vol_str[48] = "Volume: ";
@@ -457,12 +457,12 @@ static void show_sound_settings(node_t *btn, void *userdata) {
     strcat(vol_str, vbuf);
     strcat(vol_str, "%  ");
     strcat(vol_str, audio_get_muted() ? "[MUTED]" : "[ON]");
-    node_t *vol_lbl = label_create("snd_vol", 0, 0, vol_str, 0xFFFFFFFF);
+    node_t *vol_lbl = label_create("snd_vol", 0, 0, vol_str, 0xFF00FF41);
     vol_lbl->margin[2] = 6;
     node_add_child(s_content_panel, vol_lbl);
 
     /* Volume row: - / + / Mute */
-    node_t *row1 = panel_create("snd_volrow", 0, 0, 400, 34, 0x33252525);
+    node_t *row1 = panel_create("snd_volrow", 0, 0, 400, 34, 0x330A2E1A);
     row1->layout_type = LAYOUT_HBOX;
     row1->margin[2] = 10;
     row1->padding[0] = 2;
@@ -491,10 +491,10 @@ static void show_sound_settings(node_t *btn, void *userdata) {
     itoa((int)audio_get_rate(), vbuf, 10);
     strcat(rate_str, vbuf);
     strcat(rate_str, " Hz");
-    node_t *rate_lbl = label_create("snd_rate", 0, 0, rate_str, 0xFFAAAAAA);
+    node_t *rate_lbl = label_create("snd_rate", 0, 0, rate_str, 0xFF00CC33);
     node_add_child(s_content_panel, rate_lbl);
 
-    node_t *row2 = panel_create("snd_rates", 0, 0, 400, 34, 0x33252525);
+    node_t *row2 = panel_create("snd_rates", 0, 0, 400, 34, 0x330A2E1A);
     row2->layout_type = LAYOUT_HBOX;
     row2->margin[2] = 12;
     row2->padding[0] = 2;
@@ -515,7 +515,7 @@ static void show_sound_settings(node_t *btn, void *userdata) {
 
     node_t *hint = label_create("snd_hint", 0, 0,
         "Output: AC'97 virtual card -> QEMU audio backend -> Windows speakers",
-        0xFFAAAAAA);
+        0xFF00CC33);
     hint->margin[2] = 12;
     node_add_child(s_content_panel, hint);
 
@@ -542,15 +542,15 @@ static void show_network_settings(node_t *btn, void *userdata) {
     (void)btn; (void)userdata;
     clear_content_panel();
     
-    node_t *title = label_create("net_title", 0, 0, "Network Settings", 0xFFFFFFFF);
+    node_t *title = label_create("net_title", 0, 0, "Network Settings", 0xFF00FF41);
     title->margin[2] = 20;
     node_add_child(s_content_panel, title);
     
     char ip_str[32] = "IP: Offline";
     
-    node_add_child(s_content_panel, label_create("net_ip", 0, 0, ip_str, 0xFFAAAAAA));
-    node_add_child(s_content_panel, label_create("net_dhcp", 0, 0, "DHCP: Enabled", 0xFFAAAAAA));
-    node_add_child(s_content_panel, label_create("net_mac", 0, 0, "MAC: QEMU Default", 0xFFAAAAAA));
+    node_add_child(s_content_panel, label_create("net_ip", 0, 0, ip_str, 0xFF00CC33));
+    node_add_child(s_content_panel, label_create("net_dhcp", 0, 0, "DHCP: Enabled", 0xFF00CC33));
+    node_add_child(s_content_panel, label_create("net_mac", 0, 0, "MAC: QEMU Default", 0xFF00CC33));
     
     layout_engine_compute(s_settings_win);
 }
@@ -584,7 +584,7 @@ static void settings_app_start(void) {
     s_settings_win->padding[3] = 0;
     
     // Sidebar
-    node_t *sidebar = panel_create("settings_sidebar", 0, 0, 150, 400, 0x441A1A1A);
+    node_t *sidebar = panel_create("settings_sidebar", 0, 0, 150, 400, 0xFF0A2E1A);
     sidebar->layout_type = LAYOUT_VBOX;
     sidebar->padding[0] = 10;
     sidebar->padding[1] = 10;
@@ -619,7 +619,7 @@ static void settings_app_start(void) {
     node_add_child(sidebar, btn_net);
     
     // Content Panel
-    s_content_panel = panel_create("settings_content", 0, 0, 450, 400, 0x44252525);
+    s_content_panel = panel_create("settings_content", 0, 0, 450, 400, 0xFF0A1510);
     s_content_panel->layout_type = LAYOUT_VBOX;
     s_content_panel->flex_weight = 1; // Take remaining horizontal space
     s_content_panel->layout_align = ALIGN_STRETCH; // Stretch vertically

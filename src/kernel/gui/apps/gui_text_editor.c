@@ -190,11 +190,11 @@ static void editor_start_with_file(const char *path) {
     win->padding[2] = 10;
     win->padding[3] = 10;
 
-    node_t *toolbar = panel_create("editor_toolbar", 0, 0, 680, 36, 0xFF1A2A3A);
+    node_t *toolbar = panel_create("editor_toolbar", 0, 0, 680, 36, 0xFF0A2E1A);
     toolbar->layout_type = LAYOUT_HBOX;
     toolbar->padding[0] = 6; toolbar->padding[1] = 8;
     toolbar->padding[2] = 6; toolbar->padding[3] = 8;
-    panel_set_border(toolbar, 0xFF355070, 1);
+    panel_set_border(toolbar, 0xFF008800, 1);
 
     node_t *save_btn = button_create("editor_save", 0, 0, 60, 28, "Salvar");
     node_t *saveas_btn = button_create("editor_saveas", 0, 0, 70, 28, "Salvar Como");
@@ -211,12 +211,12 @@ static void editor_start_with_file(const char *path) {
     g_editor->text_input->layout_align = ALIGN_STRETCH;
     text_input_set_on_change(g_editor->text_input, editor_text_changed, NULL);
 
-    node_t *footer = panel_create("editor_footer", 0, 0, 680, 26, 0xFF111A29);
+    node_t *footer = panel_create("editor_footer", 0, 0, 680, 26, 0xFF0A1510);
     footer->layout_type = LAYOUT_HBOX;
     footer->padding[0] = 5; footer->padding[1] = 8;
     footer->padding[2] = 5; footer->padding[3] = 8;
-    panel_set_border(footer, 0xFF2A3C57, 1);
-    g_editor->status_label = label_create("editor_status", 0, 0, "Pronto", 0xFFB8C7D9);
+    panel_set_border(footer, 0xFF008800, 1);
+    g_editor->status_label = label_create("editor_status", 0, 0, "Pronto", 0xFF00CC33);
     g_editor->status_label->flex_weight = 1;
     node_add_child(footer, g_editor->status_label);
 

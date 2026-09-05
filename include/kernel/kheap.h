@@ -11,6 +11,8 @@ void *kmalloc_a(size_t size);
 
 void *kmalloc_ap(size_t size, uint64_t *phys);
 
+void *krealloc(void *ptr, size_t new_size);
+
 void kfree(void *ptr);
 
 #endif

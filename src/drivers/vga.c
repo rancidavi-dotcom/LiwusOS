@@ -107,6 +107,25 @@ static void vga_draw_char(char c, uint32_t x, uint32_t y, uint32_t fg, uint32_t 
     }
 }
 
+void vga_draw_char_scaled(uint32_t x, uint32_t y, char c, uint32_t color, int scale) {
+    if (!is_framebuffer || !font_data || scale <= 0) return;
+    
+    uint8_t* glyph = font_data + (unsigned char)c * font_bpg;
+    
+    for (int j = 0; j < font_height; j++) {
+        uint8_t row = glyph[j];
+        for (int i = 0; i < font_width; i++) {
+            if ((row >> (7 - i)) & 1) {
+                for (int sy = 0; sy < scale; sy++) {
+                    for (int sx = 0; sx < scale; sx++) {
+                        vga_put_pixel(x + i * scale + sx, y + j * scale + sy, color);
+                    }
+                }
+            }
+        }
+    }
+}
+
 static void vga_update_color(void) {
     int fg = vga_ansi_fg;
     int bg = vga_ansi_bg;

@@ -1,39 +1,29 @@
 #!/bin/bash
 # ============================================================
-# LiwusOS Tiny C Compiler (TCC) Integration Test
+# LiwusOS Image Decode Test
 #
-# Boots a test-mode ISO, launches the userspace TCC to compile
-# hello_tcc.c inside the OS, and validates the produced .o file.
+# Boots a test-mode ISO, decodes the bundled SDFS images with the
+# kernel-side stb_image integration, and validates the decode works.
 #
-# Usage: bash scripts/tcc_test.sh
+# Usage: bash scripts/img_test.sh
 # ============================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-SERIAL_LOG="$ROOT_DIR/tcc_serial.log"
-TIMEOUT=300
+SERIAL_LOG="$ROOT_DIR/img_serial.log"
+TIMEOUT=120
 
 cd "$ROOT_DIR"
 
 echo "============================================"
-echo "  LiwusOS TCC Integration Test"
+echo "  LiwusOS Image Decode Test"
 echo "============================================"
 echo ""
 
-# ---- Step 1: Build tcc.elf ----
-echo "[1/5] Building TCC..."
-make -j$(nproc 2>/dev/null || echo 4) apps/tcc/tcc.elf 2>&1 | tail -3
-if [ ! -f apps/tcc/tcc.elf ]; then
-    echo "[ERROR] tcc.elf build failed"
-    exit 1
-fi
-echo "      tcc.elf OK"
-echo ""
-
-# ---- Step 2: Build kernel ----
-echo "[2/5] Building kernel..."
+# ---- Step 1: Build kernel ----
+echo "[1/4] Building kernel..."
 make -j$(nproc 2>/dev/null || echo 4) kernel.bin 2>&1 | tail -3
 if [ ! -f kernel.bin ]; then
     echo "[ERROR] kernel.bin build failed"
@@ -42,24 +32,20 @@ fi
 echo "      kernel.bin OK"
 echo ""
 
-# ---- Step 3: Assemble test initrd ----
-echo "[3/5] Assembling test initrd..."
+# ---- Step 2: Generate test images + assemble initrd ----
+echo "[2/4] Generating test images + assembling initrd..."
+python3 scripts/gen_test_images.py
 mkdir -p repo
 touch repo/test_mode
-touch repo/test_tcc
-cp apps/tcc/hello_tcc.c repo/hello_tcc.c
-echo "      repo ready"
+touch repo/test_img
+echo "      repo contents:"
+ls -la repo/teste.png repo/teste.bmp repo/test_mode repo/test_img 2>/dev/null
 echo ""
 
-# ---- Step 4: Build test ISO ----
-echo "[4/5] Building test ISO..."
-# Force rebuild since repo/test_tcc was just created
+# ---- Step 3: Build test ISO ----
+echo "[3/4] Building test ISO..."
 rm -f liwusos.iso
-echo "      repo contents before make:"
-ls -la repo/
 make liwusos.iso 2>&1 | tail -5
-echo "      repo contents after make:"
-ls -la repo/
 if [ ! -f liwusos.iso ]; then
     echo "[ERROR] liwusos.iso build failed"
     exit 1
@@ -67,13 +53,13 @@ fi
 echo "      liwusos.iso OK"
 echo ""
 
-# ---- Step 5: Run QEMU and capture output ----
-echo "[5/5] Running TCC test in QEMU (timeout: ${TIMEOUT}s)..."
+# ---- Step 4: Run QEMU and capture output ----
+echo "[4/4] Running image test in QEMU (timeout: ${TIMEOUT}s)..."
 echo ""
 
 rm -f "$SERIAL_LOG"
 
-TEST_DISK="$ROOT_DIR/tcc_test_disk.img"
+TEST_DISK="$ROOT_DIR/img_test_disk.img"
 dd if=/dev/zero of="$TEST_DISK" bs=1M count=64 2>/dev/null
 
 qemu-system-x86_64 \
@@ -101,34 +87,34 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
     fi
 
     if [ -f "$SERIAL_LOG" ]; then
-        if grep -q "OLAR DO TCC" "$SERIAL_LOG" 2>/dev/null; then
+        if grep -q "IMG_ALL_OK" "$SERIAL_LOG" 2>/dev/null && grep -q "IMG_NESTED_OK" "$SERIAL_LOG" 2>/dev/null; then
             RESULT="OK"
             break
         fi
-        if grep -q "^FAIL:" "$SERIAL_LOG" 2>/dev/null; then
+        if grep -q "IMGFAIL:\|IMG_NESTED_MISSING" "$SERIAL_LOG" 2>/dev/null; then
             RESULT="FAIL"
             break
         fi
     fi
 done
 
-# Kill QEMU
 kill $QEMU_PID 2>/dev/null || true
 wait $QEMU_PID 2>/dev/null || true
 
 echo ""
 echo "============================================"
-echo "  TCC Test Result"
+echo "  Image Test Result"
 echo "============================================"
 echo ""
 
 if [ "$RESULT" = "OK" ]; then
-    echo "  [PASS] compilou, linkou E executou um programa C dentro do LiwusOS"
-    grep -E "OK:|FAIL:|OLAR DO TCC" "$SERIAL_LOG" 2>/dev/null || true
+    echo "  [PASS] stb_image decode funciona no kernel"
+    echo "  [PASS] varredura recursiva acha imagens em subdiretorios"
+    grep -E "IMGOK:|IMGFAIL:|IMGSCAN:|IMG_NESTED|IMG_ALL_OK" "$SERIAL_LOG" 2>/dev/null || true
     rm -f "$TEST_DISK"
     exit 0
 else
-    echo "  [FAIL] TCC test nao completou (result=$RESULT)"
+    echo "  [FAIL] Image test nao completou (result=$RESULT)"
     echo ""
     echo "  --- Conteudo do serial ---"
     tail -60 "$SERIAL_LOG" 2>/dev/null || echo "  (nenhuma saida)"

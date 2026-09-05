@@ -18,26 +18,10 @@ static void panel_draw(node_t *self, struct gui_renderer *r) {
     panel_data_t *d = (panel_data_t *)self->userdata;
     if (!d) return;
 
-    /* Rect in world space (renderer handles camera projection internally if we pass world rect? 
-     * Wait, node_draw_recursive does NOT project rects. The renderer needs screen coordinates!
-     * Since this is a GUI, nodes need their screen_bounds updated.
-     * Ah, in this architecture, nodes store local coordinates and the transform matrix!
-     * For now, let's just use the absolute world transform position.
-     * Wait, the Compositor didn't update screen_bounds! Let's just use absolute transform values for now.
-     */
-    
     gui_pointi_t pt = transform_apply(self->world_transform, 0, 0);
     int sx = pt.x;
     int sy = pt.y;
 
-    /* But we need to apply the Camera transform! 
-     * The compositor uses node_draw_recursive which just calls vtable->draw.
-     * The renderer doesn't know about the camera. We must convert World -> Screen here.
-     * Wait, how did TerminalNode do it?
-     * TerminalNode used self->local_x directly! That was a bug if pan/zoom are used!
-     * Let's fix that too. We must get the compositor's camera.
-     */
-    
     extern compositor_t *g_compositor;
     if (!g_compositor) return;
     camera_t *cam = g_compositor->camera;
@@ -51,11 +35,41 @@ static void panel_draw(node_t *self, struct gui_renderer *r) {
     /* Store for hit testing */
     self->screen_bounds = rect_make(screen_x, screen_y, screen_w, screen_h);
 
+    /* Solid background — no transparency for CRT look */
     if (d->bg_color & 0xFF000000) {
-        renderer_fill_rect(r, self->screen_bounds, d->bg_color);
+        renderer_fill_rect(r, self->screen_bounds, d->bg_color | 0xFF000000);
     }
+
+    /* Dashed border — retro pixel dashed style */
     if (d->border_thickness > 0 && (d->border_color & 0xFF000000)) {
-        renderer_draw_rect(r, self->screen_bounds, d->border_color, d->border_thickness);
+        uint32_t bc = d->border_color | 0xFF000000;
+        int dash = 4;  /* 4px on, 4px off */
+        int gap  = 4;
+
+        /* Top border (horizontal dashes) */
+        for (int x = screen_x; x < screen_x + screen_w; x += dash + gap) {
+            int len = dash;
+            if (x + len > screen_x + screen_w) len = screen_x + screen_w - x;
+            renderer_fill_rect(r, rect_make(x, screen_y, len, d->border_thickness), bc);
+        }
+        /* Bottom border */
+        for (int x = screen_x; x < screen_x + screen_w; x += dash + gap) {
+            int len = dash;
+            if (x + len > screen_x + screen_w) len = screen_x + screen_w - x;
+            renderer_fill_rect(r, rect_make(x, screen_y + screen_h - d->border_thickness, len, d->border_thickness), bc);
+        }
+        /* Left border (vertical dashes) */
+        for (int y = screen_y; y < screen_y + screen_h; y += dash + gap) {
+            int len = dash;
+            if (y + len > screen_y + screen_h) len = screen_y + screen_h - y;
+            renderer_fill_rect(r, rect_make(screen_x, y, d->border_thickness, len), bc);
+        }
+        /* Right border */
+        for (int y = screen_y; y < screen_y + screen_h; y += dash + gap) {
+            int len = dash;
+            if (y + len > screen_y + screen_h) len = screen_y + screen_h - y;
+            renderer_fill_rect(r, rect_make(screen_x + screen_w - d->border_thickness, y, d->border_thickness, len), bc);
+        }
     }
 }
 

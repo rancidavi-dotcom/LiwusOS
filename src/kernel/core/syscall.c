@@ -299,7 +299,7 @@ int launch_initrd_program_argv(const char *filename, char *const argv[]) {
   serial_print(nbuf);
   serial_print("\n");
   
-  return pid;
+return pid;
 }
 
 #define FD_TYPE_FREE 0

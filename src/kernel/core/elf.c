@@ -86,23 +86,70 @@ uint64_t elf64_load_file(void *file_buffer) {
       serial_print("  [elf64_load] LOAD vaddr="); serial_print_hex(vaddr);
       serial_print(" filesz="); serial_print_hex(filesz);
       serial_print(" memsz="); serial_print_hex(memsz);
-      serial_print(" flags="); serial_print_hex(phdr[i].p_flags);
       serial_print("\n");
-      if (phdr[i].p_flags & 0x2) {
-        uint64_t *reallocator_ptr = (uint64_t *)0x471000;
-        serial_print("  [elf64_load] reallocator at 0x471000 = "); serial_print_hex(*reallocator_ptr); serial_print("\n");
-        uint8_t *data_bytes = (uint8_t *)vaddr;
-        serial_print("  [elf64_load] first 32 bytes of RW segment: ");
-        for (int k = 0; k < 32; k++) {
-          serial_print_hex(data_bytes[k]); serial_print(" ");
-        }
-        serial_print("\n");
-      }
     }
   }
 
   last_elf_heap_start = max_end;
 
   serial_print("  [elf64_load] entry="); serial_print_hex(hdr->e_entry); serial_print("\n");
+  
+  /* DEBUG: dump program headers */
+  serial_print("  [elf64_load] PHDRs:\n");
+  Elf64_Phdr *phdrs = (Elf64_Phdr *)((uint64_t)file_buffer + hdr->e_phoff);
+  for (int i = 0; i < hdr->e_phnum; i++) {
+    if (phdrs[i].p_type == PT_LOAD) {
+      serial_print("    PT_LOAD["); serial_print_hex(i); serial_print("] vaddr="); serial_print_hex(phdrs[i].p_vaddr);
+      serial_print(" offset="); serial_print_hex(phdrs[i].p_offset);
+      serial_print(" filesz="); serial_print_hex(phdrs[i].p_filesz);
+      serial_print(" memsz="); serial_print_hex(phdrs[i].p_memsz);
+      serial_print(" flags="); serial_print_hex(phdrs[i].p_flags);
+      serial_print("\n");
+      
+      /* Dump first 32 bytes at file offset */
+      serial_print("      file bytes: ");
+      uint8_t *file_ptr = (uint8_t *)file_buffer + phdrs[i].p_offset;
+      for (int j = 0; j < 32 && j < (int)phdrs[i].p_filesz; j++) {
+        char buf[4];
+        buf[0] = "0123456789abcdef"[file_ptr[j] >> 4];
+        buf[1] = "0123456789abcdef"[file_ptr[j] & 0xF];
+        buf[2] = ' ';
+        buf[3] = 0;
+        serial_print(buf);
+      }
+      serial_print("\n");
+    }
+  }
+  
+  /* DEBUG: dump first 64 bytes at entry point */
+  if (hdr->e_entry >= 0x400000) {
+    serial_print("  [elf64_load] entry bytes: ");
+    uint8_t *entry_ptr = (uint8_t *)hdr->e_entry;
+    for (int i = 0; i < 64; i++) {
+      char buf[4];
+      buf[0] = "0123456789abcdef"[entry_ptr[i] >> 4];
+      buf[1] = "0123456789abcdef"[entry_ptr[i] & 0xF];
+      buf[2] = ' ';
+      buf[3] = 0;
+      serial_print(buf);
+    }
+    serial_print("\n");
+  }
+  
+  /* DEBUG: dump section headers */
+  serial_print("  [elf64_load] Section headers:\n");
+  Elf64_Shdr *shdr = (Elf64_Shdr *)((uint64_t)file_buffer + hdr->e_shoff);
+  char *shstrtab = (char *)file_buffer + shdr[hdr->e_shstrndx].sh_offset;
+  for (int i = 0; i < hdr->e_shnum; i++) {
+    char *name = shstrtab + shdr[i].sh_name;
+    serial_print("    ["); serial_print_hex(i); serial_print("] "); serial_print(name);
+    serial_print(" type="); serial_print_hex(shdr[i].sh_type);
+    serial_print(" flags="); serial_print_hex(shdr[i].sh_flags);
+    serial_print(" addr="); serial_print_hex(shdr[i].sh_addr);
+    serial_print(" offset="); serial_print_hex(shdr[i].sh_offset);
+    serial_print(" size="); serial_print_hex(shdr[i].sh_size);
+    serial_print("\n");
+  }
+  
   return hdr->e_entry;
 }

@@ -5,10 +5,12 @@
 #include "kheap.h"
 #include "string.h"
 #include "../scene/node.h"
+#include "../scene/camera.h"
 #include "../widgets/window_node.h"
 #include "../widgets/button.h"
 #include "../layout/layout_engine.h"
 #include "../window/focus_manager.h"
+#include "../render/compositor.h"
 
 #define MAX_APPS 32
 
@@ -143,7 +145,7 @@ void app_registry_show_launcher(void) {
     
     node_add_child(g_scene->root, s_launcher_win);
     layout_engine_compute(s_launcher_win);
-    
+
     extern focus_manager_t *g_focus_manager;
     if (g_focus_manager) {
         focus_manager_set_focus(g_focus_manager, s_launcher_win);
@@ -165,3 +167,22 @@ void app_registry_show_launcher(void) {
     s_selected_app_index = 0;
     update_launcher_selection();
 }
+
+/* Toggle the app launcher: open if closed, close if already open.
+ * This is bound to the TAB key and works regardless of which window is focused. */
+void app_registry_toggle_launcher(void) {
+    if (s_launcher_win) {
+        extern gui_event_bus_t *g_event_bus;
+        if (g_event_bus) {
+            gui_event_t close_ev;
+            memset(&close_ev, 0, sizeof(close_ev));
+            close_ev.type = GUI_EVENT_WIN_CLOSE;
+            close_ev.generic.a = (uint64_t)s_launcher_win;
+            event_bus_post(g_event_bus, &close_ev);
+        }
+        s_launcher_win = NULL;
+    } else {
+        app_registry_show_launcher();
+    }
+}
+

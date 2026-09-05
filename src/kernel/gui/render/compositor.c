@@ -14,6 +14,7 @@
 #include "fb_renderer.h"
 #include "../core/theme_engine.h"
 #include "../core/animation_engine.h"
+#include "../core/taskbar.h"
 #include "../assets/asset_manager.h"
 #include <wallpaper.h>
 
@@ -238,8 +239,8 @@ static void draw_minimap(compositor_t *c) {
     
     // Background (semi-transparent)
     gui_rect_t bg = rect_make(mm_x, mm_y, mm_w, mm_h);
-    renderer_fill_rect(c->renderer, bg, 0x88000000);
-    renderer_draw_rect(c->renderer, bg, 0xFFFFFFFF, 1);
+    renderer_fill_rect(c->renderer, bg, 0xCC0A0A12);
+    renderer_draw_rect(c->renderer, bg, 0xFF00AA00, 1);
     
     // Map the current camera position to the minimap
     // Let's assume the "world" we care about is roughly -5000 to +5000 in both axes.
@@ -267,6 +268,57 @@ static void draw_minimap(compositor_t *c) {
     // Draw camera dot
     gui_rect_t dot = rect_make(dot_x, dot_y, 4, 4);
     renderer_fill_rect(c->renderer, dot, 0xFFFF0000); // Red dot
+}
+
+/* --------------------------------------------------------------------------
+ * CRT Scanlines Effect
+ * -------------------------------------------------------------------------- */
+
+static bool s_scanlines_enabled = false; /* off by default for max performance */
+
+void compositor_set_scanlines(bool enabled) {
+    s_scanlines_enabled = enabled;
+}
+
+bool compositor_get_scanlines(void) {
+    return s_scanlines_enabled;
+}
+
+/* Precomputed darkening table: lut[v] = v * 4 / 5 (0..255 -> 0..204).
+ * Avoids per-pixel multiply/divide in the scanline pass. */
+static uint32_t s_scan_dark[256];
+
+static void apply_scanlines(compositor_t *c) {
+    if (!s_scanlines_enabled) return;
+    uint32_t *backbuf = fb_renderer_backbuf(c->renderer);
+    if (!backbuf) return;
+    int W = c->renderer->screen_w;
+    int H = c->renderer->screen_h;
+
+    s_scan_dark[0] = 0;
+    for (int i = 1; i < 256; i++) s_scan_dark[i] = (uint32_t)(i * 4 / 5);
+
+    /* Every other line darkened by 20% via a precomputed LUT.
+     * Pointer-walk + 4x unroll on X for the fastest scanline pass. */
+    const uint32_t *lut = s_scan_dark;
+    for (int y = 0; y < H; y += 2) {
+        uint32_t *row = backbuf + y * W;
+        int x = 0;
+        for (; x + 4 <= W; x += 4) {
+            uint32_t p0 = row[x];
+            uint32_t p1 = row[x + 1];
+            uint32_t p2 = row[x + 2];
+            uint32_t p3 = row[x + 3];
+            row[x]     = 0xFF000000 | (lut[(p0 >> 16) & 0xFF] << 16) | (lut[(p0 >> 8) & 0xFF] << 8) | lut[p0 & 0xFF];
+            row[x + 1] = 0xFF000000 | (lut[(p1 >> 16) & 0xFF] << 16) | (lut[(p1 >> 8) & 0xFF] << 8) | lut[p1 & 0xFF];
+            row[x + 2] = 0xFF000000 | (lut[(p2 >> 16) & 0xFF] << 16) | (lut[(p2 >> 8) & 0xFF] << 8) | lut[p2 & 0xFF];
+            row[x + 3] = 0xFF000000 | (lut[(p3 >> 16) & 0xFF] << 16) | (lut[(p3 >> 8) & 0xFF] << 8) | lut[p3 & 0xFF];
+        }
+        for (; x < W; x++) {
+            uint32_t p = row[x];
+            row[x] = 0xFF000000 | (lut[(p >> 16) & 0xFF] << 16) | (lut[(p >> 8) & 0xFF] << 8) | lut[p & 0xFF];
+        }
+    }
 }
 
 /* --------------------------------------------------------------------------
@@ -298,38 +350,38 @@ static void draw_profiler_overlay(compositor_t *c) {
     int line_h = 16;
     
     gui_rect_t bg = rect_make(sx - 5, sy - 5, 250, 100);
-    renderer_fill_rect(c->renderer, bg, 0xCC000000);
-    renderer_draw_rect(c->renderer, bg, 0xFFFFFFFF, 1);
+    renderer_fill_rect(c->renderer, bg, 0xCC0A0A12);
+    renderer_draw_rect(c->renderer, bg, 0xFF00AA00, 1);
 
     char buf[64];
     
     strcpy(buf, "PROFILER (CPU CYCLES)");
-    draw_text_simple(c, sx, sy, buf, 0xFF00FFFF);
+    draw_text_simple(c, sx, sy, buf, 0xFF00FF41);
     sy += line_h;
 
     strcpy(buf, "Input:  ");
     int_to_str(perf_input_cycles, buf + 8);
-    draw_text_simple(c, sx, sy, buf, 0xFFFFFFFF);
+    draw_text_simple(c, sx, sy, buf, 0xFF00CC33);
     sy += line_h;
 
     strcpy(buf, "Events: ");
     int_to_str(perf_event_cycles, buf + 8);
-    draw_text_simple(c, sx, sy, buf, 0xFFFFFFFF);
+    draw_text_simple(c, sx, sy, buf, 0xFF00CC33);
     sy += line_h;
 
     strcpy(buf, "Render: ");
     int_to_str(perf_render_cycles, buf + 8);
-    draw_text_simple(c, sx, sy, buf, 0xFF00FF00); // Green for render
+    draw_text_simple(c, sx, sy, buf, 0xFF00FF41); /* Bright green for render */
     sy += line_h;
 
     strcpy(buf, "Blit:   ");
     int_to_str(perf_blit_cycles, buf + 8);
-    draw_text_simple(c, sx, sy, buf, 0xFFFF0000); // Red for blit (critical)
+    draw_text_simple(c, sx, sy, buf, 0xFFFF4444); /* Red for blit (critical) */
     sy += line_h;
 
     strcpy(buf, "Total:  ");
     int_to_str(perf_total_cycles, buf + 8);
-    draw_text_simple(c, sx, sy, buf, 0xFFFFFF00);
+    draw_text_simple(c, sx, sy, buf, 0xFF00FF41);
 }
 
 /* --------------------------------------------------------------------------
@@ -340,6 +392,10 @@ void compositor_frame(compositor_t *c) {
     if (!c) return;
 
     uint64_t t_start = rdtsc();
+
+    /* 0. Taskbar: sincroniza apps abertos + relógio e mantém no topo antes
+     *    do processamento de eventos (para o hit-test) e do desenho. */
+    taskbar_refresh();
 
     /* 1. Poll input → post events */
     input_manager_poll(c->input);
@@ -364,6 +420,7 @@ void compositor_frame(compositor_t *c) {
     cursor_restore(c);
     draw_background(c);
     renderer_set_clip(c->renderer, rect_zero());
+    taskbar_refresh(); /* mantém a barra no topo após eventos do frame */
     node_draw_recursive(c->scene_root, c->renderer);
     draw_minimap(c);
 
@@ -377,6 +434,9 @@ void compositor_frame(compositor_t *c) {
 
     uint64_t t_render = rdtsc();
     perf_render_cycles = t_render - t_ev;
+
+    /* Apply CRT scanlines effect */
+    apply_scanlines(c);
 
     /* 7. Flip back-buffer → VRAM */
     renderer_present(c->renderer);

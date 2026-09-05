@@ -30,6 +30,17 @@ static void focus_bus_handler(const gui_event_t *event, void *userdata) {
         return;
     }
 
+    /* The TAB key ALWAYS toggles the app launcher — before any window sees
+     * the key. This ensures Tab reliably opens the launcher so the user can
+     * open as many apps as they want. */
+    if (event->type == GUI_EVENT_KEY_DOWN &&
+        event->key.scancode == 0x0F /* Tab */) {
+        extern void app_registry_toggle_launcher(void);
+        app_registry_toggle_launcher();
+        event_stop_propagation(fm->bus);
+        return;
+    }
+
     /* Key events: forward to focused window first.
      * Only call stop_propagation if the focused window consumed the key. */
     if (event->type == GUI_EVENT_KEY_DOWN ||
@@ -46,15 +57,6 @@ static void focus_bus_handler(const gui_event_t *event, void *userdata) {
                 event_stop_propagation(fm->bus);
                 return;
             }
-        }
-
-        /* Tab with no focused window → open launcher */
-        if (event->type == GUI_EVENT_KEY_DOWN &&
-            event->key.scancode == 0x0F /* Tab */ &&
-            fm->focused_node == NULL) {
-            extern void app_registry_show_launcher(void);
-            app_registry_show_launcher();
-            return;
         }
     }
 }

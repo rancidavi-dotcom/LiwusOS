@@ -42,19 +42,45 @@ static void button_draw(node_t *self, struct gui_renderer *r) {
     
     self->screen_bounds = rect_make(screen_x, screen_y, screen_w, screen_h);
 
-    /* Background color is animated */
+    /* Background — solid dark green (animated color) */
     renderer_fill_rect(r, self->screen_bounds, d->current_bg_color);
 
-    /* Border */
-    renderer_draw_rect(r, self->screen_bounds, theme_engine_get_color(THEME_COLOR_BUTTON_BORDER), 1);
+    /* 3D DOS border: top/left bright, bottom/right dark */
+    uint32_t bright = theme_engine_get_color(THEME_COLOR_BUTTON_BORDER);
+    uint32_t dark   = theme_engine_get_color(THEME_COLOR_BUTTON_BG_PRESS);
 
-    /* Text */
+    if (!d->pressed) {
+        /* Normal: raised 3D look */
+        /* Top edge */
+        renderer_fill_rect(r, rect_make(screen_x, screen_y, screen_w, 1), bright);
+        /* Left edge */
+        renderer_fill_rect(r, rect_make(screen_x, screen_y, 1, screen_h), bright);
+        /* Bottom edge */
+        renderer_fill_rect(r, rect_make(screen_x, screen_y + screen_h - 1, screen_w, 1), dark);
+        /* Right edge */
+        renderer_fill_rect(r, rect_make(screen_x + screen_w - 1, screen_y, 1, screen_h), dark);
+    } else {
+        /* Pressed: inverted 3D look (sunk) */
+        renderer_fill_rect(r, rect_make(screen_x, screen_y, screen_w, 1), dark);
+        renderer_fill_rect(r, rect_make(screen_x, screen_y, 1, screen_h), dark);
+        renderer_fill_rect(r, rect_make(screen_x, screen_y + screen_h - 1, screen_w, 1), bright);
+        renderer_fill_rect(r, rect_make(screen_x + screen_w - 1, screen_y, 1, screen_h), bright);
+    }
+
+    /* Focus ring — bright green outline when focused */
+    extern node_t *focus_manager_get_focus(void *);
+    extern void *g_focus_manager;
+    if (g_focus_manager && focus_manager_get_focus(g_focus_manager) == self) {
+        renderer_draw_rect(r, rect_make(screen_x - 1, screen_y - 1, screen_w + 2, screen_h + 2),
+            theme_engine_get_color(THEME_COLOR_TEXT_PRIMARY), 1);
+    }
+
+    /* Text — centered, bright green */
     if (d->text) {
         int text_len = strlen(d->text);
         int text_w = text_len * 8;
         int text_h = 16;
 
-        /* Center text */
         int cx = screen_x + (screen_w - text_w) / 2;
         int cy = screen_y + (screen_h - text_h) / 2;
 

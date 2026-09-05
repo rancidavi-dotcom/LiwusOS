@@ -332,30 +332,30 @@ static void explorer_start(void) {
     s_win->padding[2] = 14;
     s_win->padding[3] = 16;
 
-    node_t *header = panel_create("explorer_header", 0, 0, 588, 42, 0xFF18243A);
+    node_t *header = panel_create("explorer_header", 0, 0, 588, 42, 0xFF0A2E1A);
     header->layout_type = LAYOUT_HBOX;
     header->padding[0] = 8; header->padding[1] = 12;
     header->padding[2] = 8; header->padding[3] = 12;
-    panel_set_border(header, 0xFF355070, 1);
-    node_t *title = label_create("explorer_title", 0, 0, "FILES", 0xFF9CCBFF);
+    panel_set_border(header, 0xFF00AA00, 1);
+    node_t *title = label_create("explorer_title", 0, 0, "FILES", 0xFF00FF41);
     title->flex_weight = 1;
-    s_usage_label = label_create("explorer_usage", 0, 0, "SDFS", 0xFFB8C7D9);
+    s_usage_label = label_create("explorer_usage", 0, 0, "SDFS", 0xFF00CC33);
     node_add_child(header, title);
     node_add_child(header, s_usage_label);
 
-    node_t *location = panel_create("explorer_location", 0, 0, 588, 30, 0xFF111A29);
+    node_t *location = panel_create("explorer_location", 0, 0, 588, 30, 0xFF0A1510);
     location->layout_type = LAYOUT_HBOX;
     location->padding[0] = 6; location->padding[1] = 10;
     location->padding[2] = 4; location->padding[3] = 10;
-    panel_set_border(location, 0xFF2A3C57, 1);
-    s_path_label = label_create("explorer_path", 0, 0, "Location: /", 0xFFFFFFFF);
+    panel_set_border(location, 0xFF008800, 1);
+    s_path_label = label_create("explorer_path", 0, 0, "Location: /", 0xFF00FF41);
     node_add_child(location, s_path_label);
 
-    node_t *toolbar = panel_create("explorer_toolbar", 0, 0, 588, 38, 0x33202B3D);
+    node_t *toolbar = panel_create("explorer_toolbar", 0, 0, 588, 38, 0x330A2E1A);
     toolbar->layout_type = LAYOUT_HBOX;
     toolbar->padding[0] = 4; toolbar->padding[1] = 8;
     toolbar->padding[2] = 4; toolbar->padding[3] = 8;
-    panel_set_border(toolbar, 0xFF2A3C57, 1);
+    panel_set_border(toolbar, 0xFF008800, 1);
     node_t *up = button_create("explorer_up", 0, 0, 48, 30, "Up");
     node_t *open = button_create("explorer_open", 0, 0, 58, 30, "Open");
     node_t *folder = button_create("explorer_folder", 0, 0, 84, 30, "+ Folder");
@@ -381,19 +381,19 @@ static void explorer_start(void) {
     node_add_child(toolbar, lua); node_add_child(toolbar, cfg);
     node_add_child(toolbar, remove); node_add_child(toolbar, refresh);
 
-    s_list_panel = panel_create("explorer_list", 0, 0, 588, 330, 0xFF0E1623);
+    s_list_panel = panel_create("explorer_list", 0, 0, 588, 330, 0xFF050A10);
     s_list_panel->layout_type = LAYOUT_VBOX;
     s_list_panel->flex_weight = 1;
     s_list_panel->padding[0] = 8; s_list_panel->padding[1] = 8;
     s_list_panel->padding[2] = 8; s_list_panel->padding[3] = 8;
-    panel_set_border(s_list_panel, 0xFF2A3C57, 1);
+    panel_set_border(s_list_panel, 0xFF008800, 1);
 
-    node_t *footer = panel_create("explorer_footer", 0, 0, 588, 34, 0xFF111A29);
+    node_t *footer = panel_create("explorer_footer", 0, 0, 588, 34, 0xFF0A1510);
     footer->layout_type = LAYOUT_HBOX;
     footer->padding[0] = 5; footer->padding[1] = 8;
     footer->padding[2] = 5; footer->padding[3] = 8;
-    panel_set_border(footer, 0xFF2A3C57, 1);
-    s_status_label = label_create("explorer_status", 0, 0, "Ready", 0xFFB8C7D9);
+    panel_set_border(footer, 0xFF008800, 1);
+    s_status_label = label_create("explorer_status", 0, 0, "Ready", 0xFF00CC33);
     s_status_label->flex_weight = 1;
     node_add_child(footer, s_status_label);
     node_add_child(footer, previous);
