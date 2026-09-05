@@ -33,7 +33,7 @@ static void write_hex(unsigned long v) {
 
 int main(int argc, char **argv) {
     (void)argc;
-    write_str("OLAR DO TCC! ");
+    write_str("Hello World!\n");
     if (argv && argv[0]) {
         write_str("argv[0]=");
         write_str(argv[0]);

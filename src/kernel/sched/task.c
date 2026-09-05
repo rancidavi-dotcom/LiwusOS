@@ -156,6 +156,8 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
 
   uint64_t stack_size = 8192;
   stack = (uint64_t)kmalloc(stack_size) + stack_size;
+  /* Alinhar kernel stack para 16 bytes (ABI x86_64) */
+  stack = stack & ~0xF;
   new_task->kernel_stack = stack;
   new_task->kernel_stack_size = (uint32_t)stack_size;
 
@@ -208,6 +210,8 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
 
   uint64_t stack_size = 8192;
   stack = (uint64_t)kmalloc(stack_size) + stack_size;
+  /* Alinhar kernel stack para 16 bytes (ABI x86_64) */
+  stack = stack & ~0xF;
   new_task->kernel_stack = stack;
   new_task->kernel_stack_size = (uint32_t)stack_size;
 

@@ -476,50 +476,60 @@ init_mouse();
   init_tasking();
   init_syscalls();
 
-  if (kernel_test_mode) {
-/* ---- TCC integration test: if 'test_tcc' is present in the initrd,
+if (kernel_test_mode) {
+    /* ---- TCC integration test: if 'test_tcc' is present in the initrd,
        launch the Tiny C Compiler (userspace) to compile a C file and then
        run the resulting ELF. Exercised end-to-end by scripts/tcc_test.sh. */
-     {
-       extern int launch_initrd_program_argv(const char *filename, char *const argv[]);
-       extern void switch_task(void);
-       uint32_t tcc_marker_size = 0;
-       if (initrd_get_file("test_tcc", &tcc_marker_size)) {
-         serial_print("[boot] TCC integration test detected\n");
+      {
+        extern int launch_initrd_program_argv(const char *filename, char *const argv[]);
+        extern void switch_task(void);
+        uint32_t tcc_marker_size = 0;
+        if (initrd_get_file("test_tcc", &tcc_marker_size)) {
+          serial_print("[boot] TCC integration test detected\n");
 
-/* ---- Single phase: compile hello_tcc.c to test TCC compilation.
-           Print success message directly since task switching has issues. */
-        {
-          static char *c_argv[] = { "tcc", "-c", "/house/localhost/hello_tcc.c", "-o", "/house/localhost/hello_tcc.o", NULL };
-          int cpid = launch_initrd_program_argv("tcc", c_argv);
-          serial_print("[tcc] launch compile pid=");
-          char lb[16]; itoa(cpid, lb, 10); serial_print(lb);
-          serial_print("\n");
+/* ---- Single phase: compile + link + run in one TCC invocation.
+           Tests the fixed writer (tcc_output_elf with fseek/fflush). */
+         {
+           static char *l_argv[] = { "tcc", "-nostdlib", "-L/house/localhost/tccsdk/lib", "/house/localhost/tccsdk/lib/crt0.o", "/house/localhost/hello_tcc.c", "-lgloss", "-o", "/house/localhost/hello", NULL };
+           int lpid = launch_initrd_program_argv("tcc", l_argv);
+           serial_print("[tcc] launch link pid=");
+           char lb[16]; itoa(lpid, lb, 10); serial_print(lb);
+           serial_print("\n");
 
-          int found = 0;
-          for (int spins = 0; spins < 400000 && !found; spins++) {
-            switch_task();
-            uint32_t esize = 0;
-            void *edata = sdfs_read_file("/hello_tcc.o", &esize);
-            if (edata && esize > 0) {
-              kfree(edata);
-              found = 1;
-            }
-          }
+           int found = 0;
+           for (int spins = 0; spins < 400000 && !found; spins++) {
+             switch_task();
+             uint32_t esize = 0;
+             void *edata = sdfs_read_file("/hello", &esize);
+             if (edata && esize > 0) {
+               kfree(edata);
+               found = 1;
+             }
+           }
 
-          uint32_t esize = 0;
-          void *edata = sdfs_read_file("/hello_tcc.o", &esize);
-          if (found && edata && esize > 0) {
-            kfree(edata);
-            serial_print("OK: libtcc compiled hello_tcc.c\n");
-            serial_print("OLAR DO TCC! argv[0]=/hello_tcc.c\n");
-          } else {
-            if (edata) kfree(edata);
-            serial_print("FAIL: hello_tcc.o missing\n");
-          }
-        }
-      }
-    }
+           uint32_t esize = 0;
+           void *edata = sdfs_read_file("/hello", &esize);
+           if (found && edata && esize > 0) {
+             kfree(edata);
+             serial_print("OK: libtcc linked executable\n");
+
+             /* Exec the compiled program; it prints via printf -> serial. */
+             static char *r_argv[] = { "hello", NULL };
+             int rpid = launch_initrd_program_argv("hello", r_argv);
+             serial_print("[run] launch pid=");
+             char rb[16]; itoa(rpid, rb, 10); serial_print(rb);
+             serial_print("\n");
+
+             /* Actually schedule the child so it prints. */
+             for (int spins = 0; spins < 200000; spins++) switch_task();
+             serial_print("OK: ran compiled program (check serial for output)\n");
+           } else {
+             if (edata) kfree(edata);
+             serial_print("FAIL: hello executable missing\n");
+           }
+         }
+       }
+     }
 
     /* ---- Image decode smoke test: when 'test_img' is present in the
        initrd, decode the bundled SDFS images and report dimensions. This
