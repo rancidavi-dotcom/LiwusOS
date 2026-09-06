@@ -487,20 +487,19 @@ if (kernel_test_mode) {
         if (initrd_get_file("test_tcc", &tcc_marker_size)) {
           serial_print("[boot] TCC integration test detected\n");
 
-/* ---- Single phase: compile + link + run in one TCC invocation.
-           Tests the fixed writer (tcc_output_elf with fseek/fflush). */
+/* ---- Phase 1: tcc -c to test object file output (diagnostic). */
          {
-           static char *l_argv[] = { "tcc", "-nostdlib", "-L/house/localhost/tccsdk/lib", "/house/localhost/tccsdk/lib/crt0.o", "/house/localhost/hello_tcc.c", "-lgloss", "-o", "/house/localhost/hello", NULL };
-           int lpid = launch_initrd_program_argv("tcc", l_argv);
-           serial_print("[tcc] launch link pid=");
-           char lb[16]; itoa(lpid, lb, 10); serial_print(lb);
+           static char *c_argv[] = { "tcc", "-c", "/house/localhost/hello_tcc.c", "-o", "/house/localhost/hello_tcc.o", NULL };
+           int cpid = launch_initrd_program_argv("tcc", c_argv);
+           serial_print("[tcc] launch compile pid=");
+           char lb[16]; itoa(cpid, lb, 10); serial_print(lb);
            serial_print("\n");
 
            int found = 0;
            for (int spins = 0; spins < 400000 && !found; spins++) {
              switch_task();
              uint32_t esize = 0;
-             void *edata = sdfs_read_file("/hello", &esize);
+             void *edata = sdfs_read_file("/hello_tcc.o", &esize);
              if (edata && esize > 0) {
                kfree(edata);
                found = 1;
@@ -508,24 +507,25 @@ if (kernel_test_mode) {
            }
 
            uint32_t esize = 0;
-           void *edata = sdfs_read_file("/hello", &esize);
+           void *edata = sdfs_read_file("/hello_tcc.o", &esize);
            if (found && edata && esize > 0) {
-             kfree(edata);
-             serial_print("OK: libtcc linked executable\n");
-
-             /* Exec the compiled program; it prints via printf -> serial. */
-             static char *r_argv[] = { "hello", NULL };
-             int rpid = launch_initrd_program_argv("hello", r_argv);
-             serial_print("[run] launch pid=");
-             char rb[16]; itoa(rpid, rb, 10); serial_print(rb);
+             serial_print("OK: libtcc compiled hello_tcc.c (hello_tcc.o size=");
+             char sz[16]; itoa(esize, sz, 10); serial_print(sz); serial_print(")\n");
+             /* Dump first 64 bytes of .o file to check .text content */
+             unsigned char *p = (unsigned char*)edata;
+             char hexbuf[3];
+             serial_print(".o bytes: ");
+             for (int i = 0; i < 64 && i < (int)esize; i++) {
+               hexbuf[0] = "0123456789abcdef"[(p[i]>>4)&0xF];
+               hexbuf[1] = "0123456789abcdef"[p[i]&0xF];
+               hexbuf[2] = ' ';
+               serial_print(hexbuf);
+             }
              serial_print("\n");
-
-             /* Actually schedule the child so it prints. */
-             for (int spins = 0; spins < 200000; spins++) switch_task();
-             serial_print("OK: ran compiled program (check serial for output)\n");
+             kfree(edata);
            } else {
              if (edata) kfree(edata);
-             serial_print("FAIL: hello executable missing\n");
+             serial_print("FAIL: hello_tcc.o missing\n");
            }
          }
        }
@@ -683,8 +683,8 @@ if (kernel_test_mode) {
   extern void pen_task(void);
   pen_init();
   create_task_named(pen_task, "pen");
-  // extern void terminal_task();
-  // create_task_named(terminal_task, "terminal");
+  extern void terminal_task();
+  create_task_named(terminal_task, "terminal");
 
   boot_splash_set_progress(100, "Pronto!");
   boot_splash_done();

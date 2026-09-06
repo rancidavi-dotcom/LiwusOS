@@ -60,6 +60,7 @@ void cmd_tcc(int argc, char **argv) {
         buf[n] = '\0';
     }
     vga_puts(buf);
+    serial_print(buf);
 }
 
 // Executa um programa compilado (ELF) a partir do filesystem SDFS, repassando
@@ -97,9 +98,20 @@ void cmd_run(int argc, char **argv) {
     vga_puts("[kernel] run ");
     vga_puts(prog_path);
     vga_puts(" pid=");
+    serial_print("[kernel] run ");
+    serial_print(prog_path);
+    serial_print(" pid=");
     char pidbuf[16];
-    if (pid < 0) vga_puts("error\n");
-    else { itoa(pid, pidbuf, 10); vga_puts(pidbuf); vga_puts("\n"); }
+    if (pid < 0) {
+        vga_puts("error\n");
+        serial_print("error\n");
+    } else {
+        itoa(pid, pidbuf, 10);
+        vga_puts(pidbuf);
+        vga_puts("\n");
+        serial_print(pidbuf);
+        serial_print("\n");
+    }
 }
 
 // Define command table

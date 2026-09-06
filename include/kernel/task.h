@@ -39,6 +39,7 @@ typedef struct task {
   int exit_code;
   uint64_t stack_top;
   uint64_t kernel_stack;
+  uint64_t kernel_stack_base;
   uint32_t kernel_stack_size;
   struct task *parent;
   struct task *next;

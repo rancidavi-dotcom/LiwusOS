@@ -107,13 +107,17 @@ int create_task_named(void (*entry_point)(), const char *name) {
   task_assign_name(new_task, name, false);
 
   uint64_t stack_size = 8192;
-  uint64_t stack = (uint64_t)kmalloc(stack_size) + stack_size;
+  uint64_t stack_base = (uint64_t)kmalloc(stack_size);
+  uint64_t stack = stack_base + stack_size;
+  new_task->kernel_stack_base = stack_base;
   new_task->kernel_stack = stack;
   new_task->kernel_stack_size = (uint32_t)stack_size;
 
   /* Prepara a pilha para o iret */
   registers_t *  regs = (registers_t *)(uint64_t)(stack - sizeof(registers_t));
-  memset(regs, 0, sizeof(registers_t));
+  for (size_t i = 0; i < sizeof(registers_t); i++) {
+    ((uint8_t *)regs)[i] = 0;
+  }
 
   regs->rflags = 0x202;
   regs->cs = 0x08;
@@ -155,14 +159,18 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
   task_assign_name(new_task, name, true);
 
   uint64_t stack_size = 8192;
-  stack = (uint64_t)kmalloc(stack_size) + stack_size;
+  uint64_t stack_base = (uint64_t)kmalloc(stack_size);
+  stack = stack_base + stack_size;
   /* Alinhar kernel stack para 16 bytes (ABI x86_64) */
   stack = stack & ~0xF;
+  new_task->kernel_stack_base = stack_base;
   new_task->kernel_stack = stack;
   new_task->kernel_stack_size = (uint32_t)stack_size;
 
-  regs = (registers_t *)(uint64_t)(stack - sizeof(registers_t));
-  memset(regs, 0, sizeof(registers_t));
+  regs = (registers_t *)(stack - sizeof(registers_t));
+  for (size_t i = 0; i < sizeof(registers_t); i++) {
+    ((uint8_t *)regs)[i] = 0;
+  }
 
   regs->rflags = 0x202;
   regs->cs = 0x1B;   /* 32-bit compat user code */
@@ -209,14 +217,19 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
   task_assign_name(new_task, name, true);
 
   uint64_t stack_size = 8192;
-  stack = (uint64_t)kmalloc(stack_size) + stack_size;
+  uint64_t stack_base = (uint64_t)kmalloc(stack_size);
+  stack = stack_base + stack_size;
   /* Alinhar kernel stack para 16 bytes (ABI x86_64) */
   stack = stack & ~0xF;
+  new_task->kernel_stack_base = stack_base;
   new_task->kernel_stack = stack;
   new_task->kernel_stack_size = (uint32_t)stack_size;
 
   regs = (registers_t *)(uint64_t)(stack - sizeof(registers_t));
-  memset(regs, 0, sizeof(registers_t));
+  /* Explicitly zero with known pattern to detect corruption */
+  for (size_t i = 0; i < sizeof(registers_t); i++) {
+    ((uint8_t *)regs)[i] = 0;
+  }
 
   regs->rflags = 0x202;
   regs->cs = 0x2B;   /* 64-bit user code */
@@ -301,6 +314,21 @@ uint64_t schedule(uint64_t current_rsp) {
   new_curr->switch_count++;
   global_switch_count++;
 
+  /* Debug: log task switch for user tasks */
+  if (new_curr->user_mode && new_curr != curr) {
+    serial_print("SCHED: switch to pid=");
+    char dbg[16];
+    itoa(new_curr->id, dbg, 10);
+    serial_print(dbg);
+    serial_print(" (");
+    serial_print(new_curr->name);
+    serial_print(") kernel_stack=");
+    serial_print_hex(new_curr->kernel_stack);
+    serial_print(" stack_top=");
+    serial_print_hex(new_curr->stack_top);
+    serial_print("\n");
+  }
+
   /* VMM Switch: Trocar CR3 se mudou de processo */
   if (new_curr->page_directory != current_directory) {
     switch_page_directory(new_curr->page_directory);
@@ -309,6 +337,12 @@ uint64_t schedule(uint64_t current_rsp) {
   /* Atualiza TSS ESP0 para a pilha de kernel da nova tarefa */
   extern tss_entry_t cpus_tss[16];
   cpus_tss[get_cpu_id()].rsp0 = new_curr->kernel_stack;
+
+  if (new_curr->user_mode && new_curr != curr) {
+    serial_print("SCHED: TSS.rsp0 updated to ");
+    serial_print_hex(new_curr->kernel_stack);
+    serial_print("\n");
+  }
 
   /* FPU/SSE contexto: o kernel é -mno-sse, mas tasks que usam FP (ex. o
    * decoder MP3, compilado com -msse) precisam ter o estado XMM/x87 salvo
@@ -412,8 +446,9 @@ int fork_process(registers_t *regs) {
   new_task->page_directory = vmm_copy_directory(parent->page_directory);
 
   uint32_t kernel_stack_size = 4096;
-  new_task->kernel_stack =
-      (uint64_t)kmalloc(kernel_stack_size) + kernel_stack_size;
+  uint64_t kernel_stack_base = (uint64_t)kmalloc(kernel_stack_size);
+  new_task->kernel_stack_base = kernel_stack_base;
+  new_task->kernel_stack = kernel_stack_base + kernel_stack_size;
   new_task->kernel_stack_size = kernel_stack_size;
 
   uint64_t regs_size = sizeof(registers_t);
@@ -472,9 +507,8 @@ int sys_waitpid(int pid, int *status, int options) {
 
             spinlock_release(&scheduler_lock);
 
-            if (t->kernel_stack && t->kernel_stack_size) {
-               void *stack_base = (void*)(t->kernel_stack - t->kernel_stack_size);
-               kfree(stack_base);
+            if (t->kernel_stack_base && t->kernel_stack_size) {
+               kfree((void *)t->kernel_stack_base);
             }
 
             // Reparent children to avoid Use-After-Free
