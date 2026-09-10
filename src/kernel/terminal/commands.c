@@ -8,6 +8,20 @@
 #include "pmm.h"
 #include "io.h"
 #include "fs/sdfs.h"
+#include "net.h"
+#include "netstack.h"
+#include "http.h"
+#include "tcp.h"
+
+extern char *itoa(int value, char *str, int base);
+
+static void vga_print_ip(uint32_t ip) {
+    char b[16];
+    itoa((int)(ip & 0xFF), b, 10); vga_puts(b); vga_puts(".");
+    itoa((int)((ip >> 8) & 0xFF), b, 10); vga_puts(b); vga_puts(".");
+    itoa((int)((ip >> 16) & 0xFF), b, 10); vga_puts(b); vga_puts(".");
+    itoa((int)((ip >> 24) & 0xFF), b, 10); vga_puts(b);
+}
 
 static void join_path(const char *base, const char *rel, char *out, size_t out_size) {
     if (rel[0] == '/') {
@@ -479,21 +493,155 @@ void cmd_diskinfo(int argc, char **argv) {
 
 void cmd_ip(int argc, char **argv) {
     (void)argc; (void)argv;
-    vga_puts("Network stack not available in this build.\n");
+    net_interface_t *netif = net_get_list();
+    if (!netif) {
+        vga_puts("No network interface registered.\n");
+        return;
+    }
+    while (netif) {
+        vga_puts(netif->name);
+        vga_puts("  ");
+        vga_puts(netif->type == NET_TYPE_ETHERNET ? "ethernet" : "wifi");
+        vga_puts("  mac ");
+        char b[16];
+        for (int i = 0; i < 6; i++) {
+            itoa(netif->mac[i], b, 16);
+            if (strlen(b) == 1) vga_puts("0");
+            vga_puts(b);
+            if (i < 5) vga_puts(":");
+        }
+        vga_puts("  ip ");
+        vga_print_ip(netstack_get_my_ip());
+        vga_puts("\n");
+        netif = netif->next;
+    }
 }
 
 void cmd_ping(int argc, char **argv) {
-    (void)argc; (void)argv;
-    vga_puts("ping: Network stack not available in this build.\n");
+    if (argc < 2) {
+        vga_puts("Usage: ping <host|ip> [count]\n");
+        return;
+    }
+    if (!net_get_list()) {
+        vga_puts("Rede indisponivel.\n");
+        return;
+    }
+
+    int count = 4;
+    if (argc >= 3) {
+        count = 0;
+        for (int i = 0; argv[2][i] >= '0' && argv[2][i] <= '9'; i++)
+            count = count * 10 + (argv[2][i] - '0');
+        if (count <= 0) count = 4;
+    }
+
+    uint32_t ip = net_resolve_host(argv[1]);
+    vga_puts("PING ");
+    vga_puts(argv[1]);
+    vga_puts(" (");
+    vga_print_ip(ip);
+    vga_puts(")\n");
+
+    int sent = 0, received = 0;
+    uint32_t total_ms = 0;
+    int elapsed_ticks;
+    for (int i = 0; i < count; i++) {
+        sent++;
+        elapsed_ticks = netstack_ping(ip, 200);
+        if (elapsed_ticks >= 0) {
+            uint32_t elapsed_ms = (uint32_t)elapsed_ticks * 10U;
+            received++;
+            total_ms += elapsed_ms;
+            vga_puts("64 bytes from ");
+            vga_print_ip(ip);
+            vga_puts(": icmp_seq=");
+            char b[16];
+            itoa(i + 1, b, 10); vga_puts(b);
+            vga_puts(" time=");
+            itoa((int)elapsed_ms, b, 10); vga_puts(b);
+            vga_puts(" ms\n");
+        } else {
+            vga_puts("Request timeout for icmp_seq=");
+            char b[16];
+            itoa(i + 1, b, 10); vga_puts(b);
+            vga_puts("\n");
+        }
+    }
+
+    vga_puts("--- ping statistics ---\n");
+    char b[16];
+    itoa(sent, b, 10); vga_puts(b);
+    vga_puts(" packets transmitted, ");
+    itoa(received, b, 10); vga_puts(b);
+    vga_puts(" received, ");
+    itoa(sent - received, b, 10); vga_puts(b);
+    vga_puts(" lost\n");
+    if (received > 0) {
+        vga_puts("avg time = ");
+        itoa((int)(total_ms / (uint32_t)received), b, 10); vga_puts(b);
+        vga_puts(" ms\n");
+    }
 }
 
 void cmd_wget(int argc, char **argv) {
-    (void)argc; (void)argv;
-    vga_puts("wget: Network stack not available in this build.\n");
+    static char response[16384];
+    int got;
+
+    if (argc < 2) {
+        vga_puts("Usage: wget <url> [arquivo]\n");
+    } else if (!net_get_list()) {
+        vga_puts("Rede indisponivel.\n");
+    } else if (strstr(argv[1], "https://") == argv[1]) {
+        vga_puts("HTTPS ainda nao e suportado. Use URLs http:// por enquanto.\n");
+    } else {
+        vga_puts("Baixando ");
+        vga_puts(argv[1]);
+        vga_puts(" ...\n");
+
+        memset(response, 0, sizeof(response));
+        got = http_get_url(argv[1], response, sizeof(response) - 1);
+        if (got < 0) {
+            vga_puts("Falha no download.\n");
+        } else if (argc >= 3) {
+            char sdfs_path[256];
+            if (argv[2][0] == '/') {
+                strncpy(sdfs_path, argv[2], sizeof(sdfs_path) - 1);
+            } else {
+                vfs_to_sdfs_path(argv[2], sdfs_path, sizeof(sdfs_path));
+            }
+            sdfs_path[sizeof(sdfs_path) - 1] = '\0';
+            sdfs_create_file(sdfs_path);
+            sdfs_write_file(sdfs_path, (uint8_t *)response, (uint32_t)got);
+            vga_puts("Salvo em ");
+            vga_puts(argv[2]);
+            vga_puts(" (");
+            char b[16];
+            itoa(got, b, 10); vga_puts(b);
+            vga_puts(" bytes)\n");
+        } else {
+            vga_puts("Download concluido (");
+            char b[16];
+            itoa(got, b, 10); vga_puts(b);
+            vga_puts(" bytes), mostrando...\n");
+            vga_puts(response);
+            vga_puts("\n");
+        }
+    }
 }
 
 void cmd_host(int argc, char **argv) {
-    (void)argc; (void)argv;
-    vga_puts("host: Network stack not available in this build.\n");
+    if (argc < 2) {
+        vga_puts("Usage: host <hostname>\n");
+        return;
+    }
+    uint32_t ip = net_resolve_host(argv[1]);
+    if (ip == 0) {
+        vga_puts("host: resolution failed\n");
+        return;
+    }
+    vga_puts(argv[1]);
+    vga_puts(" -> ");
+    vga_print_ip(ip);
+    vga_puts("\n");
 }
 

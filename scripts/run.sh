@@ -74,11 +74,26 @@ if [ "${PEN_WATCH:-0}" = "1" ]; then
     (python3 scripts/pen_watch.py &) || true
 fi
 
+# ---- KVM (virtualizacao acelerada) ----
+# No WSL2 precisa de "Virtual Machine Platform" ativado no Windows
+# e reiniciar WSL:  wsl --shutdown
+# Use: KVM=1 ./run.sh
+KVM_FLAG=""
+if [ "${KVM:-0}" = "1" ]; then
+    if [ -e /dev/kvm ]; then
+        KVM_FLAG="-enable-kvm"
+        echo "==> KVM ativado (aceleracao de hardware)"
+    else
+        echo "AVISO: KVM=1 mas /dev/kvm nao existe. Ative 'Virtual Machine Platform' no Windows e reinicie o WSL."
+    fi
+fi
+
 # ---- Execucao ----
 # Usa a MESMA configuracao do "make run" (conhecida por funcionar):
 # qemu-system-x86_64 + CD via -cdrom + disco persistente via AHCI.
 # Adiciona: serial (log), SCSI (pendrive virtual), audio e rede.
-exec qemu-system-x86_64 \
+# NET_FLAGS = -netdev user,id=net0 -device rtl8139,netdev=net0
+exec qemu-system-x86_64 $KVM_FLAG \
     -cdrom liwusos.iso \
     -drive id=disk,file="$DISK_IMAGE",if=none,format=raw \
     -device ahci,id=ahci \
@@ -91,5 +106,5 @@ exec qemu-system-x86_64 \
     -serial stdio \
     -audiodev "$AUDIO_BACKEND,id=aud0" \
     -device AC97,audiodev=aud0 \
-    -net nic,model=rtl8139 \
-    -net user,hostfwd=tcp::2222-:2222
+    -netdev user,id=net0,hostfwd=tcp::2222-:2222 \
+    -device rtl8139,netdev=net0

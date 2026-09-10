@@ -5,6 +5,7 @@
 #include "io.h"
 #include "kheap.h"
 #include "keyboard.h"
+#include "mouse.h"
 #include "pmm.h"
 #include "serial.h"
 #include "string.h"
@@ -14,6 +15,8 @@
 #include "vmm.h"
 #include "vfs.h"
 #include "termios.h"
+#include "usercopy.h"
+#include "gui_syscalls.h"
 
 extern int elf_class(void *file_buffer);
 extern uint64_t elf32_load_file(void *file_buffer);
@@ -339,7 +342,12 @@ int sys_open(const char *filename, int flags) {
   }
   if (fd == -1) return -1;
 
-  const char *resolved = resolve_path(filename);
+  char fname[256];
+  if (!filename) return -EFAULT;
+  if (strncpy_from_user(fname, filename, 255) < 0) return -EFAULT;
+  fname[255] = '\0';
+
+  const char *resolved = resolve_path(fname);
   if (!resolved) return -1;
 
   // Try VFS
@@ -362,12 +370,13 @@ int sys_open(const char *filename, int flags) {
     return fd;
   }
   serial_print("[syscall] sys_open failed: ");
-  serial_print(filename);
+  serial_print(fname);
   serial_print("\n");
   return -1;
 }
 
 int sys_read(int fd, void *buf, uint32_t count) {
+  if (count && validate_user_pointer(buf, count) < 0) return -EFAULT;
   kfile_t *fd_table = get_fd_table();
   if (fd >= 0 && fd < 32 && fd_table[fd].type == FD_TYPE_PIPE) {
     pipe_t *p = (pipe_t *)fd_table[fd].socket_ptr;
@@ -377,12 +386,18 @@ int sys_read(int fd, void *buf, uint32_t count) {
       switch_task();
     }
     uint32_t to_read = count < p->bytes_avail ? count : p->bytes_avail;
-    for (uint32_t i = 0; i < to_read; i++) {
-      ((char *)buf)[i] = p->buffer[p->read_pos];
-      p->read_pos = (p->read_pos + 1) % PIPE_BUF_SIZE;
+    uint32_t got = 0;
+    while (got < to_read) {
+      uint32_t chunk = to_read - got;
+      uint32_t first = PIPE_BUF_SIZE - p->read_pos;
+      if (chunk > first) chunk = first;
+      if (copy_to_user((char *)buf + got, &p->buffer[p->read_pos], chunk) < 0)
+        return -EFAULT;
+      p->read_pos = (p->read_pos + chunk) % PIPE_BUF_SIZE;
+      p->bytes_avail -= chunk;
+      got += chunk;
     }
-    p->bytes_avail -= to_read;
-    return (int)to_read;
+    return (int)got;
   }
   if (fd == 0) {
     serial_print("[syscall] sys_read called from stdin\n");
@@ -390,7 +405,8 @@ int sys_read(int fd, void *buf, uint32_t count) {
 
     // Drain any buffered escape sequence bytes first
     if (stdin_esc_pos < stdin_esc_len) {
-        ((char *)buf)[0] = stdin_esc_buf[stdin_esc_pos++];
+        char bc = stdin_esc_buf[stdin_esc_pos++];
+        if (copy_to_user(buf, &bc, 1) < 0) return -EFAULT;
         if (stdin_esc_pos >= stdin_esc_len) {
             stdin_esc_len = 0;
             stdin_esc_pos = 0;
@@ -439,7 +455,7 @@ int sys_read(int fd, void *buf, uint32_t count) {
         // Cooked mode: echo always
         vga_putc(c);
         write_serial(c);
-        ((char *)buf)[0] = c;
+        if (copy_to_user(buf, &c, 1) < 0) return -EFAULT;
         return 1;
     }
 
@@ -470,11 +486,12 @@ int sys_read(int fd, void *buf, uint32_t count) {
         memcpy(stdin_esc_buf, esc_seq, (size_t)esc_len);
         stdin_esc_len = esc_len;
         stdin_esc_pos = 1;
-        ((char *)buf)[0] = stdin_esc_buf[0];
+        char bc = stdin_esc_buf[0];
+        if (copy_to_user(buf, &bc, 1) < 0) return -EFAULT;
         return 1;
     }
 
-    ((char *)buf)[0] = c;
+    if (copy_to_user(buf, &c, 1) < 0) return -EFAULT;
     return 1;
   }
   if (fd < 0 || fd >= 32 || fd_table[fd].type != FD_TYPE_FILE) return -1;
@@ -486,7 +503,8 @@ int sys_read(int fd, void *buf, uint32_t count) {
   }
   uint32_t available = f->size - f->offset;
   uint32_t to_read = count < available ? count : available;
-  memcpy(buf, (void *)(f->base_addr + f->offset), to_read);
+  if (to_read && copy_to_user(buf, (void *)(f->base_addr + f->offset), to_read) < 0)
+    return -EFAULT;
   f->offset += to_read;
   return (int)to_read;
 }
@@ -494,11 +512,15 @@ int sys_read(int fd, void *buf, uint32_t count) {
 extern void write_serial(char a);
 
 int sys_write(int fd, const void *buf, uint32_t count) {
+  if (count && validate_user_pointer(buf, count) < 0) return -EFAULT;
+  char tmp[64];
+  uint32_t done = 0;
   if (fd == 1 || fd == 2) {
-    for (uint32_t i = 0; i < count; i++) {
-      char c = ((const char*)buf)[i];
-      vga_putc(c);
-      write_serial(c);
+    while (done < count) {
+      uint32_t chunk = (count - done) < sizeof(tmp) ? (count - done) : (uint32_t)sizeof(tmp);
+      if (copy_from_user(tmp, (const char *)buf + done, chunk) < 0) return -EFAULT;
+      for (uint32_t i = 0; i < chunk; i++) { vga_putc(tmp[i]); write_serial(tmp[i]); }
+      done += chunk;
     }
     return count;
   }
@@ -511,19 +533,31 @@ int sys_write(int fd, const void *buf, uint32_t count) {
     uint32_t space = PIPE_BUF_SIZE - p->bytes_avail;
     if (space == 0) return 0;
     if (count > space) count = space;
-    for (uint32_t i = 0; i < count; i++) {
-      p->buffer[p->write_pos] = ((const char *)buf)[i];
-      p->write_pos = (p->write_pos + 1) % PIPE_BUF_SIZE;
+    done = 0;
+    while (done < count) {
+      uint32_t chunk = (count - done) < sizeof(tmp) ? (count - done) : (uint32_t)sizeof(tmp);
+      if (copy_from_user(tmp, (const char *)buf + done, chunk) < 0) return -EFAULT;
+      for (uint32_t i = 0; i < chunk; i++) {
+        p->buffer[p->write_pos] = tmp[i];
+        p->write_pos = (p->write_pos + 1) % PIPE_BUF_SIZE;
+      }
+      p->bytes_avail += chunk;
+      done += chunk;
     }
-    p->bytes_avail += count;
-    return (int)count;
+    return (int)done;
   }
   if (f->type == FD_TYPE_FILE && f->socket_ptr) {
-    uint32_t w = write_fs((fs_node_t *)f->socket_ptr, f->offset, count, (uint8_t *)buf);
-    f->offset += w;
     fs_node_t *node = (fs_node_t *)f->socket_ptr;
+    while (done < count) {
+      uint32_t chunk = (count - done) < sizeof(tmp) ? (count - done) : (uint32_t)sizeof(tmp);
+      if (copy_from_user(tmp, (const char *)buf + done, chunk) < 0) return -EFAULT;
+      uint32_t w = write_fs(node, f->offset, chunk, (uint8_t *)tmp);
+      f->offset += w;
+      done += w;
+      if (w == 0) break;
+    }
     f->size = node->length;
-    return (int)w;
+    return (int)done;
   }
   return -1;
 }
@@ -571,7 +605,9 @@ int sys_lseek(int fd, int offset, int whence) {
 int sys_tcgetattr(int fd, struct termios *t) {
   (void)fd;
   if (!t) return -1;
-  memcpy(t, &kernel_termios, sizeof(struct termios));
+  struct termios kt;
+  memcpy(&kt, &kernel_termios, sizeof(struct termios));
+  if (copy_to_user(t, &kt, sizeof(struct termios)) < 0) return -EFAULT;
   return 0;
 }
 
@@ -579,7 +615,9 @@ int sys_tcsetattr(int fd, int action, const struct termios *t) {
   (void)fd;
   (void)action;
   if (!t) return -1;
-  memcpy(&kernel_termios, t, sizeof(struct termios));
+  struct termios kt;
+  if (copy_from_user(&kt, t, sizeof(struct termios)) < 0) return -EFAULT;
+  memcpy(&kernel_termios, &kt, sizeof(struct termios));
   return 0;
 }
 
@@ -604,11 +642,12 @@ int sys_ioctl(int fd, unsigned long request, void *argp) {
     return sys_tcsetattr(fd, 0, (const struct termios *)argp);
   }
   if (request == TIOCGWINSZ && argp) {
-    struct winsize *ws = (struct winsize *)argp;
-    ws->ws_row = 25;
-    ws->ws_col = 80;
-    ws->ws_xpixel = 0;
-    ws->ws_ypixel = 0;
+    struct winsize ws;
+    ws.ws_row = 25;
+    ws.ws_col = 80;
+    ws.ws_xpixel = 0;
+    ws.ws_ypixel = 0;
+    if (copy_to_user(argp, &ws, sizeof(ws)) < 0) return -EFAULT;
     return 0;
   }
   return -1;
@@ -622,8 +661,8 @@ static int do_execve(registers_t *regs, const char *filename, char *const argv[]
   void *addr = NULL;
   char fname_buf[256];
 
-  if (!filename) return -1;
-  strncpy(fname_buf, filename, 255);
+  if (!filename) return -EFAULT;
+  if (strncpy_from_user(fname_buf, filename, 255) < 0) return -EFAULT;
   fname_buf[255] = '\0';
 
   char sdfs_path[256];
@@ -639,17 +678,17 @@ static int do_execve(registers_t *regs, const char *filename, char *const argv[]
     size = 0;
     addr = initrd_get_file(fname_buf, &size);
   }
-  if (!addr) return -1;
+  if (!addr) return -EFAULT;
 
   int eclass = elf_class(addr);
-  if (eclass != ELFCLASS32 && eclass != ELFCLASS64) return -1;
+  if (eclass != ELFCLASS32 && eclass != ELFCLASS64) return -EFAULT;
 
   uint64_t entry;
   if (eclass == ELFCLASS32)
     entry = elf32_load_file(addr);
   else
     entry = elf64_load_file(addr);
-  if (entry == 0) return -1;
+  if (entry == 0) return -EFAULT;
 
   uint64_t stack_size = 64 * 1024;
   uint64_t stack_top = 0xC0000000;
@@ -663,16 +702,28 @@ static int do_execve(registers_t *regs, const char *filename, char *const argv[]
   uint8_t *stack_bytes = (uint8_t *)stack_top;
   int argc = 0;
   const uint32_t max_args = 16;
+
+  char kargv[16][256];
+  char *kargv_ptrs[16];
+
   if (argv) {
-    while (argv[argc] && argc < (int)max_args) argc++;
+    for (argc = 0; argc < (int)max_args; argc++) {
+      char *up;
+      if (copy_from_user(&up, &((char *const *)argv)[argc], sizeof(up)) < 0)
+        return -EFAULT;
+      if (up == NULL) break;
+      if (strncpy_from_user(kargv[argc], up, 255) < 0) return -EFAULT;
+      kargv[argc][255] = '\0';
+      kargv_ptrs[argc] = kargv[argc];
+    }
   }
 
   if (eclass == ELFCLASS32) {
     uint32_t arg_ptrs[16];
     for (int i = 0; i < argc; i++) {
-      size_t len = strlen(argv[i]) + 1;
+      size_t len = strlen(kargv_ptrs[i]) + 1;
       stack_bytes -= len;
-      memcpy(stack_bytes, argv[i], len);
+      memcpy(stack_bytes, kargv_ptrs[i], len);
       arg_ptrs[i] = (uint32_t)(uint64_t)stack_bytes;
     }
     uint32_t *esp = (uint32_t *)((uint64_t)stack_bytes & ~0xFULL);
@@ -686,9 +737,9 @@ static int do_execve(registers_t *regs, const char *filename, char *const argv[]
   } else {
     uint64_t arg_ptrs[16];
     for (int i = 0; i < argc; i++) {
-      size_t len = strlen(argv[i]) + 1;
+      size_t len = strlen(kargv_ptrs[i]) + 1;
       stack_bytes -= len;
-      memcpy(stack_bytes, argv[i], len);
+      memcpy(stack_bytes, kargv_ptrs[i], len);
       arg_ptrs[i] = (uint64_t)stack_bytes;
     }
     uint64_t *rsp = (uint64_t *)((uint64_t)stack_bytes & ~0xFULL);
@@ -753,58 +804,65 @@ struct kernel_stat {
 #define K_S_IXOTH  0000001
 
 int sys_stat(const char *path, struct kernel_stat *st) {
-  if (!path || !st) return -1;
-  const char *resolved = resolve_path(path);
+  if (!path || !st) return -EFAULT;
+  char kpath[256];
+  if (strncpy_from_user(kpath, path, 255) < 0) return -EFAULT;
+  kpath[255] = '\0';
+  const char *resolved = resolve_path(kpath);
   if (!resolved) return -1;
   
-  memset(st, 0, sizeof(struct kernel_stat));
+  struct kernel_stat ks;
+  memset(&ks, 0, sizeof(ks));
   
   fs_node_t *node = vfs_open(resolved);
   if (!node) return -1;
   
-  st->st_dev = 1;
-  st->st_ino = node->inode;
-  st->st_nlink = 1;
-  st->st_uid = 0;
-  st->st_gid = 0;
-  st->st_rdev = 0;
-  st->st_size = node->length;
-  st->st_blksize = 4096;
-  st->st_blocks = (node->length + 511) / 512;
+  ks.st_dev = 1;
+  ks.st_ino = node->inode;
+  ks.st_nlink = 1;
+  ks.st_uid = 0;
+  ks.st_gid = 0;
+  ks.st_rdev = 0;
+  ks.st_size = node->length;
+  ks.st_blksize = 4096;
+  ks.st_blocks = (node->length + 511) / 512;
   
   if (node->flags & FS_DIRECTORY) {
-    st->st_mode = K_S_IFDIR | K_S_IRUSR | K_S_IWUSR | K_S_IXUSR
-                | K_S_IRGRP | K_S_IXGRP | K_S_IROTH | K_S_IXOTH;
+    ks.st_mode = K_S_IFDIR | K_S_IRUSR | K_S_IWUSR | K_S_IXUSR
+               | K_S_IRGRP | K_S_IXGRP | K_S_IROTH | K_S_IXOTH;
   } else {
-    st->st_mode = K_S_IFREG | K_S_IRUSR | K_S_IWUSR
-                | K_S_IRGRP | K_S_IWGRP | K_S_IROTH | K_S_IWOTH;
+    ks.st_mode = K_S_IFREG | K_S_IRUSR | K_S_IWUSR
+               | K_S_IRGRP | K_S_IWGRP | K_S_IROTH | K_S_IWOTH;
   }
   
-  st->st_atime = (int64_t)(timer_ticks / 100);
-  st->st_mtime = st->st_atime;
-  st->st_ctime = st->st_atime;
+  ks.st_atime = (int64_t)(timer_ticks / 100);
+  ks.st_mtime = ks.st_atime;
+  ks.st_ctime = ks.st_atime;
   
+  if (copy_to_user(st, &ks, sizeof(ks)) < 0) return -EFAULT;
   return 0;
 }
 
 int sys_fstat(int fd, struct kernel_stat *st) {
-  if (!st) return -1;
-  memset(st, 0, sizeof(struct kernel_stat));
+  if (!st) return -EFAULT;
+  struct kernel_stat ks;
+  memset(&ks, 0, sizeof(ks));
   
   if (fd >= 0 && fd <= 2) {
     // stdin/stdout/stderr — character device
-    st->st_dev = 1;
-    st->st_ino = fd + 1;
-    st->st_mode = K_S_IFCHR | K_S_IRUSR | K_S_IWUSR;
-    st->st_nlink = 1;
-    st->st_uid = 0;
-    st->st_gid = 0;
-    st->st_size = 0;
-    st->st_blksize = 512;
-    st->st_blocks = 0;
-    st->st_atime = (int64_t)(timer_ticks / 100);
-    st->st_mtime = st->st_atime;
-    st->st_ctime = st->st_atime;
+    ks.st_dev = 1;
+    ks.st_ino = fd + 1;
+    ks.st_mode = K_S_IFCHR | K_S_IRUSR | K_S_IWUSR;
+    ks.st_nlink = 1;
+    ks.st_uid = 0;
+    ks.st_gid = 0;
+    ks.st_size = 0;
+    ks.st_blksize = 512;
+    ks.st_blocks = 0;
+    ks.st_atime = (int64_t)(timer_ticks / 100);
+    ks.st_mtime = ks.st_atime;
+    ks.st_ctime = ks.st_atime;
+    if (copy_to_user(st, &ks, sizeof(ks)) < 0) return -EFAULT;
     return 0;
   }
   
@@ -812,56 +870,69 @@ int sys_fstat(int fd, struct kernel_stat *st) {
   if (fd < 0 || fd >= 32 || fd_table[fd].type != FD_TYPE_FILE) return -1;
   
   kfile_t *f = &fd_table[fd];
-  st->st_dev = 1;
-  st->st_ino = fd + 1;
-  st->st_nlink = 1;
-  st->st_uid = 0;
-  st->st_gid = 0;
-  st->st_rdev = 0;
-  st->st_size = f->size;
-  st->st_blksize = 4096;
-  st->st_blocks = (f->size + 511) / 512;
+  ks.st_dev = 1;
+  ks.st_ino = fd + 1;
+  ks.st_nlink = 1;
+  ks.st_uid = 0;
+  ks.st_gid = 0;
+  ks.st_rdev = 0;
+  ks.st_size = f->size;
+  ks.st_blksize = 4096;
+  ks.st_blocks = (f->size + 511) / 512;
   
   if (f->socket_ptr) {
     fs_node_t *node = (fs_node_t *)f->socket_ptr;
     if (node->flags & FS_DIRECTORY)
-      st->st_mode = K_S_IFDIR | K_S_IRUSR | K_S_IWUSR | K_S_IXUSR;
+      ks.st_mode = K_S_IFDIR | K_S_IRUSR | K_S_IWUSR | K_S_IXUSR;
     else
-      st->st_mode = K_S_IFREG | K_S_IRUSR | K_S_IWUSR;
+      ks.st_mode = K_S_IFREG | K_S_IRUSR | K_S_IWUSR;
   }
   
-  st->st_atime = (int64_t)(timer_ticks / 100);
-  st->st_mtime = st->st_atime;
-  st->st_ctime = st->st_atime;
+  ks.st_atime = (int64_t)(timer_ticks / 100);
+  ks.st_mtime = ks.st_atime;
+  ks.st_ctime = ks.st_atime;
   
+  if (copy_to_user(st, &ks, sizeof(ks)) < 0) return -EFAULT;
   return 0;
 }
 
 int sys_unlink(const char *path) {
-  if (!path) return -1;
-  const char *resolved = resolve_path(path);
+  if (!path) return -EFAULT;
+  char kpath[256];
+  if (strncpy_from_user(kpath, path, 255) < 0) return -EFAULT;
+  kpath[255] = '\0';
+  const char *resolved = resolve_path(kpath);
   if (!resolved) return -1;
   return sdfs_delete(resolved);
 }
 
 int sys_mkdir(const char *path, uint32_t mode) {
   (void)mode;
-  if (!path) return -1;
-  const char *resolved = resolve_path(path);
+  if (!path) return -EFAULT;
+  char kpath[256];
+  if (strncpy_from_user(kpath, path, 255) < 0) return -EFAULT;
+  kpath[255] = '\0';
+  const char *resolved = resolve_path(kpath);
   if (!resolved) return -1;
   return sdfs_create_dir(resolved);
 }
 
 int sys_rmdir(const char *path) {
-  if (!path) return -1;
-  const char *resolved = resolve_path(path);
+  if (!path) return -EFAULT;
+  char kpath[256];
+  if (strncpy_from_user(kpath, path, 255) < 0) return -EFAULT;
+  kpath[255] = '\0';
+  const char *resolved = resolve_path(kpath);
   if (!resolved) return -1;
   return sdfs_delete(resolved);
 }
 
 int sys_chdir(const char *path) {
-  if (!path || !current_task) return -1;
-  const char *resolved = resolve_path(path);
+  if (!path || !current_task) return -EFAULT;
+  char kpath[256];
+  if (strncpy_from_user(kpath, path, 255) < 0) return -EFAULT;
+  kpath[255] = '\0';
+  const char *resolved = resolve_path(kpath);
   if (!resolved) return -1;
   
   // Verify the path is a directory
@@ -882,9 +953,15 @@ int sys_chdir(const char *path) {
 }
 
 int sys_getcwd(char *buf, uint32_t size) {
-  if (!buf || !current_task) return -1;
-  strncpy(buf, current_task->cwd, size - 1);
-  buf[size - 1] = '\0';
+  if (!buf || !current_task || size == 0) return -EFAULT;
+  if (validate_user_pointer(buf, size) < 0) return -EFAULT;
+  size_t len = strlen(current_task->cwd);
+  if (len >= size) len = size - 1;
+  if (copy_to_user(buf, current_task->cwd, len) < 0) return -EFAULT;
+  if (len < size) {
+    char zero = '\0';
+    if (copy_to_user((char *)buf + len, &zero, 1) < 0) return -EFAULT;
+  }
   return 0;
 }
 
@@ -938,6 +1015,8 @@ int sys_getdents(uint32_t fd, void *buf, uint32_t count) {
     serial_print("[syscall] sys_getdents invalid fd\n");
     return -1;
   }
+  if (count && validate_user_pointer(buf, count) < 0) return -EFAULT;
+
   kfile_t *f = &fd_table[fd];
   if (!f->socket_ptr) return -1;
   
@@ -955,15 +1034,17 @@ int sys_getdents(uint32_t fd, void *buf, uint32_t count) {
       break;
     }
     
-    struct kernel_dirent *kd = (struct kernel_dirent *)((uint8_t *)buf + pos);
-    memset(kd, 0, sizeof(struct kernel_dirent));
+    struct kernel_dirent kd;
+    memset(&kd, 0, sizeof(kd));
     
-    kd->d_ino = index + 1;
-    kd->d_off = sizeof(struct kernel_dirent);
-    kd->d_reclen = sizeof(struct kernel_dirent);
+    kd.d_ino = index + 1;
+    kd.d_off = sizeof(struct kernel_dirent);
+    kd.d_reclen = sizeof(struct kernel_dirent);
     
-    strncpy(kd->d_name, vfs_dirent->name, 255);
-    kd->d_name[255] = '\0';
+    strncpy(kd.d_name, vfs_dirent->name, 255);
+    kd.d_name[255] = '\0';
+    
+    if (copy_to_user((char *)buf + pos, &kd, sizeof(kd)) < 0) return -EFAULT;
     
     pos += sizeof(struct kernel_dirent);
     index++;
@@ -1008,6 +1089,8 @@ int sys_dup2(int oldfd, int newfd) {
 }
 
 int sys_pipe(int pipefd[2]) {
+  if (!pipefd) return -EFAULT;
+  if (validate_user_pointer(pipefd, 2 * sizeof(int)) < 0) return -EFAULT;
   kfile_t *fd_table = get_fd_table();
   pipe_t *p = (pipe_t *)kmalloc(sizeof(pipe_t));
   if (!p) return -1;
@@ -1038,15 +1121,21 @@ int sys_pipe(int pipefd[2]) {
   fd_table[wfd].offset = 0;
   fd_table[wfd].size = 0;
 
-  pipefd[0] = rfd;
-  pipefd[1] = wfd;
+  int fds[2];
+  fds[0] = rfd;
+  fds[1] = wfd;
+  if (copy_to_user(pipefd, fds, sizeof(fds)) < 0) {
+    fd_table[rfd].type = FD_TYPE_FREE;
+    fd_table[wfd].type = FD_TYPE_FREE;
+    kfree(p);
+    return -EFAULT;
+  }
   return 0;
 }
 
 // ============================================================
 // mmap / munmap (POSIX)
-// ============================================================
-// Flags e proteções padrão compatíveis com Linux (usados pelo newlib e
+// ============================================================// Flags e proteções padrão compatíveis com Linux (usados pelo newlib e
 // por programas POSIX reais).
 #define MAP_SHARED     0x01
 #define MAP_PRIVATE    0x02
@@ -1067,6 +1156,10 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
   if (!current_task) return MAP_FAILED;
   if (!(flags & MAP_ANONYMOUS)) return MAP_FAILED; // suportado apenas anônimo
 
+  /* Se o usuário passou um hint explícito (MAP_FIXED ou addr != NULL),
+   * garante que ele está dentro do espaço de endereço de usuário. */
+  if (addr && !is_user_addr(addr)) return MAP_FAILED;
+
   // Alinha o tamanho para cima em páginas de 4 KB
   uint64_t aligned_len = (length + 4095) & ~(uint64_t)4095;
   if (aligned_len == 0) aligned_len = 4096;
@@ -1080,6 +1173,7 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
     base = current_task->mmap_top - aligned_len;
     if (base < 0x40000000) return MAP_FAILED; // colidiu com o heap
   }
+  if (base + aligned_len > USER_ADDR_MAX) return MAP_FAILED;
 
   uint64_t pte_flags = PTE_P | PTE_W | PTE_U;
   if ((prot & PROT_WRITE) == 0) pte_flags &= ~((uint64_t)PTE_W);
@@ -1108,10 +1202,14 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
 }
 
 // Desmapeia uma região mapeada por mmap (apenas páginas de 4 KB).
+uint64_t sys_mouse_get(void *out);
+
 int sys_munmap(void *addr, uint64_t length) {
   if (!current_task) return -1;
+  if (!addr || !is_user_addr(addr)) return -EFAULT;
   uint64_t base = (uint64_t)addr & ~(uint64_t)4095;
   uint64_t aligned_len = (length + 4095) & ~(uint64_t)4095;
+  if (base + aligned_len > USER_ADDR_MAX) return -EFAULT;
   for (uint64_t i = 0; i < aligned_len / 4096; i++) {
     vmm_unmap_page((void *)(base + i * 4096));
   }
@@ -1129,8 +1227,29 @@ void syscall_handler(registers_t *regs) {
     case 6: regs->rax = sys_close(regs->rdi); break;
     case 7: regs->rax = sys_waitpid((int)regs->rdi, (int *)regs->rsi, (int)regs->rdx); break;
     case 8: regs->rax = timer_ticks; break;
-    case 10: regs->rax = keyboard_get_event((void *)regs->rdi); break;
+    case 10: {
+      /* keyboard_get_event writes directly to its arg, which may be a
+       * user pointer.  Validate and gate it so we don't scribble on
+       * arbitrary user/kernel memory. */
+      struct {
+        uint8_t scancode;
+        int pressed;
+      } kev, *out = (void *)regs->rdi;
+      if (regs->rdi && validate_user_pointer(out, sizeof(kev)) == 0) {
+        int got = keyboard_get_event(&kev);
+        if (got) {
+          if (copy_to_user(out, &kev, sizeof(kev)) < 0) regs->rax = (uint64_t)-1;
+          else regs->rax = 1;
+        } else {
+          regs->rax = 0;
+        }
+      } else {
+        regs->rax = (uint64_t)-1;
+      }
+      break;
+    }
     case 11: regs->rax = keyboard_is_pressed((uint8_t)regs->rdi); break;
+    case 37: regs->rax = sys_mouse_get((void *)regs->rdi); break;
     case 14: regs->rax = fork_process(regs); break;
     case 15:
       regs->rax = do_execve(regs, (const char *)regs->rdi,
@@ -1159,7 +1278,39 @@ void syscall_handler(registers_t *regs) {
     case 35: regs->rax = sys_mmap((void *)regs->rdi, regs->rsi, (int)regs->rdx,
                                  (int)regs->rcx, (int)regs->r8, regs->r9); break;
     case 36: regs->rax = sys_munmap((void *)regs->rdi, regs->rsi); break;
+    case 120: regs->rax = sys_gui_canvas_create(regs->rdi, regs->rsi, (const char *)regs->rdx); break;
+    case 121: regs->rax = sys_gui_node_create(regs->rdi, (const char *)regs->rsi); break;
+    case 122: regs->rax = sys_gui_node_add_child(regs->rdi, regs->rsi); break;
+    case 123: regs->rax = sys_gui_node_move(regs->rdi, regs->rsi, regs->rdx); break;
+    case 124: regs->rax = sys_gui_camera_zoom(regs->rdi); break;
+    case 125: regs->rax = sys_gui_image_create(regs->rdi, regs->rsi, regs->rdx, (uint32_t *)regs->rcx); break;
+    case 126: regs->rax = sys_gui_image_update(regs->rdi, (uint32_t *)regs->rsi, regs->rdx); break;
   }
+}
+
+// ============================================================
+// Mouse state for userspace (SYS_MOUSE_GET = 37)
+// ============================================================
+
+struct liw_mouse_state {
+  int32_t x;
+  int32_t y;
+  int32_t left;
+  int32_t right;
+};
+
+uint64_t sys_mouse_get(void *out) {
+  if (!out) return (uint64_t)-1;
+  if (validate_user_pointer(out, sizeof(struct liw_mouse_state)) < 0) return (uint64_t)-1;
+
+  struct liw_mouse_state st;
+  st.x = get_mouse_x();
+  st.y = get_mouse_y();
+  st.left = is_left_clicked() ? 1 : 0;
+  st.right = is_right_clicked() ? 1 : 0;
+
+  if (copy_to_user(out, &st, sizeof(st)) < 0) return (uint64_t)-1;
+  return 0;
 }
 
 void init_syscalls() {

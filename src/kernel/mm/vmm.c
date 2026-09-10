@@ -197,7 +197,22 @@ page_directory_t *vmm_copy_directory(page_directory_t *src) {
           pd_t *src_pd = (pd_t *)(uint64_t)(src_pdp->entries[j] & ~0xFFFULL);
           for (int k = 0; k < 512; k++) {
             if (src_pd->entries[k] & PTE_P) {
-              if (!(src_pd->entries[k] & PTE_PS)) {
+              if (src_pd->entries[k] & PTE_PS) {
+                /* 2 MB large page — split into 512 individual 4 KB pages
+                 * and deep-copy each so the child is fully isolated. */
+                uint64_t large_base = src_pd->entries[k] & ~0x1FFFFFULL;
+                uint64_t large_flags = src_pd->entries[k] & 0xFFF;
+                pt_t *new_pt = (pt_t *)kmalloc_a(4096);
+                memset(new_pt, 0, 4096);
+                new_pd->entries[k] = ((uint64_t)new_pt) | (large_flags & ~(PTE_PS));
+                for (int l = 0; l < 512; l++) {
+                  void *src_phys = (void *)(large_base + (uint64_t)l * 4096);
+                  void *new_phys = pmm_alloc_block();
+                  if (!new_phys) continue;
+                  memcpy(new_phys, src_phys, 4096);
+                  new_pt->entries[l] = ((uint64_t)new_phys) | large_flags;
+                }
+              } else {
                 pt_t *new_pt = (pt_t *)kmalloc_a(4096);
                 memset(new_pt, 0, 4096);
                 new_pd->entries[k] = ((uint64_t)new_pt) | (src_pd->entries[k] & 0xFFF);

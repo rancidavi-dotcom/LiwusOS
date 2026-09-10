@@ -75,7 +75,7 @@ void demo_app_start(void) {
         win->padding[2] = 10;
         win->padding[3] = 10;
 
-        node_t *lbl = label_create("lbl", 0, 0, "Hello, Infinite Canvas!", 0xFF00FF41);
+        node_t *lbl = label_create("lbl", 0, 0, "Hello, Infinite Canvas!", 0xFFE6E8EB);
         lbl->margin[2] = 10;
         lbl->layout_align = ALIGN_CENTER;
 
@@ -83,8 +83,8 @@ void demo_app_start(void) {
         btn->margin[2] = 10;
         btn->layout_align = ALIGN_CENTER;
 
-        node_t *panel = panel_create("pnl", 0, 0, 260, 40, 0xFF0A1510);
-        panel_set_border(panel, 0xFF00AA00, 1);
+        node_t *panel = panel_create("pnl", 0, 0, 260, 40, 0xFF252A33);
+        panel_set_border(panel, 0xFF3D4450, 1);
         panel->flex_weight = 1;
         panel->layout_align = ALIGN_STRETCH;
         
@@ -114,11 +114,11 @@ void settings_app_start(void) {
         win->padding[2] = 10;
         win->padding[3] = 10;
 
-        node_t *lbl = label_create("lbl_set", 0, 0, "Settings Panel", 0xFF00FF41);
+        node_t *lbl = label_create("lbl_set", 0, 0, "Settings Panel", 0xFFE6E8EB);
         lbl->margin[2] = 10;
         lbl->layout_align = ALIGN_CENTER;
 
-        node_t *lbl2 = label_create("lbl_set2", 0, 0, "Theme: CRT Green", 0xFF00CC33);
+        node_t *lbl2 = label_create("lbl_set2", 0, 0, "Theme: Dark Modern", 0xFF99A1AF);
         lbl2->margin[2] = 20;
         lbl2->layout_align = ALIGN_CENTER;
 
@@ -162,6 +162,8 @@ void gui_init(void) {
     app_media_init();
     app_explorer_init();
     app_imageviewer_init();
+    extern void app_browser_init(void);
+    app_browser_init();
 
     /* 1.5. Theme Engine */
     theme_engine_init();

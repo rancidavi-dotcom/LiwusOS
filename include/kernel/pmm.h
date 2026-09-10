@@ -7,6 +7,9 @@
 void pmm_init(uint64_t start_addr, uint64_t size);
 void pmm_init_region(uint64_t base, uint64_t size);
 void pmm_deinit_region(uint64_t base, uint64_t size);
+/* Marks a physical range in use.  Kernel, modules and the bump heap must
+ * never be returned by pmm_alloc_block(). */
+void pmm_reserve_region(uint64_t base, uint64_t size);
 
 void* pmm_alloc_block();
 void pmm_free_block(void* addr);

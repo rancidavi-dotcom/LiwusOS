@@ -24,6 +24,14 @@
 #include "vmm.h"
 #include "vga.h"
 #include "drivers/boot_splash.h"
+#include "net.h"
+#include "netstack.h"
+#include "rtl8139.h"
+#include "r8169.h"
+#include "tcp.h"
+#include "udp.h"
+#include "dhcp.h"
+#include "dns.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -31,6 +39,27 @@
 static void panic_delay(uint32_t count) {
     for (volatile uint32_t i = 0; i < count; i++) {
         asm volatile("pause");
+    }
+}
+
+/* Aviso de estagio: imprime no serial E desenha texto grande na tela,
+ * para saber visivelmente onde o boot trava (telas pretas em HW real). */
+static void boot_stage(const char *s) {
+    extern void vga_draw_char_scaled(uint32_t x, uint32_t y, char c, uint32_t color, int scale);
+    extern uint64_t vga_fb_addr;
+    serial_print("[BOOT-STAGE] ");
+    serial_print(s);
+    serial_print("\n");
+    if (vga_fb_addr != 0) {
+        for (int i = 0; s[i]; i++) {
+            vga_draw_char_scaled(16 + (uint32_t)i * 16, 16, s[i], 0xFFFFFFFF, 2);
+        }
+    } else {
+        static char *const textmem = (char *)0xB8000;
+        for (int i = 0; s[i] && i < 40; i++) {
+            textmem[i * 2] = s[i];
+            textmem[i * 2 + 1] = 0x4F; /* white on red */
+        }
     }
 }
 
@@ -298,6 +327,11 @@ void audio_boot_chime_task() {
 
 void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   (void)magic;
+  /* The first real-hardware target uses a deliberately conservative boot
+   * profile.  The GUI only needs the boot framebuffer, PS/2 input, timer,
+   * scheduler and initrd.  Optional bus-master drivers are enabled only
+   * after their individual hardware paths are hardened. */
+  const int safe_hardware_boot = 1;
   uint64_t reserved_start = (uint64_t)end + 0x1000;
   uint64_t pmm_bitmap_bytes;
   uint64_t heap_start;
@@ -307,16 +341,31 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
 
   /* Parse multiboot2 info */
   parse_multiboot2(mbi_addr);
+  boot_stage("multiboot2 ok");
+  {
+    extern uint64_t vga_fb_addr;
+    extern uint32_t vga_fb_width, vga_fb_height, vga_fb_pitch;
+    extern uint8_t vga_fb_bpp;
+    serial_print("[fb] addr=0x");
+    serial_print_hex((uint32_t)vga_fb_addr);
+    serial_print(" wh=");
+    char nb[16];
+    itoa(vga_fb_width, nb, 10); serial_print(nb);
+    serial_print("x"); itoa(vga_fb_height, nb, 10); serial_print(nb);
+    serial_print(" pitch="); itoa(vga_fb_pitch, nb, 10); serial_print(nb);
+    serial_print(" bpp="); itoa(vga_fb_bpp, nb, 10); serial_print(nb);
+    serial_print("\n");
+  }
 
-  if (mb2_mods_count > 0) {
+  for (uint32_t i = 0; i < mb2_mods_count; i++) {
     struct {
       uint32_t type, size;
       uint32_t mod_start;
       uint32_t mod_end;
       uint32_t cmdline;
-    } __attribute__((packed)) *mod = (void *)(uint64_t)mb2_mods_addr[0];
-    if (mod->mod_end + 0x1000 > reserved_start) {
-      reserved_start = mod->mod_end + 0x1000;
+    } __attribute__((packed)) *mod = (void *)(uint64_t)mb2_mods_addr[i];
+    if ((uint64_t)mod->mod_end + 0x1000 > reserved_start) {
+      reserved_start = (uint64_t)mod->mod_end + 0x1000;
     }
   }
 
@@ -339,13 +388,21 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   pmm_init(reserved_start, memory_size);
   pmm_init_multiboot_regions(mbi_addr);
 
+  /* pmm_init_multiboot_regions marks every available RAM range free.  Put
+   * back the complete boot image/module range before any PMM allocation. */
+  pmm_deinit_region(0, reserved_start);
+  pmm_reserve_region(reserved_start, pmm_bitmap_bytes);
+
   heap_start = reserved_start + pmm_bitmap_bytes + 0x1000;
   if (heap_start < 0x1000000) {
       heap_start = 0x1000000;
   }
   kheap_set_start(heap_start);
   init_vmm(memory_size);
-  init_apic();
+  /* The BSP works with the PIC/IDT already configured.  Starting APs with
+   * the experimental trampoline can reset or hang real firmware, so SMP is
+   * deliberately deferred until the APIC path is hardware-complete. */
+  serial_print("APIC: SMP startup deferred (single-core safe boot)\n");
 
   extern uint64_t vga_fb_addr;
   extern uint32_t vga_fb_width, vga_fb_height, vga_fb_pitch;
@@ -364,15 +421,66 @@ init_mouse();
    
    boot_splash_set_progress(10, "Inicializando hardware...");
    pci_init();
+   boot_stage("pci ok");
    init_gpu();
-   ahci_init();      /* AHCI/SATA init */
-   ata_bmide_init(); /* BM-IDE DMA init */
+   boot_stage("gpu ok");
+   if (!safe_hardware_boot) {
+     ahci_init();      /* AHCI/SATA init */
+     ata_bmide_init(); /* BM-IDE DMA init */
+   } else {
+     serial_print("Safe boot: disk bus-master drivers deferred.\n");
+   }
+   boot_stage("disk-hw ok");
+
+  /* ---- Rede: RTL8168/8111 (r8169) ou RTL8139 ---- */
+  if (!safe_hardware_boot) {
+    net_init();
+    tcp_init();
+    udp_init();
+    dns_init();
+    dhcp_init();
+    pci_device_t *net_dev = pci_get_net();
+    if (net_dev) {
+      if (net_dev->vendor_id == 0x10EC && (net_dev->device_id == 0x8168 || net_dev->device_id == 0x8169 || net_dev->device_id == 0x8167 || net_dev->device_id == 0x8125 || net_dev->device_id == 0x8106 || net_dev->device_id == 0x8136)) {
+        init_r8169(net_dev);
+        serial_print("r8169: RTL8168/8111 ethernet initialized\n");
+        vga_puts("r8169: RTL8168/8111 ethernet initialized\n");
+      } else {
+        init_rtl8139(net_dev);
+        serial_print("RTL8139 ethernet initialized\n");
+        vga_puts("RTL8139 ethernet initialized\n");
+      }
+      /* DHCP must not run here.  Its wait loop depends on timer ticks and
+       * task switching, both initialized later in this function.  On real
+       * hardware that made boot hang immediately after NIC detection.
+       * Keep the interface registered; DHCP can be started later from a
+       * properly scheduled networking task. */
+      serial_print("Network detected; DHCP deferred until scheduler is ready.\n");
+      vga_puts("Network detected; DHCP deferred.\n");
+    } else {
+      serial_print("No ethernet device found\n");
+      vga_puts("No ethernet device found\n");
+    }
+  } else {
+    serial_print("Safe boot: network drivers deferred.\n");
+    vga_puts("Safe boot: network drivers deferred.\n");
+  }
+  boot_stage("net ok");
   
-  extern void usb_init();
-  usb_init();
+  if (!safe_hardware_boot) {
+    extern void usb_init();
+    usb_init();
+  } else {
+    serial_print("Safe boot: USB controller drivers deferred.\n");
+  }
+  boot_stage("usb ok");
 
   boot_splash_set_progress(25, "Inicializando audio e USB...");
-  audio_init();     /* AC'97 audio driver (PC speaker fallback) */
+  if (!safe_hardware_boot)
+    audio_init();     /* AC'97 audio driver (PC speaker fallback) */
+  else
+    serial_print("Safe boot: audio driver deferred.\n");
+  boot_stage("audio ok");
 
   if (mb2_mods_count > 0) {
     struct {
@@ -387,11 +495,22 @@ init_mouse();
     serial_print("Initrd not provided by bootloader\n");
   }
 
-  boot_splash_set_progress(40, "Montando sistema de arquivos...");
-
-
-  // Monta SDFS no disco REAL (AHCI ou ATA)
+  /* ---- Detect test mode from initrd (early: skips first-boot copy) ---- */
+  int kernel_test_mode = 0;
   {
+    uint32_t tm_size = 0;
+    void *tm_flag = initrd_get_file("test_mode", &tm_size);
+    if (tm_flag) {
+      kernel_test_mode = 1;
+    }
+  }
+
+  boot_splash_set_progress(40, "Montando sistema de arquivos...");
+  boot_stage("fs: begin");
+
+  // Monta SDFS no disco REAL (AHCI ou ATA).  Never probe or format a real
+  // disk during the safe boot path: the initrd already supplies the desktop.
+  if (!safe_hardware_boot) {
     uint16_t disk_bus = ATA_PRIMARY;
     uint8_t disk_drive = ATA_MASTER;
     fs_node_t *sdfs_root = NULL;
@@ -402,17 +521,21 @@ init_mouse();
     } else {
       serial_print("No ATA disk found, trying AHCI...\n");
     }
+    boot_stage("fs: probed");
     
     // Tenta montar o SDFS direto (disco já formatado de boot anterior)
-    sdfs_root = sdfs_mount(disk_bus, disk_drive, 0);
+sdfs_root = sdfs_mount(disk_bus, disk_drive, 0);
+    boot_stage("fs: mount tried");
     
     if (!sdfs_root) {
       // Disco não tem SDFS — formata pela primeira vez
       serial_print("SDFS: No valid filesystem, formatting disk...\n");
       vga_puts("Formatting disk for first use...\n");
+      boot_stage("fs: formatting");
       if (sdfs_format() == 0) {
         sdfs_root = sdfs_mount(disk_bus, disk_drive, 0);
       }
+      boot_stage("fs: formatted");
     }
     
     if (sdfs_root) {
@@ -423,9 +546,10 @@ init_mouse();
       boot_splash_set_progress(55, "Instalando arquivos do sistema...");
 
       // Primeira inicializacao? Copia system files do initrd para o SDFS
+      boot_stage("fs: copy begin");
       uint32_t installed_size = 0;
       void *flag = sdfs_read_file("/.system_installed", &installed_size);
-      if (!flag) {
+      if (!flag && !kernel_test_mode) {
         serial_print("First boot: copying system files to SDFS...\n");
         vga_puts("First boot: installing system files...\n");
         if (mb2_mods_count > 0) {
@@ -439,6 +563,7 @@ init_mouse();
         kfree(flag);
         serial_print("SDFS: system already installed.\n");
       }
+      boot_stage("fs: copy done");
     } else {
       serial_print("SDFS disk unavailable, falling back to ramdisk\n");
       vga_puts("WARNING: No disk found! Using ramdisk (data will be lost on reboot)\n");
@@ -450,31 +575,29 @@ init_mouse();
       }
       if (sdfs_root) {
         vfs_mount("/", sdfs_root);
-        if (mb2_mods_count > 0) {
+        if (mb2_mods_count > 0 && !kernel_test_mode) {
             initrd_copy_to_sdfs(NULL);
         }
         sdfs_create_file("/.system_installed");
         sdfs_write_file("/.system_installed", (uint8_t *)"1", 1);
       }
     }
+  } else {
+    serial_print("Safe boot: using initrd only; persistent disk deferred.\n");
+    vga_puts("Safe boot: starting desktop from initrd.\n");
   }
 
   boot_splash_set_progress(70, "Inicializando tarefas...");
 
-  /* ---- Detect test mode from initrd ---- */
-  int kernel_test_mode = 0;
-  {
-    uint32_t tm_size = 0;
-    void *tm_flag = initrd_get_file("test_mode", &tm_size);
-    if (tm_flag) {
-      kernel_test_mode = 1;
-      serial_print("[boot] TEST MODE detected (test_mode in initrd)\n");
-    }
+  /* ---- TEST MODE marker (detected before first-boot setup) ---- */
+  if (kernel_test_mode) {
+    serial_print("[boot] TEST MODE detected (test_mode in initrd)\n");
   }
 
   init_timer(100);
   init_tasking();
   init_syscalls();
+  boot_stage("sched ok");
 
 if (kernel_test_mode) {
     /* ---- TCC integration test: if 'test_tcc' is present in the initrd,
@@ -660,31 +783,53 @@ if (kernel_test_mode) {
   }
 
   /* Sync music MP3s from the initrd to SDFS + seed the media song list. */
-  mp3_init();
+  if (!safe_hardware_boot)
+    mp3_init();
 
   /* Apply saved Sound settings (volume/rate) from SDFS. */
   extern void sound_config_apply(void);
-  sound_config_apply();
+  if (!safe_hardware_boot)
+    sound_config_apply();
 
   extern void usb_start_polling(void);
-  usb_start_polling();
+  if (!safe_hardware_boot)
+    usb_start_polling();
+
+  /* A graphics framebuffer is optional on physical firmware.  Do not enter
+   * the compositor with zero-sized output: preserve a usable, visible text
+   * boot instead of turning a video-mode negotiation failure into a black
+   * screen. */
+  extern uint8_t vga_fb_bpp;
+  if (vga_fb_addr == 0 || vga_fb_width == 0 || vga_fb_height == 0 ||
+      vga_fb_bpp != 32) {
+    serial_print("No compatible framebuffer; staying in VGA text mode.\n");
+    vga_puts("\nLiwusOS iniciou em modo texto seguro.\n");
+    vga_puts("Framebuffer grafico indisponivel neste firmware.\n");
+    asm volatile("sti");
+    while (1) {
+      asm volatile("hlt");
+    }
+  }
 
   extern void gui_init(void);
   extern void gui_compositor_task(void);
   
+  boot_stage("gui init begin");
   boot_splash_set_progress(85, "Iniciando interface grafica...");
   gui_init();
+  boot_stage("gui init done");
   create_task_named(gui_compositor_task, "gui");
-  create_task_named(audio_boot_chime_task, "audioboot");
-  create_task_named(media_task, "media");
+  if (!safe_hardware_boot) {
+    create_task_named(audio_boot_chime_task, "audioboot");
+    create_task_named(media_task, "media");
+  }
+  boot_stage("gui tasks ok");
 
   /* Virtual pendrive: probe the SCSI bus and start the hot-plug watcher. */
   extern void pen_init(void);
   extern void pen_task(void);
   pen_init();
   create_task_named(pen_task, "pen");
-  extern void terminal_task();
-  create_task_named(terminal_task, "terminal");
 
   boot_splash_set_progress(100, "Pronto!");
   boot_splash_done();

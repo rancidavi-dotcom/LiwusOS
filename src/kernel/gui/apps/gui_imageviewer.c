@@ -276,12 +276,12 @@ static void image_viewer_start(void) {
     s_win->padding[3] = 14;
 
     node_t *title = label_create("img_title", 0, 0,
-        "Imagens (PNG / JPG / BMP / GIF / TGA / PSD)", 0xFF00FF41);
+        "Imagens (PNG / JPG / BMP / GIF / TGA / PSD)", 0xFFE6E8EB);
     title->margin[2] = 12;
     node_add_child(s_win, title);
 
     s_status_lbl = label_create("img_status", 0, 0,
-                                "Selecione uma imagem", 0xFF00CC33);
+                                "Selecione uma imagem", 0xFF99A1AF);
     s_status_lbl->margin[2] = 8;
     node_add_child(s_win, s_status_lbl);
 

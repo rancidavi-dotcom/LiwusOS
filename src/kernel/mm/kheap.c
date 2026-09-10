@@ -71,6 +71,11 @@ void *kmalloc(size_t size) {
 
   free_header_t *header = (free_header_t *)(uint64_t)kheap_current;
   header->size = total;
+  /* The bump heap is identity-mapped physical RAM.  Keep every frame it
+   * consumes out of the physical allocator, otherwise DMA/user pages can
+   * overwrite live kernel data on machines whose memory map differs from
+   * QEMU's. */
+  pmm_reserve_region(kheap_current, total);
   kheap_current += total;
   spinlock_release(&kheap_lock);
   pop_interrupts(eflags);
@@ -102,6 +107,7 @@ void *kmalloc_a(size_t size) {
   free_header_t *header = (free_header_t *)header_pos;
   header->size = size + HEADER_SIZE;
 
+  pmm_reserve_region(kheap_current, total);
   kheap_current += total;
 
   spinlock_release(&kheap_lock);
@@ -143,6 +149,7 @@ void *kmalloc_ap(size_t size, uint64_t *phys) {
 
   free_header_t *header = (free_header_t *)(uint64_t)kheap_current;
   header->size = total;
+  pmm_reserve_region(kheap_current, total);
   kheap_current += total;
   if (phys) *phys = (uint64_t)header;
   spinlock_release(&kheap_lock);

@@ -7,6 +7,7 @@
 #
 # Usage:
 #   bash scripts/run_tests.sh --sdfs    # SDFS kernel tests only
+#   bash scripts/run_tests.sh --net     # Networking tests only
 #   bash scripts/run_tests.sh --user    # Userspace tests only
 #   bash scripts/run_tests.sh --full    # Both (default)
 # ============================================================
@@ -16,8 +17,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 SERIAL_LOG="$ROOT_DIR/test_serial.log"
-TIMEOUT=45
 MODE="${1:---full}"
+
+# Net tests need more time due to DHCP + DNS + TCP timeouts
+if [ "$MODE" = "--net" ]; then
+    TIMEOUT=180
+else
+    TIMEOUT=45
+fi
 
 cd "$ROOT_DIR"
 
@@ -57,7 +64,7 @@ echo "[3/4] Building test ISO..."
 mkdir -p repo
 
 # Create test_mode marker for sdfs/user/full tests
-if [ "$MODE" = "--sdfs" ] || [ "$MODE" = "--user" ] || [ "$MODE" = "--full" ]; then
+if [ "$MODE" = "--sdfs" ] || [ "$MODE" = "--net" ] || [ "$MODE" = "--user" ] || [ "$MODE" = "--full" ]; then
     touch repo/test_mode
 fi
 
@@ -101,6 +108,8 @@ qemu-system-x86_64 \
     -display none \
     -monitor none \
     -no-reboot \
+    -netdev user,id=net0 \
+    -device rtl8139,netdev=net0 \
     -serial "file:$SERIAL_LOG" \
     -accel tcg 2>/dev/null &
 QEMU_PID=$!

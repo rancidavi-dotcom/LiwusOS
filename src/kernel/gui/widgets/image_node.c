@@ -82,3 +82,9 @@ void image_node_update(node_t *node, uint32_t *buffer, int buffer_size) {
     memcpy(state->buffer, buffer, buffer_size * 4);
     node_mark_dirty(node, NODE_DIRTY_PAINT);
 }
+
+int image_node_pixel_capacity(node_t *node) {
+    if (!node || node->type != NODE_IMAGE || !node->userdata) return 0;
+    image_state_t *state = (image_state_t *)node->userdata;
+    return state->width * state->height;
+}

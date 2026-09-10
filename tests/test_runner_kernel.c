@@ -60,6 +60,12 @@ int test_superblock_v2_fields(void);
 int test_fsck_clean(void);
 int test_v1_compat_read(void);
 
+/* ---- Networking tests ---- */
+int test_net_interface_ready(void);
+int test_net_gateway_ping(void);
+int test_net_dns_resolve(void);
+int test_net_http_fetch(void);
+
 /* ---- Global flag so kernel.c knows tests finished ---- */
 volatile int test_runner_done = 0;
 
@@ -168,6 +174,12 @@ void test_runner_task(void) {
 
     /* ---- Disk full test ---- */
     run_test(test_sdfs_diskfull, "sdfs_diskfull");
+
+    serial_print("\n[runner] Networking tests...\n");
+    run_test(test_net_interface_ready, "net_interface_ready");
+    run_test(test_net_gateway_ping,    "net_gateway_ping");
+    run_test(test_net_dns_resolve,      "net_dns_resolve");
+    run_test(test_net_http_fetch,       "net_http_fetch");
 
     serial_print("\n");
     TEST_RESULT(test_pass, test_fail);

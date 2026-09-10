@@ -23,6 +23,27 @@ static inline uint64_t sys_timer_ticks(void) {
 #define GRID_WIDTH 128
 #define GRID_HEIGHT 128
 
+/* PS/2 Set 1 scancodes (raw, no extended prefix) used by keyboard_is_pressed */
+#define KEY_W        0x11
+#define KEY_A        0x1E
+#define KEY_S        0x1F
+#define KEY_D        0x20
+#define KEY_Q        0x10
+#define KEY_E        0x12
+#define KEY_R        0x13
+#define KEY_UP       0x48
+#define KEY_DOWN     0x50
+#define KEY_LEFT     0x4B
+#define KEY_RIGHT    0x4D
+#define KEY_MINUS    0x0C
+#define KEY_PLUS     0x0D
+
+/* Pan speed in world units (pixels, before zoom) per frame */
+#define PAN_SPEED    14
+#define ZOOM_STEP    0.12f
+#define ZOOM_MIN     0.3f
+#define ZOOM_MAX     3.0f
+
 typedef enum {
     ZONE_EMPTY = 0,
     ZONE_ROAD = 1,
@@ -207,6 +228,18 @@ static void render_world(const system_state_t* state) {
     }
 }
 
+static void draw_cursor(int cx, int cy, uint32_t color) {
+    for (int dy = 0; dy < 12; dy++) {
+        int width = (dy < 8) ? 1 : (12 - dy);
+        for (int dx = 0; dx < width; dx++) {
+            int x = cx + dx;
+            int y = cy + dy;
+            if (x >= 0 && x < WINDOW_WIDTH && y >= 0 && y < WINDOW_HEIGHT)
+                frame_buffer[y * WINDOW_WIDTH + x] = color;
+        }
+    }
+}
+
 int main() {
     debug_print("[LDE] Starting Living Desktop Engine\n");
     Canvas canvas = canvas_create(WINDOW_WIDTH, WINDOW_HEIGHT, "Living Desktop Engine (LiwusOS)");
@@ -231,23 +264,27 @@ int main() {
     generate_city(1234567);
     debug_print("[LDE] City generated\n");
 
-    // Initial camera pos (Locked to center)
+    // Initial camera pos (centered)
     cam_x = GRID_WIDTH * TILE_SIZE / 2 - WINDOW_WIDTH / 2;
     cam_y = GRID_HEIGHT * TILE_SIZE / 2 - WINDOW_HEIGHT / 2;
 
+    MouseState mouse = {0, 0, 0, 0};
+    int last_mx = -1, last_my = -1;
+    int use_mouse_drag = 0;
+
     int tick = 0;
     uint64_t last_render_tick = sys_timer_ticks();
-    
+
     debug_print("[LDE] Entering main loop\n");
     while (1) {
         uint64_t current_tick = sys_timer_ticks();
         // Render every 20 ticks (e.g. 100ms if 1 tick = 5ms) to avoid CPU hogging
         if (current_tick - last_render_tick >= 20) {
             last_render_tick = current_tick;
-            
+
             if (tick % 10 == 0) {
                 system_bridge_update();
-                
+
                 // Dynamically generate city around active processes
                 const system_state_t* state = system_bridge_get_state();
                 for (int i = 0; i < state->num_processes; i++) {
@@ -255,7 +292,7 @@ int main() {
                     int center_y = GRID_HEIGHT / 2;
                     int px = center_x + ((state->processes[i].pid * 13) % 40) - 20;
                     int py = center_y + ((state->processes[i].pid * 17) % 30) - 15;
-                    
+
                     if (px >= 0 && px < GRID_WIDTH && py >= 0 && py < GRID_HEIGHT) {
                         if (city_map[px][py] == ZONE_EMPTY) {
                             generate_chunk(px, py);
@@ -263,10 +300,54 @@ int main() {
                     }
                 }
             }
-            
-            // Camera is locked, no WASD
-            
+
+            /* ---- Keyboard: WASD / arrows pan, Q/E zoom ---- */
+            if (keyboard_is_pressed(KEY_W) || keyboard_is_pressed(KEY_UP))   cam_y -= PAN_SPEED / zoom;
+            if (keyboard_is_pressed(KEY_S) || keyboard_is_pressed(KEY_DOWN)) cam_y += PAN_SPEED / zoom;
+            if (keyboard_is_pressed(KEY_A) || keyboard_is_pressed(KEY_LEFT)) cam_x -= PAN_SPEED / zoom;
+            if (keyboard_is_pressed(KEY_D) || keyboard_is_pressed(KEY_RIGHT))cam_x += PAN_SPEED / zoom;
+            if (keyboard_is_pressed(KEY_Q) || keyboard_is_pressed(KEY_MINUS)) {
+                if (zoom > ZOOM_MIN) zoom -= ZOOM_STEP;
+            }
+            if (keyboard_is_pressed(KEY_E) || keyboard_is_pressed(KEY_PLUS)) {
+                if (zoom < ZOOM_MAX) zoom += ZOOM_STEP;
+            }
+            if (keyboard_is_pressed(KEY_R)) {
+                cam_x = GRID_WIDTH * TILE_SIZE / 2 - WINDOW_WIDTH / 2;
+                cam_y = GRID_HEIGHT * TILE_SIZE / 2 - WINDOW_HEIGHT / 2;
+                zoom = 1.0f;
+            }
+
+            /* ---- Mouse: read state, click-drag to pan, visible cursor ---- */
+            if (mouse_get_state(&mouse) == 0) {
+                if (mouse.left) {
+                    if (last_mx >= 0 && last_my >= 0) {
+                        cam_x -= (mouse.x - last_mx) / zoom;
+                        cam_y -= (mouse.y - last_my) / zoom;
+                        use_mouse_drag = 1;
+                    }
+                }
+                last_mx = mouse.x;
+                last_my = mouse.y;
+            } else {
+                last_mx = -1;
+                last_my = -1;
+            }
+
+            if (cam_x < 0) cam_x = 0;
+            if (cam_y < 0) cam_y = 0;
+            if (cam_x > GRID_WIDTH * TILE_SIZE - WINDOW_WIDTH / zoom) cam_x = GRID_WIDTH * TILE_SIZE - WINDOW_WIDTH / zoom;
+            if (cam_y > GRID_HEIGHT * TILE_SIZE - WINDOW_HEIGHT / zoom) cam_y = GRID_HEIGHT * TILE_SIZE - WINDOW_HEIGHT / zoom;
+            if (cam_x < 0) cam_x = 0;
+            if (cam_y < 0) cam_y = 0;
+
             render_world(system_bridge_get_state());
+
+            /* Visible cursor so the user can see mouse input tracking */
+            if (mouse.x >= 0 && mouse.y >= 0 && mouse.x < WINDOW_WIDTH && mouse.y < WINDOW_HEIGHT) {
+                draw_cursor(mouse.x, mouse.y, use_mouse_drag ? 0xFF00FF00 : 0xFFFFFFFF);
+            }
+
             image_update(img, frame_buffer, WINDOW_WIDTH * WINDOW_HEIGHT);
             tick++;
         } else {

@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include "spinlock.h"
 #include "elf.h"
+#include "gui_syscalls.h"
 
 cpu_local_t cpus_local[16];
 spinlock_t scheduler_lock = {0};
@@ -567,6 +568,11 @@ void sys_kill_by_pid(int pid) {
 }
 
 void sys_exit_process(int status) {
+  /* Clean up any GUI nodes (windows, images) owned by this process */
+  if (current_task && current_task->gui) {
+    sys_gui_cleanup_task();
+  }
+
   spinlock_acquire(&scheduler_lock);
   if (current_task->id == last_foreground_pid)
     last_foreground_pid = -1;

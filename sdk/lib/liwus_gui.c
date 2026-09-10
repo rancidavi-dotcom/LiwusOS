@@ -84,3 +84,7 @@ void image_update(Node image, uint32_t *buffer, int buffer_size) {
 bool keyboard_is_pressed(uint8_t scancode) {
     return (bool)syscall1(11, (uint64_t)scancode);
 }
+
+int mouse_get_state(MouseState *state) {
+    return (int)syscall1(37, (uint64_t)state);
+}

@@ -4,6 +4,15 @@
 #include "syscall.h" // Para syscall_handler
 #include "task.h"
 #include "string.h"
+
+#define MAX_IRQ_HANDLERS 16
+static void (*irq_handlers[MAX_IRQ_HANDLERS])(void) = {0};
+
+void irq_install_handler(int irq, void (*handler)(void)) {
+    if (irq >= 0 && irq < MAX_IRQ_HANDLERS) {
+        irq_handlers[irq] = handler;
+    }
+}
 extern void keyboard_handler();
 extern void timer_handler();
 extern void mouse_handler();
@@ -87,16 +96,28 @@ uint64_t irq_handler(uint64_t rsp) {
   extern void lapic_eoi(void);
   lapic_eoi();
 
-  if (regs->int_no == 32) {
+  int irq = (int)(regs->int_no - 32);
+
+  if (irq == 0) {
     timer_handler();
     return schedule(rsp);
-  } else if (regs->int_no == 33) {
+  } else if (irq == 1) {
     keyboard_handler();
-  } else if (regs->int_no == 43) { // IRQ 11 (Network)
-
-  } else if (regs->int_no == 44) {
+  } else if (irq == 11) {
+    extern void rtl8139_handler(void);
+    rtl8139_handler();
+  } else if (irq == 12) {
     mouse_handler();
+  } else if (irq >= 0 && irq < MAX_IRQ_HANDLERS && irq_handlers[irq]) {
+    irq_handlers[irq]();
   }
+
+  /* Normal hardware boot currently keeps the legacy PIC enabled: AP startup
+   * is intentionally deferred until its IOAPIC routing is complete.  Without
+   * these EOIs the PIC delivers only the first timer/keyboard interrupt. */
+  if (irq >= 8)
+    outb(0xA0, 0x20);
+  outb(0x20, 0x20);
 
   return rsp;
 }

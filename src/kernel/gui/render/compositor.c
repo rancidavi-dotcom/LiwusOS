@@ -239,8 +239,8 @@ static void draw_minimap(compositor_t *c) {
     
     // Background (semi-transparent)
     gui_rect_t bg = rect_make(mm_x, mm_y, mm_w, mm_h);
-    renderer_fill_rect(c->renderer, bg, 0xCC0A0A12);
-    renderer_draw_rect(c->renderer, bg, 0xFF00AA00, 1);
+    renderer_fill_rect(c->renderer, bg, 0xCC252A33);
+    renderer_draw_rect(c->renderer, bg, 0xFF3D4450, 1);
     
     // Map the current camera position to the minimap
     // Let's assume the "world" we care about is roughly -5000 to +5000 in both axes.
@@ -267,7 +267,7 @@ static void draw_minimap(compositor_t *c) {
     
     // Draw camera dot
     gui_rect_t dot = rect_make(dot_x, dot_y, 4, 4);
-    renderer_fill_rect(c->renderer, dot, 0xFFFF0000); // Red dot
+    renderer_fill_rect(c->renderer, dot, 0xFF4A9EFF); // Blue dot
 }
 
 /* --------------------------------------------------------------------------
@@ -350,38 +350,38 @@ static void draw_profiler_overlay(compositor_t *c) {
     int line_h = 16;
     
     gui_rect_t bg = rect_make(sx - 5, sy - 5, 250, 100);
-    renderer_fill_rect(c->renderer, bg, 0xCC0A0A12);
-    renderer_draw_rect(c->renderer, bg, 0xFF00AA00, 1);
+    renderer_fill_rect(c->renderer, bg, 0xCC1E2229);
+    renderer_draw_rect(c->renderer, bg, 0xFF3D4450, 1);
 
     char buf[64];
     
     strcpy(buf, "PROFILER (CPU CYCLES)");
-    draw_text_simple(c, sx, sy, buf, 0xFF00FF41);
+    draw_text_simple(c, sx, sy, buf, 0xFFE6E8EB);
     sy += line_h;
 
     strcpy(buf, "Input:  ");
     int_to_str(perf_input_cycles, buf + 8);
-    draw_text_simple(c, sx, sy, buf, 0xFF00CC33);
+    draw_text_simple(c, sx, sy, buf, 0xFF99A1AF);
     sy += line_h;
 
     strcpy(buf, "Events: ");
     int_to_str(perf_event_cycles, buf + 8);
-    draw_text_simple(c, sx, sy, buf, 0xFF00CC33);
+    draw_text_simple(c, sx, sy, buf, 0xFF99A1AF);
     sy += line_h;
 
     strcpy(buf, "Render: ");
     int_to_str(perf_render_cycles, buf + 8);
-    draw_text_simple(c, sx, sy, buf, 0xFF00FF41); /* Bright green for render */
+    draw_text_simple(c, sx, sy, buf, 0xFFE6E8EB);
     sy += line_h;
 
     strcpy(buf, "Blit:   ");
     int_to_str(perf_blit_cycles, buf + 8);
-    draw_text_simple(c, sx, sy, buf, 0xFFFF4444); /* Red for blit (critical) */
+    draw_text_simple(c, sx, sy, buf, 0xFFFF5F57);
     sy += line_h;
 
     strcpy(buf, "Total:  ");
     int_to_str(perf_total_cycles, buf + 8);
-    draw_text_simple(c, sx, sy, buf, 0xFF00FF41);
+    draw_text_simple(c, sx, sy, buf, 0xFFE6E8EB);
 }
 
 /* --------------------------------------------------------------------------

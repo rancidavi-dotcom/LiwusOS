@@ -13,10 +13,14 @@ mb2_header_start:
 .long -(MB2_MAGIC + MB2_ARCH + (mb2_end - mb2_header_start))
 
 mb2_tags_start:
-  /* Framebuffer tag (Type 5) */
+  /* Framebuffer tag (Type 5).
+   * A framebuffer is useful, but it must never make the kernel unbootable:
+   * several real BIOS/UEFI video implementations cannot provide the exact
+   * requested VBE mode.  vga.c has a VGA text-mode fallback for that case.
+   */
   .align 8
   .word 5      /* type */
-  .word 0      /* flags: 0 (required) */
+  .word 0      /* optional: GRUB may boot us without a framebuffer */
   .long 20     /* size */
   .long 1024   /* width */
   .long 768    /* height */
@@ -110,9 +114,11 @@ entry_64:
   mov $0x10, %ax
   mov %ax, %ss
 
-  /* Pass multiboot2 info in rsi (saved in ebx before it was clobbered) */
-  mov %rbx, %rsi
-  xor %edi, %edi       /* magic = 0 (not used anyway) */
+  /* Do not rely on the upper half/preservation of RBX across the mode
+   * transition.  Multiboot2 supplies a 32-bit physical address, saved above.
+   */
+  mov mb2_info_phys_low(%rip), %rsi
+  mov $0x36D76289, %edi /* Multiboot2 boot magic */
   mov $kernel_main, %rax
   call *%rax
 

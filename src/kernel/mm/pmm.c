@@ -36,9 +36,11 @@ void pmm_init_region(uint64_t base, uint64_t size) {
     uint64_t align = base / BLOCK_SIZE;
     uint64_t blocks = size / BLOCK_SIZE;
 
-    for (; blocks > 0; blocks--) {
-        bitmap_unset(align++);
-        pmm_used_blocks--;
+    for (; blocks > 0 && align < pmm_max_blocks; blocks--, align++) {
+        if (bitmap_test(align)) {
+            bitmap_unset(align);
+            pmm_used_blocks--;
+        }
     }
     spinlock_release(&pmm_lock);
 }
@@ -48,9 +50,28 @@ void pmm_deinit_region(uint64_t base, uint64_t size) {
     uint64_t align = base / BLOCK_SIZE;
     uint64_t blocks = size / BLOCK_SIZE;
 
-    for (; blocks > 0; blocks--) {
-        bitmap_set(align++);
-        pmm_used_blocks++;
+    for (; blocks > 0 && align < pmm_max_blocks; blocks--, align++) {
+        if (!bitmap_test(align)) {
+            bitmap_set(align);
+            pmm_used_blocks++;
+        }
+    }
+    spinlock_release(&pmm_lock);
+}
+
+void pmm_reserve_region(uint64_t base, uint64_t size) {
+    /* Include partially covered pages: an allocation may start at any
+     * byte, while the PMM tracks complete 4 KiB frames. */
+    uint64_t first = base / BLOCK_SIZE;
+    uint64_t last = (base + size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+
+    spinlock_acquire(&pmm_lock);
+    for (uint64_t block = first; block < last && block < pmm_max_blocks;
+         block++) {
+        if (!bitmap_test(block)) {
+            bitmap_set(block);
+            pmm_used_blocks++;
+        }
     }
     spinlock_release(&pmm_lock);
 }

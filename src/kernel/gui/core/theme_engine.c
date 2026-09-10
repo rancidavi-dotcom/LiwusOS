@@ -1,32 +1,32 @@
 /*
  * gui/core/theme_engine.c
  *
- * CRT Green Phosphor theme — IBM 5151 inspired.
- * Everything is green on black, evoking vintage monochrome monitors.
+ * Modern dark theme — clean blue-gray palette.
+ * Neutral backgrounds with white text and a blue accent.
  */
 #include "theme_engine.h"
 
 static uint32_t s_palette[THEME_COLOR_MAX];
 
 void theme_engine_init(void) {
-    /* IBM 5151 green phosphor CRT palette */
-    s_palette[THEME_COLOR_BACKGROUND]      = 0xFF0A0A12; /* Near-black with faint blue tint */
-    s_palette[THEME_COLOR_WINDOW_BG]       = 0xFF0A1510; /* Dark green-black */
-    s_palette[THEME_COLOR_WINDOW_TITLEBAR] = 0xFF0A2E1A; /* Dark green titlebar */
-    s_palette[THEME_COLOR_WINDOW_BORDER]   = 0xFF00AA00; /* Phosphor green border */
-    s_palette[THEME_COLOR_TEXT_PRIMARY]    = 0xFF00FF41; /* Bright phosphor green */
-    s_palette[THEME_COLOR_TEXT_SECONDARY]  = 0xFF00CC33; /* Medium green */
-    s_palette[THEME_COLOR_BUTTON_BG]       = 0xFF0A2E1A; /* Dark green button */
-    s_palette[THEME_COLOR_BUTTON_BG_HOVER] = 0xFF1A4A2A; /* Lighter green hover */
-    s_palette[THEME_COLOR_BUTTON_BG_PRESS] = 0xFF050A08; /* Very dark green press */
-    s_palette[THEME_COLOR_BUTTON_BORDER]   = 0xFF00AA00; /* Phosphor green */
-    s_palette[THEME_COLOR_BUTTON_TEXT]     = 0xFF00FF41; /* Bright green text */
-    s_palette[THEME_COLOR_CLOSE_BTN]       = 0xFFFF4444; /* CRT red */
-    s_palette[THEME_COLOR_INPUT_BG]        = 0xFF050A10; /* Near-black input */
-    s_palette[THEME_COLOR_INPUT_BG_FOCUS]  = 0xFF0A1520; /* Slightly lighter focused */
-    s_palette[THEME_COLOR_INPUT_BORDER]    = 0xFF008800; /* Dark green border */
-    s_palette[THEME_COLOR_INPUT_TEXT]      = 0xFF00FF41; /* Bright green */
-    s_palette[THEME_COLOR_INPUT_CURSOR]    = 0xFF00FF41; /* Bright green cursor */
+    /* Modern dark desktop palette (0xAARRGGBB) */
+    s_palette[THEME_COLOR_BACKGROUND]      = 0xFF1E2229; /* Desktop background, dark blue-gray */
+    s_palette[THEME_COLOR_WINDOW_BG]       = 0xFF252A33; /* Window body */
+    s_palette[THEME_COLOR_WINDOW_TITLEBAR] = 0xFF2D333D; /* Window titlebar */
+    s_palette[THEME_COLOR_WINDOW_BORDER]   = 0xFF3D4450; /* Window border */
+    s_palette[THEME_COLOR_TEXT_PRIMARY]    = 0xFFE6E8EB; /* Primary text, near-white */
+    s_palette[THEME_COLOR_TEXT_SECONDARY]  = 0xFF99A1AF; /* Secondary text, gray */
+    s_palette[THEME_COLOR_BUTTON_BG]       = 0xFF323842; /* Button background */
+    s_palette[THEME_COLOR_BUTTON_BG_HOVER] = 0xFF3D4450; /* Button hover */
+    s_palette[THEME_COLOR_BUTTON_BG_PRESS] = 0xFF262B33; /* Button pressed */
+    s_palette[THEME_COLOR_BUTTON_BORDER]   = 0xFF4A5260; /* Button border */
+    s_palette[THEME_COLOR_BUTTON_TEXT]     = 0xFFE6E8EB; /* Button text */
+    s_palette[THEME_COLOR_CLOSE_BTN]       = 0xFFFF5F57; /* Close button, soft red */
+    s_palette[THEME_COLOR_INPUT_BG]        = 0xFF1B1E24; /* Input background */
+    s_palette[THEME_COLOR_INPUT_BG_FOCUS]  = 0xFF23272F; /* Input background, focused */
+    s_palette[THEME_COLOR_INPUT_BORDER]    = 0xFF4A5260; /* Input border */
+    s_palette[THEME_COLOR_INPUT_TEXT]      = 0xFFE6E8EB; /* Input text */
+    s_palette[THEME_COLOR_INPUT_CURSOR]    = 0xFF4A9EFF; /* Input cursor, blue accent */
 }
 
 uint32_t theme_engine_get_color(theme_color_id_t id) {

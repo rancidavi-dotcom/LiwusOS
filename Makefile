@@ -14,6 +14,7 @@ KERNEL_INCLUDES = -Iinclude -Iinclude/kernel -Iinclude/drivers -Iinclude/fs -Iin
 CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra $(KERNEL_INCLUDES) $(M64) -fno-pie -fno-pic -mcmodel=large -mno-sse -mno-sse2 -mno-mmx
 LDFLAGS = -Wl,-no-pie
 USER_CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -m64 -mno-red-zone -fno-pie -fno-pic
+USER_LDFLAGS = -T sdk/liwus.ld
 LIBGCC = -lgcc
 NEWLIB_DIR = sdk/lib
 LIBC_A = $(NEWLIB_DIR)/libc.a
@@ -123,7 +124,8 @@ KERNEL_TEST_SRCS = $(TEST_DIR)/test_runner_kernel.c \
                    $(TEST_DIR)/test_sdfs_crc32.c \
                    $(TEST_DIR)/test_sdfs_journal.c \
                    $(TEST_DIR)/test_sdfs_perms.c \
-                   $(TEST_DIR)/test_sdfs_v2.c
+                   $(TEST_DIR)/test_sdfs_v2.c \
+                   $(TEST_DIR)/test_net_http.c
 
 KERNEL_TEST_OBJS = $(patsubst %.c, $(OBJ_DIR)/%.o, $(KERNEL_TEST_SRCS))
 
@@ -148,6 +150,11 @@ TEST_USER_ELF = $(TEST_DIR)/test_runner.elf
 UNAME_S := $(shell uname -s)
 AUDIO_BACKEND ?= $(if $(findstring MINGW,$(UNAME_S)),dsound,$(if $(wildcard /mnt/wslg/PulseServer),pa,sdl))
 AUDIO_FLAGS = -audiodev $(AUDIO_BACKEND),id=aud0 -device AC97,audiodev=aud0
+
+# Rede: usuario-mode (SLIRP) -> internet simula para fora (10.0.2.x).
+# RTL8139 e o modelo de NIC classico que o driver de rede do kernel suporta.
+NET_FLAGS = -netdev user,id=net0 -device rtl8139,netdev=net0
+
 
 
 zlib:
@@ -221,29 +228,29 @@ $(LIBGLOSS_OBJS): libgloss/syscalls.c
 LIBS = $(LIBC_A) $(LIBM_A) $(LIBGLOSS_A) $(LIBGCC)
 
 $(HELLO_ELF): apps/hello/hello.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/hello/hello.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/hello/hello.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(DOOMPROBE_ELF): apps/doomprobe/doomprobe.c $(CRT0_OBJ) $(LIBGLOSS_A)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/doomprobe/doomprobe.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/doomprobe/doomprobe.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(LUA_ELF): $(LUA_SRCS) $(CRT0_OBJ) $(LIBGLOSS_A)
 	$(CC) $(LUA_CFLAGS) -nostdlib -static $(CRT0_OBJ) $(LUA_SRCS) -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(EDITOR_NANO_ELF): apps/editor_nano/editor_nano.c apps/editor_nano/font.h $(CRT0_OBJ) $(LIBGLOSS_A)
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/editor_nano/editor_nano.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/editor_nano/editor_nano.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(NANO_ELF): apps/kilo/kilo.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/kilo/kilo.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/kilo/kilo.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(CRUN_ELF): apps/c4/c4.c $(CRT0_OBJ) $(LIBGLOSS_A)
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/c4/c4.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/c4/c4.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(CALC_ELF): apps/calc/calc.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/libliwus_gui.a
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/calc/calc.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/calc/calc.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
 
 TCC_DIR = third_party/tcc
 TCC_CFLAGS = $(USER_CFLAGS) -I$(TCC_DIR) -DONE_SOURCE=1 -DTCC_TARGET_X86_64 \
@@ -255,7 +262,7 @@ TCC_CFLAGS = $(USER_CFLAGS) -I$(TCC_DIR) -DONE_SOURCE=1 -DTCC_TARGET_X86_64 \
 
 $(TCC_ELF): apps/tcc/tcc.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
 	@mkdir -p $(dir $@)
-	$(CC) $(TCC_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/tcc/tcc.c -L$(NEWLIB_DIR) -lgloss -lc -lm -Wl,--allow-multiple-definition -o $@ $(LIBGCC)
+	$(CC) $(TCC_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/tcc/tcc.c -L$(NEWLIB_DIR) -lgloss -lc -lm -Wl,--allow-multiple-definition -o $@ $(LIBGCC)
 
 
 
@@ -265,11 +272,11 @@ sdk/lib/libliwus_gui.a: sdk/lib/liwus_gui.c
 
 $(DEMO_GUI_ELF): apps/demo_gui/demo_gui.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/libliwus_gui.a
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) apps/demo_gui/demo_gui.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/demo_gui/demo_gui.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(LDE_ELF): lde/src/main.c lde/src/system_bridge.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/libliwus_gui.a
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) -nostdlib -static $(CRT0_OBJ) lde/src/main.c lde/src/system_bridge.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) lde/src/main.c lde/src/system_bridge.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
 
 $(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(DEMO_GUI_ELF) $(LDE_ELF) $(TCC_ELF)
 	$(HOSTCC) -Iinclude -Iinclude/uapi sdk/tools/liw-builder.c -o sdk/tools/liw-builder
@@ -321,12 +328,15 @@ $(OBJ_DIR)/$(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(TEST_FW)
 
 # ---- Userspace test runner ----
 $(TEST_USER_ELF): $(USER_TEST_SRCS) $(CRT0_OBJ) $(LIBGLOSS_A)
-	$(CC) $(USER_CFLAGS) -I$(TEST_DIR) -nostdlib -static $(CRT0_OBJ) \
+	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -I$(TEST_DIR) -nostdlib -static $(CRT0_OBJ) \
 	    $(USER_TEST_SRCS) -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
 
 # ---- Test targets ----
 test-sdfs: $(KERNEL_BIN)
 	bash scripts/run_tests.sh --sdfs
+
+test-net: $(KERNEL_BIN)
+	bash scripts/run_tests.sh --net
 
 test-user: $(KERNEL_BIN) $(TEST_USER_ELF)
 	bash scripts/run_tests.sh --user
@@ -338,20 +348,22 @@ test-clean:
 	rm -f $(TEST_USER_ELF)
 	rm -f $(KERNEL_TEST_OBJS)
 
+KVM_FLAGS = $(if $(filter 1,$(KVM)),-enable-kvm,)
+
 run: $(ISO_IMAGE)
 	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
 	PULSE_SERVER=$(if $(filter pa,$(AUDIO_BACKEND)),/mnt/wslg/PulseServer,) \
-	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 $(AUDIO_FLAGS)
+	qemu-system-x86_64 $(KVM_FLAGS) -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 $(AUDIO_FLAGS) $(NET_FLAGS)
 
 run-serial: $(ISO_IMAGE)
 	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
 	PULSE_SERVER=$(if $(filter pa,$(AUDIO_BACKEND)),/mnt/wslg/PulseServer,) \
-	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 $(AUDIO_FLAGS) -serial stdio -d guest_errors -no-reboot
+	qemu-system-x86_64 $(KVM_FLAGS) -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 $(AUDIO_FLAGS) $(NET_FLAGS) -serial stdio -d guest_errors -no-reboot
 
 run-log: $(ISO_IMAGE)
 	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
 	PULSE_SERVER=$(if $(filter pa,$(AUDIO_BACKEND)),/mnt/wslg/PulseServer,) \
-	qemu-system-x86_64 -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 $(AUDIO_FLAGS) -serial file:qemu_serial.log -D qemu_debug.log -d int,cpu_reset
+	qemu-system-x86_64 $(KVM_FLAGS) -cdrom $(ISO_IMAGE) -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -m 512 $(AUDIO_FLAGS) $(NET_FLAGS) -serial file:qemu_serial.log -D qemu_debug.log -d int,cpu_reset
 
 qa-boot-persistence: $(ISO_IMAGE)
 	bash ./scripts/qa_boot_persistence.sh

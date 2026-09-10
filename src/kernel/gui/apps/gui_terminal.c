@@ -69,7 +69,7 @@ static void gterm_newline(gui_terminal_t *t) {
         /* Clear last row */
         for (int c = 0; c < GTERM_COLS; c++) {
             t->cells[GTERM_ROWS - 1][c].ch = ' ';
-            t->cells[GTERM_ROWS - 1][c].fg = 0xFFCCCCCC;
+            t->cells[GTERM_ROWS - 1][c].fg = 0xFFBFC6CF;
         }
         t->cur_row = GTERM_ROWS - 1;
     }
@@ -117,7 +117,7 @@ static void gterm_puts(gui_terminal_t *t, const char *str, uint32_t color) {
 
 static void gterm_vga_hook(const char *str) {
     if (!s_active_terminal) return;
-    gterm_puts(s_active_terminal, str, 0xFF00CC33); /* Medium green for output */
+    gterm_puts(s_active_terminal, str, 0xFFC9CED6); /* Light gray for output */
 }
 
 /* --------------------------------------------------------------------------
@@ -125,7 +125,7 @@ static void gterm_vga_hook(const char *str) {
  * -------------------------------------------------------------------------- */
 
 static void gterm_print_prompt(gui_terminal_t *t) {
-    gterm_puts(t, "root@liwusos# ", 0xFF00FF41); /* Bright phosphor green */
+    gterm_puts(t, "root@liwusos# ", 0xFF4A9EFF); /* Blue prompt */
 }
 
 /* --------------------------------------------------------------------------
@@ -150,7 +150,7 @@ static void gterm_execute(gui_terminal_t *t) {
                 for (int r = 0; r < GTERM_ROWS; r++) {
                     for (int c = 0; c < GTERM_COLS; c++) {
                         t->cells[r][c].ch = ' ';
-                        t->cells[r][c].fg = 0xFF00CC33;
+                        t->cells[r][c].fg = 0xFFC9CED6;
                     }
                 }
             t->cur_row = 0;
@@ -213,7 +213,7 @@ static bool gterm_key_char(node_t *self, char c, void *ctx) {
     if (c >= 32 && c <= 126 && t->input_len < GTERM_COLS - 1) {
         t->input_line[t->input_len++] = c;
         t->input_line[t->input_len]   = '\0';
-        gterm_putchar(t, c, 0xFF00FF41); /* Bright green for user input */
+        gterm_putchar(t, c, 0xFFE6E8EB); /* Near-white for user input */
         node_mark_dirty(t->win_node, NODE_DIRTY_PAINT);
     }
     return true;
@@ -254,7 +254,7 @@ static void gterm_draw(node_t *self, struct gui_renderer *r) {
     /* Terminal background — solid dark green-black for CRT look */
     gui_rect_t content = rect_make(screen_x, screen_y + top_margin,
                                     screen_w, screen_h - top_margin);
-    renderer_fill_rect(r, content, 0xFF0A0A12); /* Solid near-black */
+    renderer_fill_rect(r, content, 0xFF1E2229); /* Solid dark background */
 
     /* --- Render all cells --- */
     if (!t->font) return;
@@ -285,7 +285,7 @@ static void gterm_draw(node_t *self, struct gui_renderer *r) {
         if (t->cur_row < rows_vis && t->cur_col < cols_vis) {
             int cx = base_x + t->cur_col * GTERM_CHAR_W;
             int cy = base_y + t->cur_row * GTERM_CHAR_H;
-            renderer_fill_rect(r, rect_make(cx, cy, GTERM_CHAR_W, GTERM_CHAR_H), 0xFF00FF41);
+            renderer_fill_rect(r, rect_make(cx, cy, GTERM_CHAR_W, GTERM_CHAR_H), 0xFF4A9EFF);
         }
 }
 
@@ -330,13 +330,13 @@ node_t *gui_terminal_create(const char *win_name, int x, int y, int w, int h) {
     for (int r = 0; r < GTERM_ROWS; r++) {
         for (int c = 0; c < GTERM_COLS; c++) {
             t->cells[r][c].ch = ' ';
-            t->cells[r][c].fg = 0xFF00CC33;
+            t->cells[r][c].fg = 0xFFC9CED6;
         }
     }
 
     /* Print welcome banner */
-    gterm_puts(t, "LiwusOS Terminal v1.0\n", 0xFF00FF41);
-    gterm_puts(t, "Type 'help' for available commands.\n\n", 0xFF00CC33);
+    gterm_puts(t, "LiwusOS Terminal v1.0\n", 0xFFE6E8EB);
+    gterm_puts(t, "Type 'help' for available commands.\n\n", 0xFF99A1AF);
     gterm_print_prompt(t);
 
     /* Override vtable for custom drawing */

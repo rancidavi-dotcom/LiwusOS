@@ -56,6 +56,7 @@ typedef struct task {
   char name[32];
   char cwd[256];
   kfile_t file_descriptors[32];
+  void *gui; // gui_task_state_t* — per-process GUI node bookkeeping
 } task_t;
 
 typedef struct {

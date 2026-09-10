@@ -54,4 +54,15 @@ void camera_zoom(float zoom);
 /* Keyboard */
 bool keyboard_is_pressed(uint8_t scancode);
 
+/* Mouse state */
+typedef struct {
+    int32_t x;
+    int32_t y;
+    int32_t left;
+    int32_t right;
+} MouseState;
+
+/* Returns 0 on success, -1 on failure. Fills the MouseState struct. */
+int mouse_get_state(MouseState *state);
+
 #endif /* LIWUS_GUI_H */
