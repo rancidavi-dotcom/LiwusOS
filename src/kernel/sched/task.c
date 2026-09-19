@@ -59,11 +59,11 @@ void init_cpu_local(int cpu_id) {
 extern char *itoa(int value, char *str, int base);
 
 static inline void fpu_context_save(void *area) {
-  asm volatile("fxsave64 (%0)" :: "r"(area) : "memory");
+  asm volatile("fxsave (%0)" :: "r"(area) : "memory");
 }
 
 static inline void fpu_context_restore(void *area) {
-  asm volatile("fxrstor64 (%0)" :: "r"(area) : "memory");
+  asm volatile("fxrstor (%0)" :: "r"(area) : "memory");
 }
 
 void task_set_fpu(void *fpu_area) {
@@ -136,7 +136,7 @@ int create_task_named_prio(void (*entry_point)(), const char *name,
     new_task->time_slice = priority;
   }
 
-  uint64_t stack_size = 8192;
+  uint64_t stack_size = 32768; /* 32KB: GUI compositor needs more stack */
   uint64_t stack_base = (uint64_t)kmalloc(stack_size);
   uint64_t stack = stack_base + stack_size;
   new_task->kernel_stack_base = stack_base;
@@ -158,6 +158,10 @@ int create_task_named_prio(void (*entry_point)(), const char *name,
    * -msse MP3 decoder) fault with #GP on every other allocation. */
   regs->rsp = (uint64_t)((stack & ~(uint64_t)0xF) - 8);
   regs->ss = 0x10;
+
+  /* Stack canary: write magic at bottom of stack (stack_base) */
+  *(uint64_t *)stack_base = 0xDEADBEEFCAFEBABE;
+  new_task->stack_canary = 0xDEADBEEFCAFEBABE;
 
   new_task->stack_top = (uint64_t)regs;
 
@@ -300,6 +304,16 @@ uint64_t schedule(uint64_t current_rsp) {
   task_t *curr = current_task;
   if (!curr)
     return current_rsp;
+
+  /* Stack canary check */
+  if (curr->stack_canary != 0xDEADBEEFCAFEBABE) {
+    extern void kernel_panic(const char *msg);
+    kernel_panic("STACK OVERFLOW (canary corrupted)");
+  }
+  if (*(uint64_t *)curr->kernel_stack_base != 0xDEADBEEFCAFEBABE) {
+    extern void kernel_panic(const char *msg);
+    kernel_panic("STACK OVERFLOW (base canary corrupted)");
+  }
 
   spinlock_acquire(&scheduler_lock);
 

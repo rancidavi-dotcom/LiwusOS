@@ -86,6 +86,9 @@ static void set_leds(uint8_t leds) {
     outb(0x60, leds);
 }
 
+/* Panic registers (filled by ISR handler before calling kernel_panic) */
+registers_t *g_panic_regs = NULL;
+
 void kernel_panic(const char *msg) {
     asm volatile("cli");
     
@@ -97,11 +100,25 @@ void kernel_panic(const char *msg) {
     vga_puts(msg);
     vga_puts("\n\n");
     
+    if (g_panic_regs) {
+        char num[32];
+        vga_puts("  RIP: "); itoa((int)(g_panic_regs->rip & 0xFFFFFFFF), num, 16); vga_puts(num);
+        vga_puts("  RSP: "); itoa((int)(g_panic_regs->rsp & 0xFFFFFFFF), num, 16); vga_puts(num);
+        vga_puts("\n  RAX: "); itoa((int)(g_panic_regs->rax & 0xFFFFFFFF), num, 16); vga_puts(num);
+        vga_puts("  RBX: "); itoa((int)(g_panic_regs->rbx & 0xFFFFFFFF), num, 16); vga_puts(num);
+        vga_puts("  RDI: "); itoa((int)(g_panic_regs->rdi & 0xFFFFFFFF), num, 16); vga_puts(num);
+        vga_puts("  RSI: "); itoa((int)(g_panic_regs->rsi & 0xFFFFFFFF), num, 16); vga_puts(num);
+        vga_puts("\n  Err: "); itoa(g_panic_regs->err_code, num, 16); vga_puts(num);
+        vga_puts("  CS: "); itoa(g_panic_regs->cs, num, 16); vga_puts(num);
+        vga_puts("  RFL: "); itoa((int)(g_panic_regs->rflags & 0xFFFFFFFF), num, 16); vga_puts(num);
+        vga_puts("\n");
+    }
+    
     serial_print("KERNEL PANIC: ");
     serial_print(msg);
     serial_print("\n");
     
-    vga_puts("  System Halted.\n");
+    vga_puts("\n  System Halted.\n");
     while (1) {
         asm volatile("hlt");
     }

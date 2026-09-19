@@ -41,6 +41,7 @@ typedef struct task {
   uint64_t kernel_stack;
   uint64_t kernel_stack_base;
   uint32_t kernel_stack_size;
+  uint64_t stack_canary;
   struct task *parent;
   struct task *next;
   page_directory_t *page_directory;

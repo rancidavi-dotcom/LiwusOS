@@ -78,6 +78,8 @@ serial_print(" rip=");
         sys_exit_process(128 + (int)regs->int_no);
       } else {
       extern void kernel_panic(const char *msg);
+      extern registers_t *g_panic_regs;
+      g_panic_regs = regs;
       char buf[64];
       strcpy(buf, "Unhandled CPU exception (ISR ");
       char num[16];
