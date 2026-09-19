@@ -310,12 +310,15 @@ uint64_t schedule(uint64_t current_rsp) {
   if (!curr)
     return current_rsp;
 
-  /* RSP bounds check - stack grows DOWN from kernel_stack to kernel_stack_base */
-  uint64_t stack_top = curr->kernel_stack;
-  uint64_t stack_bottom = curr->kernel_stack_base;
-  if (current_rsp < stack_bottom || current_rsp > stack_top) {
-    extern void kernel_panic(const char *msg);
-    kernel_panic("STACK OVERFLOW (RSP out of bounds)");
+  /* RSP bounds check - stack grows DOWN from kernel_stack to kernel_stack_base.
+   * Skip for init task (PID 0) which uses the boot stack with no allocated bounds. */
+  if (curr->kernel_stack != 0 && curr->kernel_stack_base != 0) {
+    uint64_t stack_top = curr->kernel_stack;
+    uint64_t stack_bottom = curr->kernel_stack_base;
+    if (current_rsp < stack_bottom || current_rsp > stack_top) {
+      extern void kernel_panic(const char *msg);
+      kernel_panic("STACK OVERFLOW (RSP out of bounds)");
+    }
   }
 
   /* Top canary check (at original RSP) */
