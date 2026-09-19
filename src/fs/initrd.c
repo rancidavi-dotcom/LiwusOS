@@ -4,6 +4,7 @@
 #include "kheap.h"
 #include "serial.h"
 #include "string.h"
+#include "vga.h"
 
 static uint32_t initrd_location;
 static uint32_t initrd_size;
@@ -246,6 +247,13 @@ void initrd_copy_to_sdfs(copy_progress_cb cb) {
     //   1. Cria o arquivo no SDFS (sdfs_create_file)
     //   2. Se tiver conteúdo > 0, escreve os bytes (sdfs_write_file)
     //   3. Chama o callback de progresso (se fornecido)
+    {
+        char nbuf[16];
+        itoa(total_files, nbuf, 10);
+        vga_puts("Installing ");
+        vga_puts(nbuf);
+        vga_puts(" files to disk...\n");
+    }
     address = initrd_location;
     while (1) {
         struct tar_header *header = (struct tar_header *)address;
@@ -277,6 +285,23 @@ void initrd_copy_to_sdfs(copy_progress_cb cb) {
         serial_print(sdfs_path);
         serial_print("\n");
 
+        /* Visible progress on real hardware (no serial console there).
+         * Use a single live status line (\r + erase-to-EOL).  Printing a new
+         * line per file scrolls the whole (uncached) framebuffer, which
+         * dominated install time on real hardware. */
+        if ((copied % 4) == 0) {
+            char nbuf[16];
+            vga_puts("\r[");
+            itoa(copied, nbuf, 10);
+            vga_puts(nbuf);
+            vga_puts("/");
+            itoa(total_files, nbuf, 10);
+            vga_puts(nbuf);
+            vga_puts("] ");
+            vga_puts(sdfs_path);
+            vga_puts("\x1b[K");
+        }
+
         // Garante que os diretórios pais existam (o tar nao enumera
         // diretorios como entradas, entao os criamos conforme necessario).
         {
@@ -290,12 +315,14 @@ void initrd_copy_to_sdfs(copy_progress_cb cb) {
             }
         }
 
-        // Cria o arquivo (start block + entrada no diretório pai)
-        if (sdfs_create_file(sdfs_path) == 0) {
-            // Escreve o conteúdo binário no SDFS via block chain
-            if (filesize > 0) {
-                sdfs_write_file(sdfs_path, (uint8_t *)data, filesize);
+        // Cria o arquivo (start block + entrada no diretório pai).
+        // sdfs_write_file() já cria a entrada, então só criamos explicitamente
+        // arquivos vazios (evita alocar+liberar um bloco à toa).
+        if (filesize > 0) {
+            if (sdfs_write_file(sdfs_path, (uint8_t *)data, filesize) > 0) {
+                copied++;
             }
+        } else if (sdfs_create_file(sdfs_path) == 0) {
             copied++;
         }
 
@@ -310,6 +337,10 @@ void initrd_copy_to_sdfs(copy_progress_cb cb) {
 
     // 100% — callback final para completar a barra
     if (cb) cb(100, NULL);
+
+    /* Persist the allocation bitmap once, at the end (it is flushed in
+     * batches during the copy). */
+    sdfs_flush_bitmap();
 
     serial_print("initrd: copy complete\n");
 }

@@ -24,6 +24,10 @@ int  ata_find_first(uint16_t *bus_out, uint8_t *drive_out);
 int  ata_read_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffer);
 int  ata_write_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffer);
 
+/* Deferred write-cache flush (for bulk writes such as first-boot install) */
+void ata_set_writeback(int enable);
+int  ata_flush_cache(void);
+
 // BM-IDE DMA (PIIX3)
 int ata_bmide_init(void);
 int ata_bmide_available(void);

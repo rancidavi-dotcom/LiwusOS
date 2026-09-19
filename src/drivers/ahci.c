@@ -3,9 +3,33 @@
 #include "kheap.h"
 #include "serial.h"
 #include "string.h"
+#include "vga.h"
 
 static hba_mem_t *abar;
 static int ahci_initialized = 0;
+static uint32_t ahci_rebased_mask = 0;
+
+/* SATA links on real hardware (especially spinning disks) can take a moment
+ * to come up. Poll DET/IPM instead of sampling once.
+ *
+ * NOTE: reading port->ssts is an MMIO access (a VM exit under KVM), so we
+ * must poll it sparingly. Empty ports (DET==0) are never waited on. */
+static int ahci_wait_port_ready(hba_port_t *port) {
+    uint32_t ssts = port->ssts;
+    uint8_t det = ssts & 0x0F;
+    uint8_t ipm = (ssts >> 8) & 0x0F;
+    if (det == HBA_PORT_DET_PRESENT && ipm == HBA_PORT_IPM_ACTIVE) return 0;
+    if (det == 0) return -1;  /* no device attached: do not waste time */
+
+    for (int i = 0; i < 1000; i++) {
+        for (volatile int d = 0; d < 200000; d++) asm volatile("pause");
+        ssts = port->ssts;
+        det = ssts & 0x0F;
+        ipm = (ssts >> 8) & 0x0F;
+        if (det == HBA_PORT_DET_PRESENT && ipm == HBA_PORT_IPM_ACTIVE) return 0;
+    }
+    return -1;
+}
 
 hba_mem_t *ahci_get_abar(void) {
     return abar;
@@ -22,6 +46,12 @@ static uint8_t ahci_ctba_mem[8192] __attribute__((aligned(256)));   /* Command t
 
 #define AHCI_DEV_BUSY 0x80
 #define AHCI_DEV_DRQ  0x08
+
+/* Reading AHCI registers is an MMIO access (a VM exit under KVM), so poll
+ * them with a short delay between reads instead of hammering them. */
+static inline void ahci_poll_delay(void) {
+    for (volatile int d = 0; d < 1000; d++) asm volatile("pause");
+}
 
 static void port_stop_cmd(hba_port_t *port) {
     port->cmd &= ~HBA_PxCMD_ST;
@@ -96,10 +126,12 @@ void ahci_init() {
     pci_device_t *ahci_pci = pci_get_ahci();
     if (!ahci_pci) {
         serial_print("AHCI: No controller found.\n");
+        vga_puts("[disk] AHCI controller not found\n");
         return;
     }
 
     serial_print("AHCI: Controller found!\n");
+    vga_puts("[disk] AHCI controller found, bringing up links...\n");
     
     // Enable bus mastering + memory space
     uint32_t cmd = pci_read_config(ahci_pci->bus, ahci_pci->device, ahci_pci->function, 0x04);
@@ -124,7 +156,11 @@ void ahci_init() {
     
     // Enable AHCI mode (GHC.AE)
     abar->ghc |= (1 << 31);
-    
+
+    /* The controller is present and mapped, so block I/O may use it even if a
+     * drive is not ready yet: ahci_find_first() will retry the link. */
+    ahci_initialized = 1;
+
     serial_print("AHCI: GHC=");
     serial_print_hex(abar->ghc);
     serial_print(" PI=");
@@ -135,39 +171,45 @@ void ahci_init() {
     
     uint32_t pi = abar->pi;
     for (int i = 0; i < 32; i++) {
-        if (pi & (1<<i)) {
-            abar->ports[i].serr = 0xFFFFFFFF;
-            
-            uint32_t ssts = abar->ports[i].ssts;
-            uint8_t ipm = (ssts >> 8) & 0x0F;
-            uint8_t det = ssts & 0x0F;
-            
+        if (!(pi & (1<<i))) continue;
+        abar->ports[i].serr = 0xFFFFFFFF;
+
+        char portstr[2] = {(char)('0' + (i % 10)), 0};
+
+        if (ahci_wait_port_ready(&abar->ports[i]) != 0) {
             serial_print("AHCI: port ");
-            char portstr[2] = {'0' + i, 0};
             serial_print(portstr);
-            serial_print(" ssts=");
-            serial_print_hex(ssts);
-            serial_print(" sig=");
-            serial_print_hex(abar->ports[i].sig);
-            serial_print(" tfd=");
-            serial_print_hex(abar->ports[i].tfd);
-            serial_print("\n");
-            
-            if (det == HBA_PORT_DET_PRESENT && ipm == HBA_PORT_IPM_ACTIVE) {
-                uint32_t sig = abar->ports[i].sig;
-                if (sig == 0x00000101 || sig == 0xFFFFFFFF || sig == 0x00000000) {
-                    serial_print("AHCI: SATA drive found on port ");
-                    serial_print(portstr);
-                    serial_print("\n");
-                    port_rebase(&abar->ports[i], i);
-                    ahci_initialized = 1;
-                }
-            }
+            serial_print(" link not ready\n");
+            continue;
         }
+
+        uint32_t sig = abar->ports[i].sig;
+        if (sig == 0xEB140101) {
+            serial_print("AHCI: port ");
+            serial_print(portstr);
+            serial_print(" is ATAPI, skipping\n");
+            continue;
+        }
+
+        serial_print("AHCI: SATA drive found on port ");
+        serial_print(portstr);
+        serial_print(" ssts=");
+        serial_print_hex(abar->ports[i].ssts);
+        serial_print(" sig=");
+        serial_print_hex(sig);
+        serial_print("\n");
+
+        port_rebase(&abar->ports[i], i);
+        ahci_rebased_mask |= (1u << i);
+
+        vga_puts("[disk] SATA drive online (port ");
+        vga_puts(portstr);
+        vga_puts(")\n");
     }
     
-    if (!ahci_initialized) {
-        serial_print("AHCI: WARNING - no usable drive found!\n");
+    if (!ahci_rebased_mask) {
+        serial_print("AHCI: WARNING - no usable drive found (will retry)\n");
+        vga_puts("[disk] No SATA drive ready yet, will retry\n");
     }
 }
 
@@ -234,11 +276,11 @@ static int ahci_issue_cmd(hba_port_t *port, uint64_t lba, uint32_t count, uint8_
 
     // Wait for port to not be busy
     uint64_t spin = 0;
-    while ((port->tfd & (AHCI_DEV_BUSY | AHCI_DEV_DRQ)) && spin < 100000000) {
+    while ((port->tfd & (AHCI_DEV_BUSY | AHCI_DEV_DRQ)) && spin < 10000000) {
         spin++;
-        asm volatile("pause");
+        ahci_poll_delay();
     }
-    if (spin >= 100000000) {
+    if (spin >= 10000000) {
         serial_print("AHCI: port busy timeout! TFD=");
         serial_print_hex(port->tfd);
         serial_print("\n");
@@ -267,7 +309,7 @@ static int ahci_issue_cmd(hba_port_t *port, uint64_t lba, uint32_t count, uint8_
             port->cmd |= HBA_PxCMD_ST;
             return 0;
         }
-        if (++timeout2 > 100000000) {
+        if (++timeout2 > 5000000) {
             serial_print("AHCI: Command hung! CI=");
             serial_print_hex(port->ci);
             serial_print(" IS=");
@@ -286,6 +328,7 @@ static int ahci_issue_cmd(hba_port_t *port, uint64_t lba, uint32_t count, uint8_
             port->cmd |= HBA_PxCMD_ST;
             return 0;
         }
+        ahci_poll_delay();
     }
     
     if (port->tfd & 0x01) {
@@ -311,18 +354,28 @@ int ahci_write_sector(uint8_t portno, uint64_t lba, uint32_t count, uint8_t *buf
 }
 
 int ahci_find_first(uint8_t *port_out) {
-    if (!ahci_initialized) return -1;
+    if (!abar) return -1;
     uint32_t pi = abar->pi;
     for (int i = 0; i < 32; i++) {
-        if (pi & (1<<i)) {
-            uint32_t ssts = abar->ports[i].ssts;
-            uint8_t ipm = (ssts >> 8) & 0x0F;
-            uint8_t det = ssts & 0x0F;
-            if (det == HBA_PORT_DET_PRESENT && ipm == HBA_PORT_IPM_ACTIVE) {
-                *port_out = i;
-                return 0;
-            }
+        if (!(pi & (1<<i))) continue;
+
+        if (ahci_wait_port_ready(&abar->ports[i]) != 0) continue;
+
+        uint32_t sig = abar->ports[i].sig;
+        if (sig == 0xEB140101) continue; /* ATAPI has no block device here */
+
+        if (!(ahci_rebased_mask & (1u << i))) {
+            serial_print("AHCI: drive became ready on port ");
+            char portstr[2] = {(char)('0' + (i % 10)), 0};
+            serial_print(portstr);
+            serial_print("\n");
+            port_rebase(&abar->ports[i], i);
+            ahci_rebased_mask |= (1u << i);
         }
+
+        ahci_initialized = 1;
+        *port_out = (uint8_t)i;
+        return 0;
     }
     return -1;
 }
@@ -365,7 +418,7 @@ uint64_t ahci_identify(uint8_t portno) {
 
     uint64_t spin = 0;
     while ((port->tfd & (AHCI_DEV_BUSY | AHCI_DEV_DRQ)) && spin < 1000000) {
-        spin++; asm volatile("pause");
+        spin++; ahci_poll_delay();
     }
     if (spin >= 1000000) return 0;
 
@@ -381,14 +434,14 @@ uint64_t ahci_identify(uint8_t portno) {
             port->cmd |= HBA_PxCMD_ST;
             return 0;
         }
-        if (++timeout2 > 100000000) {
+        if (++timeout2 > 5000000) {
             port->cmd &= ~HBA_PxCMD_ST;
             int t = 0; while((port->cmd & HBA_PxCMD_CR) && t < 100000) { t++; asm volatile("pause"); }
             port->serr = 0xFFFFFFFF; port->is = 0xFFFFFFFF;
             port->cmd |= HBA_PxCMD_ST;
             return 0;
         }
-        asm volatile("pause");
+        ahci_poll_delay();
     }
     if (port->tfd & 0x01) return 0;
     

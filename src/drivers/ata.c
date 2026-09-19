@@ -28,6 +28,23 @@ static void ata_io_delay(uint16_t bus) {
     for (int i = 0; i < 4; i++) inb(bus + ATA_REG_STATUS);
 }
 
+/* When set, writes defer the ATA CACHE FLUSH until ata_flush_cache() is
+ * called. This avoids a flush per sector during bulk installs. */
+static int ata_defer_flush = 0;
+static int ata_flush_pending = 0;
+
+void ata_set_writeback(int enable) {
+    ata_defer_flush = enable ? 1 : 0;
+}
+
+int ata_flush_cache(void) {
+    if (!ata_flush_pending) return 0;
+    outb(ATA_PRIMARY + ATA_REG_COMMAND, 0xE7);
+    ata_wait_bsy(ATA_PRIMARY);
+    ata_flush_pending = 0;
+    return 0;
+}
+
 int ata_probe(uint16_t bus, uint8_t drive) {
     outb(bus + 6, drive);
     ata_io_delay(bus);
@@ -115,8 +132,12 @@ int ata_write_sector(uint16_t bus, uint8_t drive, uint32_t lba, uint16_t* buffer
     }
 
     /* Flush cache to persist writes before the next read/mount */
-    outb(bus + 7, 0xE7);
-    if (ata_wait_bsy(bus) < 0) return -1;
+    if (ata_defer_flush) {
+        ata_flush_pending = 1;
+    } else {
+        outb(bus + 7, 0xE7);
+        if (ata_wait_bsy(bus) < 0) return -1;
+    }
     return 0;
 }
 
@@ -239,8 +260,12 @@ static int ata_bmide_transfer(uint32_t lba, uint8_t count, uint16_t *buffer, int
         memcpy(buffer, ata_dma_buf, size);
 
     if (write) {
-        outb(ATA_PRIMARY + 7, 0xE7);  // ATA CACHE FLUSH
-        ata_wait_bsy(ATA_PRIMARY);
+        if (ata_defer_flush) {
+            ata_flush_pending = 1;
+        } else {
+            outb(ATA_PRIMARY + 7, 0xE7);  // ATA CACHE FLUSH
+            ata_wait_bsy(ATA_PRIMARY);
+        }
     }
 
     return 0;

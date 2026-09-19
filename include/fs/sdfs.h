@@ -26,6 +26,11 @@
 /* Default max mounts before forced fsck */
 #define SDFS_DEFAULT_MAX_MOUNTS 100
 
+/* Hard cap on addressable filesystem size. Keeps the in-RAM bitmap small
+ * (4M blocks * 4096 = 16 GiB, bitmap = 512 KiB = 128 blocks) so that mount
+ * and first-boot install stay fast and memory-bounded on real disks. */
+#define SDFS_MAX_BLOCKS (4u * 1024u * 1024u)
+
 /* Permission bits (POSIX-style) */
 #define SDFS_PERM_READ   0x004
 #define SDFS_PERM_WRITE  0x002
@@ -156,6 +161,9 @@ int sdfs_journal_entry_count(void);
 /* Raw block I/O (used by tests and fsck) */
 int sdfs_read_raw_block(uint32_t block, uint8_t *buffer);
 int sdfs_write_raw_block(uint32_t block, uint8_t *buffer);
+
+/* Flush the pending in-RAM allocation bitmap to disk */
+void sdfs_flush_bitmap(void);
 
 #endif
 void sdfs_enable_ramdisk(uint32_t mb);

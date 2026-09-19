@@ -24,6 +24,12 @@ static uint32_t disk_max_mounts;
 static uint32_t disk_format_version;
 static uint8_t *bitmap_cache = NULL;
 static uint32_t bitmap_bytes;
+static uint32_t bitmap_dirty_ops = 0;
+
+/* Flush the allocation bitmap only every N block allocations/frees instead
+ * of on every single operation. Each flush writes the whole bitmap, so doing
+ * it per-block is catastrophic on a large disk. */
+#define SDFS_BITMAP_FLUSH_OPS 256
 
 static void sdfs_open(fs_node_t *node);
 static void sdfs_close(fs_node_t *node);
@@ -149,17 +155,39 @@ static int sdfs_metadata_write(uint32_t block, uint8_t *buffer) {
  * ============================================================ */
 
 static int sdfs_load_bitmap(void) {
-    if (bitmap_cache) kfree(bitmap_cache);
+    if (bitmap_cache) { kfree(bitmap_cache); bitmap_cache = NULL; }
     bitmap_bytes = disk_bitmap_blocks * SDFS_BLOCK_SIZE;
     bitmap_cache = (uint8_t *)kmalloc(bitmap_bytes);
     if (!bitmap_cache) return -1;
-    if (sdfs_read_block(disk_bitmap_block, bitmap_cache) != 0) return -1;
+    for (uint32_t i = 0; i < disk_bitmap_blocks; i++) {
+        if (sdfs_read_block(disk_bitmap_block + i,
+                            bitmap_cache + i * SDFS_BLOCK_SIZE) != 0) {
+            kfree(bitmap_cache);
+            bitmap_cache = NULL;
+            return -1;
+        }
+    }
+    bitmap_dirty_ops = 0;
     return 0;
 }
 
 static void sdfs_save_bitmap(void) {
-    if (bitmap_cache) {
-        sdfs_metadata_write(disk_bitmap_block, bitmap_cache);
+    if (!bitmap_cache) return;
+    for (uint32_t i = 0; i < disk_bitmap_blocks; i++) {
+        sdfs_write_block(disk_bitmap_block + i,
+                         bitmap_cache + i * SDFS_BLOCK_SIZE);
+    }
+    bitmap_dirty_ops = 0;
+}
+
+void sdfs_flush_bitmap(void) {
+    if (!bitmap_cache || bitmap_dirty_ops == 0) return;
+    sdfs_save_bitmap();
+}
+
+static void sdfs_bitmap_touch(void) {
+    if (++bitmap_dirty_ops >= SDFS_BITMAP_FLUSH_OPS) {
+        sdfs_save_bitmap();
     }
 }
 
@@ -198,22 +226,28 @@ void sdfs_get_usage(uint32_t *total_blocks, uint32_t *used_blocks) {
     }
 }
 
-static uint32_t sdfs_alloc_block(void) {
+static uint32_t sdfs_alloc_block_raw(void) {
     for (uint32_t b = 0; b < disk_total_blocks; b++) {
         if (!sdfs_bitmap_test(b)) {
             sdfs_bitmap_set(b, 1);
-            sdfs_save_bitmap();
-            if (sdfs_zero_block(b) != 0) return 0;
+            sdfs_bitmap_touch();
             return b;
         }
     }
     return 0;
 }
 
+static uint32_t sdfs_alloc_block(void) {
+    uint32_t b = sdfs_alloc_block_raw();
+    if (b == 0) return 0;
+    if (sdfs_zero_block(b) != 0) return 0;
+    return b;
+}
+
 static void sdfs_free_block(uint32_t block) {
     if (block == 0 || block >= disk_total_blocks) return;
     sdfs_bitmap_set(block, 0);
-    sdfs_save_bitmap();
+    sdfs_bitmap_touch();
 }
 
 /* ============================================================
@@ -730,6 +764,12 @@ int sdfs_format(void) {
 
     disk_total_blocks = total_sectors / SDFS_SECTORS_PER_BLOCK;
     if (disk_total_blocks < 10) disk_total_blocks = 25600;
+    if (disk_total_blocks > SDFS_MAX_BLOCKS) disk_total_blocks = SDFS_MAX_BLOCKS;
+    serial_print("SDFS: format total_blocks=");
+    char tbuf[16];
+    itoa(disk_total_blocks, tbuf, 10);
+    serial_print(tbuf);
+    serial_print("\n");
 
     bitmap_bytes = (disk_total_blocks + 7) / 8;
     disk_bitmap_blocks = (bitmap_bytes + SDFS_BLOCK_SIZE - 1) / SDFS_BLOCK_SIZE;
@@ -853,6 +893,15 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
         disk_format_version = sb->format_version;
         disk_mount_count = sb->mount_count + 1;
         disk_max_mounts = sb->max_mounts;
+
+        if (disk_total_blocks < 10 || disk_total_blocks > SDFS_MAX_BLOCKS ||
+            disk_bitmap_blocks == 0 ||
+            disk_root_block >= disk_total_blocks ||
+            disk_bitmap_block + disk_bitmap_blocks > disk_total_blocks) {
+            serial_print("SDFS: unsupported/oversized superblock, forcing reformat\n");
+            kfree(sb_buf);
+            return NULL;
+        }
 
         sb->mount_count = disk_mount_count;
         sb->superblock_crc = 0;
@@ -993,39 +1042,53 @@ uint32_t sdfs_write_file(const char *path, uint8_t *buffer, uint32_t size) {
         start_block = sdfs_alloc_block();
         if (start_block == 0) return 0;
     } else {
-        start_block = sdfs_alloc_block();
+        start_block = sdfs_alloc_block_raw();
         if (start_block == 0) return 0;
 
         uint32_t cur_block = start_block;
         uint32_t remaining = size;
         uint8_t *src = buffer;
 
+        /* Allocate each next block up-front and link it directly, instead of
+         * walking the whole chain for every block (which was O(n^2) reads and
+         * made installing large files extremely slow on real disks). The full
+         * block is written below, so no separate zeroing pass is needed. */
         while (remaining > 0) {
+            uint32_t to_write = (remaining > 4092) ? 4092 : remaining;
+            uint32_t next_block = 0;
+
+            if (remaining > to_write) {
+                next_block = sdfs_alloc_block_raw();
+                if (next_block == 0) {
+                    sdfs_free_chain(start_block);
+                    return 0;
+                }
+            }
+
             uint8_t *buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
-            if (!buf) { sdfs_free_chain(start_block); return 0; }
+            if (!buf) {
+                if (next_block) sdfs_free_block(next_block);
+                sdfs_free_chain(start_block);
+                return 0;
+            }
             memset(buf, 0, SDFS_BLOCK_SIZE);
-
-            uint32_t to_write = remaining;
-            if (to_write > 4092) to_write = 4092;
-
+            memcpy(buf, &next_block, 4);
             memcpy(buf + 4, src, to_write);
+
             if (sdfs_write_block(cur_block, buf) != 0) {
                 kfree(buf);
+                uint32_t on_disk_next = sdfs_get_next_block(cur_block);
                 sdfs_free_chain(start_block);
+                if (next_block && on_disk_next != next_block) {
+                    sdfs_free_block(next_block);
+                }
                 return 0;
             }
             kfree(buf);
 
             src += to_write;
             remaining -= to_write;
-
-            if (remaining > 0) {
-                cur_block = sdfs_append_block(start_block);
-                if (cur_block == 0) {
-                    sdfs_free_chain(start_block);
-                    return 0;
-                }
-            }
+            cur_block = next_block;
         }
     }
 

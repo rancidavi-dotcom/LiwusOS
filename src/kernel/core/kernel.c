@@ -559,9 +559,13 @@ sdfs_root = sdfs_mount(disk_bus, disk_drive, 0);
       if (!flag && !kernel_test_mode) {
         serial_print("First boot: copying system files to SDFS...\n");
         vga_puts("First boot: installing system files...\n");
+        ata_set_writeback(1);
         if (mb2_mods_count > 0) {
             initrd_copy_to_sdfs(NULL);
         }
+        sdfs_flush_bitmap();
+        ata_flush_cache();
+        ata_set_writeback(0);
         sdfs_create_file("/.system_installed");
         sdfs_write_file("/.system_installed", (uint8_t *)"1", 1);
         serial_print("System installed to disk.\n");
