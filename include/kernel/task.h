@@ -87,6 +87,8 @@ int create_task_named(void (*entry_point)(), const char *name);
  * apos a criacao). */
 int create_task_named_prio(void (*entry_point)(), const char *name,
                            int priority);
+int create_task_named_stack(void (*entry_point)(), const char *name,
+                            int priority, uint64_t stack_size);
 int create_user_task(uint64_t entry_point, uint64_t user_stack);
 int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
                             const char *name);

@@ -861,7 +861,7 @@ if (kernel_test_mode) {
   boot_splash_set_progress(85, "Iniciando interface grafica...");
   gui_init();
   boot_stage("gui init done");
-  create_task_named(gui_compositor_task, "gui");
+  create_task_named_stack(gui_compositor_task, "gui", TASK_PRIO_NORMAL, 262144);
   if (!safe_hardware_boot) {
     create_task_named(audio_boot_chime_task, "audioboot");
     create_task_named(media_task, "media");

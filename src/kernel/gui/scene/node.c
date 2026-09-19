@@ -208,43 +208,75 @@ void node_mark_dirty(node_t *node, uint32_t flags) {
 }
 
 /* --------------------------------------------------------------------------
- * Transform update (lazy recompute)
+ * Transform update (lazy recompute) — iterative to avoid deep stack
  * -------------------------------------------------------------------------- */
+
+typedef struct {
+    node_t *node;
+    gui_transform_t parent_world;
+} transform_stack_entry_t;
 
 void node_update_transforms(node_t *node, gui_transform_t parent_world) {
     if (!node) return;
 
-    if (node->dirty & NODE_DIRTY_TRANSFORM) {
-        /* Own transform = translate to local position */
-        gui_transform_t local = transform_translation(node->local_x,
-                                                      node->local_y);
-        node->world_transform = transform_concat(local, parent_world);
-        node->dirty &= ~NODE_DIRTY_TRANSFORM;
-    }
+    transform_stack_entry_t stack[1024];
+    int top = 0;
+    stack[top++] = (transform_stack_entry_t){node, parent_world};
 
-    /* Recurse children */
-    for (uint32_t i = 0; i < node->child_count; i++) {
-        node_update_transforms(node->children[i], node->world_transform);
+    while (top > 0) {
+        transform_stack_entry_t entry = stack[--top];
+        node_t *n = entry.node;
+        gui_transform_t pw = entry.parent_world;
+
+        if (!n) continue;
+
+        if (n->dirty & NODE_DIRTY_TRANSFORM) {
+            gui_transform_t local = transform_translation(n->local_x, n->local_y);
+            n->world_transform = transform_concat(local, pw);
+            n->dirty &= ~NODE_DIRTY_TRANSFORM;
+        }
+
+        for (uint32_t i = 0; i < n->child_count; i++) {
+            if (top < 1024) {
+                stack[top++] = (transform_stack_entry_t){n->children[i], n->world_transform};
+            }
+        }
     }
 }
 
 /* --------------------------------------------------------------------------
- * Draw recursion
+ * Draw recursion — iterative to avoid deep stack
  * -------------------------------------------------------------------------- */
+
+typedef struct {
+    node_t *node;
+    struct gui_renderer *renderer;
+} draw_stack_entry_t;
 
 void node_draw_recursive(node_t *node, struct gui_renderer *r) {
     if (!node || !node->visible) return;
 
-    /* Paint self */
-    if (node->vtable && node->vtable->draw) {
-        node->vtable->draw(node, r);
-    }
+    draw_stack_entry_t stack[1024];
+    int top = 0;
+    stack[top++] = (draw_stack_entry_t){node, r};
 
-    /* Children in z-order (ascending) */
-    for (uint32_t i = 0; i < node->child_count; i++) {
-        node_draw_recursive(node->children[i], r);
-    }
+    while (top > 0) {
+        draw_stack_entry_t entry = stack[--top];
+        node_t *n = entry.node;
+        struct gui_renderer *rend = entry.renderer;
 
-    /* Clear paint dirty bit after draw */
-    node->dirty &= ~NODE_DIRTY_PAINT;
+        if (!n || !n->visible) continue;
+
+        if (n->vtable && n->vtable->draw) {
+            n->vtable->draw(n, rend);
+        }
+
+        for (int i = (int)n->child_count - 1; i >= 0; i--) {
+            if (top < 1024) {
+                stack[top++] = (draw_stack_entry_t){n->children[i], rend};
+            }
+        }
+
+        n->dirty &= ~NODE_DIRTY_PAINT;
+    }
 }

@@ -28,6 +28,18 @@ static inline int task_quantum(const task_t *t) {
   return p;
 }
 
+static void panic_stack_msg(task_t *curr, const char *type, char *buf, size_t bufsz) {
+  char num[16];
+  buf[0] = '\0';
+  strcat(buf, "STACK OVERFLOW (");
+  strcat(buf, type);
+  strcat(buf, ") task=");
+  strcat(buf, curr->name ? curr->name : "?");
+  strcat(buf, " pid=");
+  itoa(curr->id, num, 10);
+  strcat(buf, num);
+}
+
 static inline void task_sched_fields_init(task_t *t) {
   t->priority = TASK_PRIO_DEFAULT;
   t->time_slice = TASK_PRIO_DEFAULT;
@@ -119,7 +131,12 @@ int create_task_named(void (*entry_point)(), const char *name) {
 }
 
 int create_task_named_prio(void (*entry_point)(), const char *name,
-                           int priority) {
+                            int priority) {
+  return create_task_named_stack(entry_point, name, priority, 65536);
+}
+
+int create_task_named_stack(void (*entry_point)(), const char *name,
+                             int priority, uint64_t stack_size) {
   task_t *new_task = (task_t *)kmalloc(sizeof(task_t));
   memset(new_task, 0, sizeof(task_t));
   new_task->id = next_pid++;
@@ -136,7 +153,7 @@ int create_task_named_prio(void (*entry_point)(), const char *name,
     new_task->time_slice = priority;
   }
 
-  uint64_t stack_size = 65536; /* 64KB: yields reduce peak stack usage */
+  if (stack_size < 8192) stack_size = 8192;
   uint64_t stack_base = (uint64_t)kmalloc(stack_size);
   uint64_t stack = stack_base + stack_size;
   new_task->kernel_stack_base = stack_base;
@@ -317,20 +334,26 @@ uint64_t schedule(uint64_t current_rsp) {
     uint64_t stack_bottom = curr->kernel_stack_base;
     if (current_rsp < stack_bottom || current_rsp > stack_top) {
       extern void kernel_panic(const char *msg);
-      kernel_panic("STACK OVERFLOW (RSP out of bounds)");
+      char buf[128];
+      panic_stack_msg(curr, "RSP out of bounds", buf, sizeof(buf));
+      kernel_panic(buf);
     }
   }
 
   /* Top canary check (at original RSP) */
   if (curr->stack_canary_addr && *(uint64_t *)curr->stack_canary_addr != 0xDEADBEEFCAFEBABE) {
     extern void kernel_panic(const char *msg);
-    kernel_panic("STACK OVERFLOW (top canary corrupted)");
+    char buf[128];
+    panic_stack_msg(curr, "top canary", buf, sizeof(buf));
+    kernel_panic(buf);
   }
 
   /* Bottom canary check */
   if (*(uint64_t *)curr->kernel_stack_base != 0xDEADBEEFCAFEBABE) {
     extern void kernel_panic(const char *msg);
-    kernel_panic("STACK OVERFLOW (base canary corrupted)");
+    char buf[128];
+    panic_stack_msg(curr, "base canary", buf, sizeof(buf));
+    kernel_panic(buf);
   }
 
   spinlock_acquire(&scheduler_lock);
