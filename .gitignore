@@ -23,6 +23,9 @@ sdk/tools/liw-builder
 *.dll
 *.dylib
 
+# Headers gerados pelo alvo 'bearssl' (copiados de third_party/bearssl/inc)
+sdk/include/bearssl*.h
+
 # TCC toolchain artifacts
 repo/
 tcc

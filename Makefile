@@ -141,11 +141,12 @@ USER_TEST_SRCS = $(TEST_DIR)/test_runner_user.c \
 
 TEST_USER_ELF = $(TEST_DIR)/test_runner.elf
 
-.PHONY: all run run-serial run-log qa-boot-persistence clean zlib libpng libjpeg test test-sdfs test-user test-clean uefi-iso uefi-check
+.PHONY: all run run-serial run-log run-bios run-lan hw-prep qa-boot-persistence clean zlib libpng libjpeg test test-sdfs test-user test-clean uefi-iso uefi-check run-j1800 run-j1800-bios run-j1800-log
 
-# ---- Audio (AC'97 -> host) ----
-# O kernel toca o audio pela placa virtual AC'97; para ouvir no host o
-# QEMU precisa de um "audio backend":
+# ---- Audio (Intel HDA -> host) ----
+# O hardware universal (PC J1800) usa Intel HDA + codec Realtek ALC269VC,
+# por isso o padrao aqui tambem e HDA. Para ouvir no host o QEMU precisa
+# de um "audio backend":
 #   Windows (MSYS2/Git Bash) -> dsound
 #   WSL2 com WSLg             -> pa (PulseAudio -> alto-falantes do Windows)
 #   outro Linux               -> sdl
@@ -153,10 +154,10 @@ TEST_USER_ELF = $(TEST_DIR)/test_runner.elf
 UNAME_S := $(shell uname -s)
 AUDIO_BACKEND ?= $(if $(findstring MINGW,$(UNAME_S)),dsound,$(if $(wildcard /mnt/wslg/PulseServer),pa,sdl))
 # Placa de som virtual:
-#   ac97 (padrao) -> controlador legado Intel 82801AA
-#   hda           -> Intel High Definition Audio (controlador + codec duplex)
-# Para testar o driver HDA:  make run AUDIO_DEV=hda
-AUDIO_DEV ?= ac97
+#   hda (padrao)  -> Intel High Definition Audio (controlador + codec duplex)
+#   ac97          -> controlador legado Intel 82801AA (teste do driver AC'97)
+# Para usar AC'97:  make run AUDIO_DEV=ac97
+AUDIO_DEV ?= hda
 ifeq ($(AUDIO_DEV),hda)
 AUDIO_FLAGS = -audiodev $(AUDIO_BACKEND),id=aud0 -device intel-hda -device hda-duplex,audiodev=aud0
 else
@@ -228,7 +229,7 @@ libjpeg: $(CRT0_OBJ)
 bearssl: $(CRT0_OBJ)
 	@if [ ! -f $(BEARSSL_LIB) ] && [ -d $(BEARSSL_DIR) ]; then \
 		cd $(BEARSSL_DIR) && \
-		$(MAKE) CC=$(CC) CFLAGS="$(USER_CFLAGS) -I$(CURDIR)/sdk/include" libbearssl.a && \
+		$(MAKE) CC=$(CC) CFLAGS="$(USER_CFLAGS) -U_FORTIFY_SOURCE -fno-stack-protector -DBR_USE_URANDOM=0 -DBR_USE_WIN32_RAND=0 -I$(CURDIR)/sdk/include" lib && \
 		cp build/libbearssl.a ../../$(BEARSSL_LIB) && \
 		cp -r inc/* ../../sdk/include/; \
 	fi
@@ -303,6 +304,14 @@ $(TCC_ELF): apps/tcc/tcc.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
 	@mkdir -p $(dir $@)
 	$(CC) $(TCC_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/tcc/tcc.c -L$(NEWLIB_DIR) -lgloss -lc -lm -Wl,--allow-multiple-definition -o $@ $(LIBGCC)
 
+# TCC e opcional: se a submodule '$(TCC_DIR)' nao estiver presente (ex.: apos
+# o cleanup do repo), o app TCC e simplesmente omitido do build do ISO.
+ifeq ($(wildcard $(TCC_DIR)/tcc.c),)
+ISO_TCC_DEP =
+else
+ISO_TCC_DEP = $(TCC_ELF)
+endif
+
 
 
 sdk/lib/libliwus_gui.a: sdk/lib/liwus_gui.c
@@ -317,7 +326,7 @@ $(LDE_ELF): lde/src/main.c lde/src/system_bridge.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) lde/src/main.c lde/src/system_bridge.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
 
-$(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(DEMO_GUI_ELF) $(LDE_ELF) $(TCC_ELF)
+$(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(DEMO_GUI_ELF) $(LDE_ELF) $(ISO_TCC_DEP)
 	$(HOSTCC) -Iinclude -Iinclude/uapi sdk/tools/liw-builder.c -o sdk/tools/liw-builder
 	$(HOSTCC) sdk/tools/img-gen.c -o sdk/tools/img-gen
 	./sdk/tools/liw-builder src/boot/test.liw src/boot/test.elf src/boot/test_manifest.json
@@ -398,31 +407,100 @@ test-clean:
 	rm -f $(TEST_USER_ELF)
 	rm -f $(KERNEL_TEST_OBJS)
 
+# Atalho de compatibilidade: KVM=1 continua funcionando.
 KVM_FLAGS = $(if $(filter 1,$(KVM)),-enable-kvm,)
 
-run: $(ISO_IMAGE)
-	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
-	PULSE_SERVER=$(if $(filter pa,$(AUDIO_BACKEND)),/mnt/wslg/PulseServer,) \
-	GDK_BACKEND=x11 SDL_VIDEODRIVER=x11 \
-	qemu-system-x86_64 $(KVM_FLAGS) -cdrom $(ISO_IMAGE) $(DISK_FLAGS) -m 512 $(NET_FLAGS) $(AUDIO_FLAGS)
+# ============================================================
+# HARDWARE DE TESTE UNIVERSAL - PC Bay Trail / Celeron J1800
+# ============================================================
+# TODO alvo de execucao (run/run-serial/run-log/run-lan/run-bios) emula o
+# PC real do projeto, que e tambem o alvo de hardware fisico:
+#   CPU  : Celeron J1800 (Silvermont, 2C/2T)  -> KVM: -cpu host | TCG: -cpu max
+#   RAM  : 2 GB DDR3-1333
+#   Firm.: AMI UEFI 5.6.5 (2014)              -> OVMF (run-bios: SeaBIOS)
+#   Disco: SATA AHCI (WD WD5000LPVX)          -> ahci + ide-hd
+#   USB  : xHCI + EHCI                        -> qemu-xhci + usb-ehci
+#   Audio: Intel HDA + Realtek ALC269VC       -> intel-hda + hda-duplex
+#   Rede : RTL8168/8111 (r8169)               -> rtl8139 (QEMU nao emula r8169)
+#   WiFi : RTL8188CE                          -> nao usado
+#
+# O QEMU NAO emula o RTL8168/r8169 nem a GPU Intel Gen7; usamos o rtl8139
+# (Realtek, suportado pelo kernel). O r8169 so e validado no metal.
+#
+# Ajustes:  HW_MEM/HW_SMP   desliga KVM: HW_KVM=0   disco: DISK_DEV=nvme
+#           audio: AUDIO_DEV=ac97   LAN real: make run-lan
+# ============================================================
 
-run-serial: $(ISO_IMAGE)
-	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
-	PULSE_SERVER=$(if $(filter pa,$(AUDIO_BACKEND)),/mnt/wslg/PulseServer,) \
-	GDK_BACKEND=x11 SDL_VIDEODRIVER=x11 \
-	qemu-system-x86_64 $(KVM_FLAGS) -cdrom $(ISO_IMAGE) $(DISK_FLAGS) -m 512 $(NET_FLAGS) $(AUDIO_FLAGS) -serial stdio -d guest_errors -no-reboot
+HW_MACHINE   ?= q35
+HW_MEM       ?= 2048
+HW_SMP       ?= 2
+HW_KVM       ?= $(if $(shell test -w /dev/kvm && echo 1),1,)
+HW_CPU       ?= $(if $(filter 1,$(HW_KVM)),host,max)
+HW_KVM_FLAGS  = $(if $(filter 1,$(HW_KVM)),-enable-kvm,)
 
-run-log: $(ISO_IMAGE)
-	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
-	PULSE_SERVER=$(if $(filter pa,$(AUDIO_BACKEND)),/mnt/wslg/PulseServer,) \
-	GDK_BACKEND=x11 SDL_VIDEODRIVER=x11 \
-	qemu-system-x86_64 $(KVM_FLAGS) -cdrom $(ISO_IMAGE) $(DISK_FLAGS) -m 512 $(NET_FLAGS) $(AUDIO_FLAGS) -serial file:qemu_serial.log -D qemu_debug.log -d int,cpu_reset
+HW_OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
+HW_OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
+HW_VARS       = build/uefi_vars.fd
+HW_UEFI_ISO  ?= liwusos-uefi.iso
+
+HW_SMBIOS = \
+	-smbios type=0,vendor="American Megatrends Inc.",version="5.6.5",date="05/13/2014" \
+	-smbios type=1,manufacturer="AOC",product="BTDD-EAIO",version="1.0",serial="Default string" \
+	-smbios type=4,manufacturer="Intel(R) Corporation",version="Intel(R) Celeron(R) CPU J1800 @ 2.41GHz",serial="To be filled by O.E.M." \
+	-smbios type=17,manufacturer="Samsung",serial="Default string",part="DDR3",speed=1333
+
+HW_FLAGS = \
+	-machine $(HW_MACHINE) \
+	-cpu $(HW_CPU) -smp $(HW_SMP) -m $(HW_MEM) \
+	$(DISK_FLAGS) \
+	-device qemu-xhci,id=xhci,p2=4,p3=4 \
+	-device usb-ehci,id=ehci \
+	-device usb-kbd,bus=xhci.0 -device usb-mouse,bus=xhci.0 \
+	$(NET_FLAGS) \
+	$(AUDIO_FLAGS) \
+	$(HW_SMBIOS)
+
+HW_UEFI = \
+	-drive if=pflash,format=raw,readonly=on,file=$(HW_OVMF_CODE) \
+	-drive if=pflash,format=raw,file=$(HW_VARS)
+
+HW_AUDIO_ENV = PULSE_SERVER=$(if $(filter pa,$(AUDIO_BACKEND)),/mnt/wslg/PulseServer,) GDK_BACKEND=x11 SDL_VIDEODRIVER=x11
+
+hw-prep:
+	@mkdir -p build
+	@if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
+	@if [ ! -f $(HW_VARS) ]; then cp $(HW_OVMF_VARS) $(HW_VARS); fi
+
+# Janela (UEFI/OVMF = firmware do PC real).
+run: uefi-iso hw-prep
+	$(HW_AUDIO_ENV) \
+	qemu-system-x86_64 $(HW_KVM_FLAGS) $(HW_FLAGS) $(HW_UEFI) -cdrom $(HW_UEFI_ISO)
+
+# Janela + serial no terminal + erros de guest.
+run-serial: uefi-iso hw-prep
+	$(HW_AUDIO_ENV) \
+	qemu-system-x86_64 $(HW_KVM_FLAGS) $(HW_FLAGS) $(HW_UEFI) -cdrom $(HW_UEFI_ISO) -serial stdio -d guest_errors -no-reboot
+
+# Headless: serial -> qemu_serial.log + depuracao de interrupcoes.
+run-log: AUDIO_BACKEND = none
+run-log: uefi-iso hw-prep
+	qemu-system-x86_64 $(HW_KVM_FLAGS) $(HW_FLAGS) $(HW_UEFI) -cdrom $(HW_UEFI_ISO) \
+		-display none -monitor none -serial file:qemu_serial.log -D qemu_debug.log -d int,cpu_reset -no-reboot
+
+# Hardware universal com firmware legado (SeaBIOS) - comparacao/debug.
+run-bios: $(ISO_IMAGE) hw-prep
+	$(HW_AUDIO_ENV) \
+	qemu-system-x86_64 $(HW_KVM_FLAGS) $(HW_FLAGS) -cdrom $(ISO_IMAGE)
 
 # Roda o OS na LAN de VERDADE (placa TAP na rede local).
-# Avisa/configura o TAP e depois chama 'make run NET_MODE=tap'.
-run-lan: $(ISO_IMAGE)
+run-lan: uefi-iso
 	bash scripts/run_lan.sh
 	@$(MAKE) run NET_MODE=tap
+
+# Aliases (mesmo hardware e firmware).
+run-j1800: run
+run-j1800-bios: run-bios
+run-j1800-log: run-log
 
 qa-boot-persistence: $(ISO_IMAGE)
 	bash ./scripts/qa_boot_persistence.sh
