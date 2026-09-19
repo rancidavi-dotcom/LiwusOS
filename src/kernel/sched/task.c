@@ -327,9 +327,10 @@ uint64_t schedule(uint64_t current_rsp) {
   if (!curr)
     return current_rsp;
 
-  /* RSP bounds check - stack grows DOWN from kernel_stack to kernel_stack_base.
-   * Skip for init task (PID 0) which uses the boot stack with no allocated bounds. */
+  /* Skip all stack checks for init task (PID 0) which uses the boot stack
+   * with no allocated bounds (kernel_stack == 0). */
   if (curr->kernel_stack != 0 && curr->kernel_stack_base != 0) {
+    /* RSP bounds check - stack grows DOWN from kernel_stack to kernel_stack_base. */
     uint64_t stack_top = curr->kernel_stack;
     uint64_t stack_bottom = curr->kernel_stack_base;
     if (current_rsp < stack_bottom || current_rsp > stack_top) {
@@ -338,22 +339,22 @@ uint64_t schedule(uint64_t current_rsp) {
       panic_stack_msg(curr, "RSP out of bounds", buf, sizeof(buf));
       kernel_panic(buf);
     }
-  }
 
-  /* Top canary check (at original RSP) */
-  if (curr->stack_canary_addr && *(uint64_t *)curr->stack_canary_addr != 0xDEADBEEFCAFEBABE) {
-    extern void kernel_panic(const char *msg);
-    char buf[128];
-    panic_stack_msg(curr, "top canary", buf, sizeof(buf));
-    kernel_panic(buf);
-  }
+    /* Top canary check (at original RSP) */
+    if (curr->stack_canary_addr && *(uint64_t *)curr->stack_canary_addr != 0xDEADBEEFCAFEBABE) {
+      extern void kernel_panic(const char *msg);
+      char buf[128];
+      panic_stack_msg(curr, "top canary", buf, sizeof(buf));
+      kernel_panic(buf);
+    }
 
-  /* Bottom canary check */
-  if (*(uint64_t *)curr->kernel_stack_base != 0xDEADBEEFCAFEBABE) {
-    extern void kernel_panic(const char *msg);
-    char buf[128];
-    panic_stack_msg(curr, "base canary", buf, sizeof(buf));
-    kernel_panic(buf);
+    /* Bottom canary check */
+    if (*(uint64_t *)curr->kernel_stack_base != 0xDEADBEEFCAFEBABE) {
+      extern void kernel_panic(const char *msg);
+      char buf[128];
+      panic_stack_msg(curr, "base canary", buf, sizeof(buf));
+      kernel_panic(buf);
+    }
   }
 
   spinlock_acquire(&scheduler_lock);
