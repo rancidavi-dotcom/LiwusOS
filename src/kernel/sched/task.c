@@ -136,7 +136,7 @@ int create_task_named_prio(void (*entry_point)(), const char *name,
     new_task->time_slice = priority;
   }
 
-  uint64_t stack_size = 262144; /* 256KB: GUI compositor needs much more stack */
+  uint64_t stack_size = 65536; /* 64KB: yields reduce peak stack usage */
   uint64_t stack_base = (uint64_t)kmalloc(stack_size);
   uint64_t stack = stack_base + stack_size;
   new_task->kernel_stack_base = stack_base;

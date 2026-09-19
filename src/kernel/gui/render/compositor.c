@@ -350,55 +350,66 @@ void compositor_frame(compositor_t *c) {
 
     uint64_t t_start = rdtsc();
 
-    /* 0. Taskbar: sincroniza apps abertos + relógio e mantém no topo antes
-     *    do processamento de eventos (para o hit-test) e do desenho. */
+    /* 0. Taskbar: sincroniza apps abertos + relógio */
     taskbar_refresh();
+    switch_task(); /* yield - reduce peak stack */
 
     /* 1. Poll input → post events */
     input_manager_poll(c->input);
     uint64_t t_in = rdtsc();
     perf_input_cycles = t_in - t_start;
+    switch_task(); /* yield */
 
     /* 2. Dispatch events to all subscribers */
     event_bus_dispatch(c->bus);
     uint64_t t_ev = rdtsc();
     perf_event_cycles = t_ev - t_in;
+    switch_task(); /* yield */
 
     /* 3. Camera inertia */
     camera_update(c->camera);
+    switch_task(); /* yield */
 
     /* 3.5. Animations */
     animation_engine_tick();
+    switch_task(); /* yield */
 
     /* 4. Transform pass */
     node_update_transforms(c->scene_root, transform_identity());
+    switch_task(); /* yield */
 
     /* 5. Full repaint every frame */
     cursor_restore(c);
     draw_background(c);
     renderer_set_clip(c->renderer, rect_zero());
-    taskbar_refresh(); /* mantém a barra no topo após eventos do frame */
+    taskbar_refresh();
+    switch_task(); /* yield */
+
     node_draw_recursive(c->scene_root, c->renderer);
+    switch_task(); /* yield */
 
     if (s_show_debug_overlays) {
         draw_minimap(c);
-        /* Profiler overlay (shows previous frame's metrics) */
         draw_profiler_overlay(c);
+        switch_task(); /* yield */
     }
 
     /* 6. Cursor */
     int mx = input_mouse_x(c->input);
     int my = input_mouse_y(c->input);
     cursor_draw(c, mx, my);
+    switch_task(); /* yield */
 
     uint64_t t_render = rdtsc();
     perf_render_cycles = t_render - t_ev;
 
     /* Apply CRT scanlines effect */
     apply_scanlines(c);
+    switch_task(); /* yield */
 
     /* 7. Flip back-buffer → VRAM */
     renderer_present(c->renderer);
+    switch_task(); /* yield */
 
     uint64_t t_blit = rdtsc();
     perf_blit_cycles = t_blit - t_render;
@@ -406,7 +417,7 @@ void compositor_frame(compositor_t *c) {
 
     c->frame_number++;
 
-    /* Yield to other kernel tasks */
+    /* Final yield */
     switch_task();
 }
 
