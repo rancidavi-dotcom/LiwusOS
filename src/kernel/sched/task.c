@@ -159,9 +159,14 @@ int create_task_named_prio(void (*entry_point)(), const char *name,
   regs->rsp = (uint64_t)((stack & ~(uint64_t)0xF) - 8);
   regs->ss = 0x10;
 
-  /* Stack canary: write magic at bottom of stack (stack_base) */
-  *(uint64_t *)stack_base = 0xDEADBEEFCAFEBABE;
+  /* Stack canary at TOP (where RSP starts) - catches overflow immediately */
+  uint64_t canary_addr = regs->rsp;
+  *(uint64_t *)canary_addr = 0xDEADBEEFCAFEBABE;
   new_task->stack_canary = 0xDEADBEEFCAFEBABE;
+  new_task->stack_canary_addr = canary_addr;
+
+  /* Also canary at bottom for underflow detection */
+  *(uint64_t *)stack_base = 0xDEADBEEFCAFEBABE;
 
   new_task->stack_top = (uint64_t)regs;
 
@@ -305,11 +310,21 @@ uint64_t schedule(uint64_t current_rsp) {
   if (!curr)
     return current_rsp;
 
-  /* Stack canary check */
-  if (curr->stack_canary != 0xDEADBEEFCAFEBABE) {
+  /* RSP bounds check - stack grows DOWN from kernel_stack to kernel_stack_base */
+  uint64_t stack_top = curr->kernel_stack;
+  uint64_t stack_bottom = curr->kernel_stack_base;
+  if (current_rsp < stack_bottom || current_rsp > stack_top) {
     extern void kernel_panic(const char *msg);
-    kernel_panic("STACK OVERFLOW (canary corrupted)");
+    kernel_panic("STACK OVERFLOW (RSP out of bounds)");
   }
+
+  /* Top canary check (at original RSP) */
+  if (curr->stack_canary_addr && *(uint64_t *)curr->stack_canary_addr != 0xDEADBEEFCAFEBABE) {
+    extern void kernel_panic(const char *msg);
+    kernel_panic("STACK OVERFLOW (top canary corrupted)");
+  }
+
+  /* Bottom canary check */
   if (*(uint64_t *)curr->kernel_stack_base != 0xDEADBEEFCAFEBABE) {
     extern void kernel_panic(const char *msg);
     kernel_panic("STACK OVERFLOW (base canary corrupted)");
