@@ -17,6 +17,7 @@
 #include "../core/taskbar.h"
 #include "../assets/asset_manager.h"
 #include <drivers/serial.h>
+#include "vga.h"
 
 compositor_t *g_compositor = NULL;
 
@@ -347,6 +348,12 @@ void compositor_set_debug_overlays(bool enabled) {
 
 void compositor_frame(compositor_t *c) {
     if (!c) return;
+
+    static int frame_count = 0;
+    if (frame_count == 0) {
+        vga_puts("\n[COMPOSITOR] Starting frame loop\n");
+    }
+    frame_count++;
 
     uint64_t t_start = rdtsc();
 

@@ -880,8 +880,14 @@ if (kernel_test_mode) {
   /* Stable serial marker consumed by the headless regression suite. */
   serial_print("LIWUS_BOOT_READY\n");
   serial_print("sti...\n");
+  vga_puts("\n[KERNEL] LIWUS_BOOT_READY - entering idle loop\n");
   asm volatile("sti");
+  uint64_t hlt_count = 0;
   while (1) {
     asm volatile("hlt");
+    hlt_count++;
+    if ((hlt_count & 0xFFFFF) == 0) {
+      vga_putc('.');
+    }
   }
 }
