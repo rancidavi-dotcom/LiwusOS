@@ -104,9 +104,26 @@ void dhcp_discover() {
     serial_print("[dhcp] sending discover...\n");
     udp_send(0xFFFFFFFF, 68, 67, pkt, sizeof(dhcp_packet_t));
     kfree(pkt);
+}
 
-    uint32_t start = timer_ticks;
-    while (!dhcp_bound && (timer_ticks - start) < 500) {
-        switch_task();
+int dhcp_has_bound(void) {
+    return dhcp_bound ? 1 : 0;
+}
+
+/* Runs DHCP as its own task.  It never blocks the boot path: it sleeps
+ * between attempts so the scheduler (and the GUI task) keeps running.
+ * This is what makes a slow/no-ARP real LAN not freeze first boot. */
+static void dhcp_task_entry(void) {
+    for (int attempt = 0; attempt < 6 && !dhcp_has_bound(); attempt++) {
+        dhcp_discover();
+        for (int i = 0; i < 50 && !dhcp_has_bound(); i++) {
+            task_sleep_ms(100);
+        }
     }
+    serial_print(dhcp_has_bound() ? "[dhcp] task done (bound)\n"
+                                  : "[dhcp] task done (no reply)\n");
+}
+
+void create_dhcp_config_task(void) {
+    create_task_named(dhcp_task_entry, "dhcp");
 }

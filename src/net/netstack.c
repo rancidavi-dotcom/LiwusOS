@@ -386,6 +386,14 @@ static int netstack_resolve_mac(uint32_t dest_ip, uint8_t out_mac[6]) {
   extern volatile uint32_t timer_ticks;
   uint32_t target_ip = netstack_next_hop(dest_ip);
 
+  /* Broadcast (255.255.255.255, e.g. DHCP Discover): use ff:ff:ff:ff:ff:ff
+   * directly.  Doing an ARP lookup first would route it to the gateway and
+   * stall/NEVER send on a real LAN (the ARP has no answer). */
+  if (dest_ip == 0xFFFFFFFF) {
+    memset(out_mac, 0xFF, 6);
+    return 0;
+  }
+
   // Consulta o cache de vizinhos primeiro (sem bloqueio, seguro para IRQ)
   for (int i = 0; i < arp_cache_count; i++) {
     if (arp_cache[i].ip == target_ip) {

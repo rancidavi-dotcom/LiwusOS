@@ -610,15 +610,18 @@ sdfs_root = sdfs_mount(disk_bus, disk_drive, 0);
   init_syscalls();
   boot_stage("sched ok");
 
-  /* ---- Rede agora pode obter IP: timer + scheduler estao no ar ---- */
+  /* ---- Rede agora pode obter IP: timer + scheduler estao no ar ----
+   * DHCP roda em uma task propria (assincrono). Bloquear o boot ate o
+   * DHCP terminar (como era feito antes) travava o boot no hardware real:
+   * o ARP do broadcast DHCP era resolvido contra o gateway e stallava. */
   {
-    extern void dhcp_discover(void);
+    extern void create_dhcp_config_task(void);
     pci_device_t *net_dev = pci_get_net();
     if (net_dev) {
-      serial_print("[boot] DHCP bind...\n");
+      serial_print("[boot] DHCP bind (async task)...\n");
       vga_puts("Binding network (DHCP)...\n");
-      dhcp_discover();
-      serial_print("[boot] DHCP done\n");
+      create_dhcp_config_task();
+      serial_print("[boot] DHCP task started (non-blocking)\n");
     }
   }
 
