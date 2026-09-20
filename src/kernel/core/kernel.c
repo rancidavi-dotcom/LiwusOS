@@ -888,6 +888,11 @@ if (kernel_test_mode) {
     hlt_count++;
     if ((hlt_count & 0xFFFFF) == 0) {
       vga_putc('.');
+      serial_print(".");
+    }
+    if ((hlt_count & 0x3FFFFF) == 0) {
+      vga_puts(" [idle]");
+      serial_print(" [idle]");
     }
   }
 }

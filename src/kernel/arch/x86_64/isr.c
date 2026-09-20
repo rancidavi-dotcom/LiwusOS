@@ -1,9 +1,10 @@
 #include "isr.h"
 #include "io.h"
 #include "serial.h"
-#include "syscall.h" // Para syscall_handler
+#include "syscall.h"
 #include "task.h"
 #include "string.h"
+#include "vga.h"
 
 #define MAX_IRQ_HANDLERS 16
 static void (*irq_handlers[MAX_IRQ_HANDLERS])(void) = {0};
@@ -28,6 +29,28 @@ void isr_handler(registers_t *regs) {
   if (regs->int_no == 128) {
     syscall_handler(regs);
   } else {
+    char num[16];
+    vga_puts("\n[EXCEPTION] ISR=");
+    itoa(regs->int_no, num, 10);
+    vga_puts(num);
+    vga_puts(" err=");
+    itoa(regs->err_code, num, 16);
+    vga_puts(num);
+    if (regs->int_no == 14) {
+      uint64_t cr2;
+      asm volatile("mov %%cr2, %0" : "=r"(cr2));
+      vga_puts(" cr2=");
+      itoa((int)(cr2 & 0xFFFFFFFF), num, 16);
+      vga_puts(num);
+    }
+    vga_puts(" rip=");
+    itoa((int)(regs->rip & 0xFFFFFFFF), num, 16);
+    vga_puts(num);
+    vga_puts(" rsp=");
+    itoa((int)(regs->rsp & 0xFFFFFFFF), num, 16);
+    vga_puts(num);
+    vga_puts("\n");
+    
     serial_print("CPU exception: ");
     serial_print_hex(regs->int_no);
     serial_print(" err=");
