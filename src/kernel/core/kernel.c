@@ -843,6 +843,10 @@ if (kernel_test_mode) {
   vga_puts("\nLiwusOS modo texto puro\n");
   vga_puts("VGA 80x25 @ 0xB8000\n\n");
 
+  /* Terminal simples em modo texto */
+  extern void text_shell(void);
+  text_shell();
+
   /* Stable serial marker consumed by the headless regression suite. */
   serial_print("LIWUS_BOOT_READY\n");
   serial_print("sti...\n");
