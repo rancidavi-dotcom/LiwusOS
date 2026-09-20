@@ -622,8 +622,8 @@ sdfs_root = sdfs_mount(disk_bus, disk_drive, 0);
     serial_print("[boot] TEST MODE detected (test_mode in initrd)\n");
   }
 
-  init_timer(100);
   init_tasking();
+  init_timer(100);
   init_syscalls();
   boot_stage("sched ok");
 

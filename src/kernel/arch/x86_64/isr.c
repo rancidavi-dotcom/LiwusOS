@@ -112,7 +112,7 @@ uint64_t irq_handler(uint64_t rsp) {
      * interrupções (teclado IRQ1, mouse IRQ12 e o próprio PIT). */
     outb(0x20, 0x20);
     g_in_irq = 0;
-    return schedule(rsp);
+    return rsp;  // Don't call schedule - text mode with single task
   } else if (irq == 1) {
     keyboard_handler();
   } else if (irq == 12) {

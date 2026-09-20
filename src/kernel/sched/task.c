@@ -327,6 +327,11 @@ uint64_t schedule(uint64_t current_rsp) {
   if (!curr)
     return current_rsp;
 
+  /* Fast path: only init task exists (no other tasks), don't attempt scheduling.
+   * This avoids all stack checks, spinlocks, and task list traversal. */
+  if (curr->id == 0 && curr->next == curr)
+    return current_rsp;
+
   /* Skip all stack checks for init task (PID 0) which uses the boot stack
    * with no allocated bounds (kernel_stack == 0). */
   if (curr->kernel_stack != 0 && curr->kernel_stack_base != 0) {
@@ -458,7 +463,9 @@ uint64_t schedule(uint64_t current_rsp) {
 
   /* Atualiza TSS ESP0 para a pilha de kernel da nova tarefa */
   extern tss_entry_t cpus_tss[16];
-  cpus_tss[get_cpu_id()].rsp0 = new_curr->kernel_stack;
+  if (new_curr->kernel_stack != 0) {
+      cpus_tss[get_cpu_id()].rsp0 = new_curr->kernel_stack;
+  }
 
   if (new_curr->user_mode && new_curr != curr) {
     serial_print("SCHED: TSS.rsp0 updated to ");

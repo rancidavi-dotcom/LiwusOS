@@ -1,5 +1,6 @@
 #include "io.h"
 #include "keyboard.h"
+#include "serial.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -290,11 +291,7 @@ int keyboard_get_event(void *ev) {
 
 char get_last_key(void) { char k = last_key; last_key = 0; return k; }
 bool check_ctrl_c(void) {
-    if (ctrl_c_pending) {
-        ctrl_c_pending = false;
-        return true;
-    }
-    return false;
+    return ctrl_c_pending ? (ctrl_c_pending = false, true) : false;
 }
 
 void keyboard_set_ctrl_c(void) {

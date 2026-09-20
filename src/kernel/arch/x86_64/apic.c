@@ -36,6 +36,11 @@ void ap_kernel_main(void) {
     extern void tss_flush(void);
     tss_flush();
 
+    /* Set current_task for this AP to the init task so timer interrupts
+     * don't crash with NULL current_task. */
+    extern task_t *task_list;
+    set_current_task(task_list);
+
     serial_print("APIC: AP core (CPU ");
     char num_buf[4] = {'0' + cpu_idx, 0};
     serial_print(num_buf);
