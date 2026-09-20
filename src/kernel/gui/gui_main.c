@@ -14,7 +14,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include "vga.h"
 #include "core/event_bus.h"
 #include "scene/node.h"
 #include "scene/camera.h"
@@ -154,52 +153,41 @@ void terminal_app_start(void) {
 
 
 void gui_init(void) {
-    vga_puts("[GUI] gui_init start\n");
     /* 1. Scene graph */
     scene_graph_init();
-    vga_puts("[GUI] scene_graph_init done\n");
     
     /* 1.1. App Registry */
     app_registry_init();
-    vga_puts("[GUI] app_registry_init done\n");
     app_settings_init();
     app_media_init();
     app_imageviewer_init();
     extern void app_browser_init(void);
     app_browser_init();
-    vga_puts("[GUI] app inits done\n");
 
     /* 1.5. Theme Engine */
     theme_engine_init();
-    vga_puts("[GUI] theme_engine_init done\n");
 
     /* 1.6. Animation Engine */
     animation_engine_init();
-    vga_puts("[GUI] animation_engine_init done\n");
 
     /* 2. Event bus */
     g_event_bus = event_bus_create();
-    vga_puts("[GUI] event_bus_create done\n");
 
     /* 3. Input manager */
     g_input_manager = input_manager_create(g_event_bus);
-    vga_puts("[GUI] input_manager_create done\n");
 
     /* 4. Camera */
     int sw = (int)vga_fb_width;
     int sh = (int)vga_fb_height;
     g_camera = camera_create(sw, sh);
-    vga_puts("[GUI] camera_create done\n");
 
     /* 5. Framebuffer renderer */
     s_renderer = fb_renderer_create();
-    vga_puts("[GUI] fb_renderer_create done\n");
 
     /* 6. Montar a Scene */
     node_t *root = node_create(NODE_CANVAS, "canvas");
     if (!root) return;
     g_scene->root = root;
-    vga_puts("[GUI] scene root created\n");
 
     /* Register Apps */
     extern void terminal_app_start(void);
