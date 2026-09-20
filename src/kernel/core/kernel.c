@@ -838,52 +838,15 @@ if (kernel_test_mode) {
   if (!safe_hardware_boot)
     usb_start_polling();
 
-  /* A graphics framebuffer is optional on physical firmware.  Do not enter
-   * the compositor with zero-sized output: preserve a usable, visible text
-   * boot instead of turning a video-mode negotiation failure into a black
-   * screen. */
-  extern uint8_t vga_fb_bpp;
-  if (vga_fb_addr == 0 || vga_fb_width == 0 || vga_fb_height == 0 ||
-      vga_fb_bpp != 32) {
-    serial_print("No compatible framebuffer; staying in VGA text mode.\n");
-    vga_puts("\nLiwusOS iniciou em modo texto seguro.\n");
-    vga_puts("Framebuffer grafico indisponivel neste firmware.\n");
-    /* não halta - continua para o idle loop no modo texto */
-  } else {
-    serial_print("Framebuffer OK - mas GUI desabilitado, modo texto.\n");
-    vga_puts("\nFramebuffer detectado, mas GUI desabilitado.\n");
-  }
-
-  /* GUI DESABILITADO - modo somente texto */
-  /* 
-  extern void gui_init(void);
-  extern void gui_compositor_task(void);
-  
-  boot_stage("gui init begin");
-  boot_splash_set_progress(85, "Iniciando interface grafica...");
-  gui_init();
-  boot_stage("gui init done");
-  create_task_named_stack(gui_compositor_task, "gui", TASK_PRIO_NORMAL, 262144);
-  if (!safe_hardware_boot) {
-    create_task_named(audio_boot_chime_task, "audioboot");
-    create_task_named(media_task, "media");
-  }
-  boot_stage("gui tasks ok");
-
-  // Virtual pendrive: probe the SCSI bus and start the hot-plug watcher. 
-  extern void pen_init(void);
-  extern void pen_task(void);
-  pen_init();
-  create_task_named(pen_task, "pen");
-
-  boot_splash_set_progress(100, "Pronto!");
-  boot_splash_done();
-  */
+  /* Modo texto puro - GRUB configura gfxpayload=text, VGA 80x25 em 0xB8000 */
+  serial_print("Modo texto: VGA 80x25 ativo\n");
+  vga_puts("\nLiwusOS modo texto puro\n");
+  vga_puts("VGA 80x25 @ 0xB8000\n\n");
 
   /* Stable serial marker consumed by the headless regression suite. */
   serial_print("LIWUS_BOOT_READY\n");
   serial_print("sti...\n");
-  vga_puts("\n[KERNEL] LIWUSOS TEXTO PRONTO - entering idle loop\n");
+  vga_puts("[KERNEL] LIWUSOS TEXTO PURO PRONTO - entering idle loop\n");
   asm volatile("sti");
   while (1) {
     asm volatile("hlt");
