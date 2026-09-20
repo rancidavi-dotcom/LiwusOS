@@ -848,12 +848,14 @@ if (kernel_test_mode) {
     serial_print("No compatible framebuffer; staying in VGA text mode.\n");
     vga_puts("\nLiwusOS iniciou em modo texto seguro.\n");
     vga_puts("Framebuffer grafico indisponivel neste firmware.\n");
-    asm volatile("sti");
-    while (1) {
-      asm volatile("hlt");
-    }
+    /* não halta - continua para o idle loop no modo texto */
+  } else {
+    serial_print("Framebuffer OK - mas GUI desabilitado, modo texto.\n");
+    vga_puts("\nFramebuffer detectado, mas GUI desabilitado.\n");
   }
 
+  /* GUI DESABILITADO - modo somente texto */
+  /* 
   extern void gui_init(void);
   extern void gui_compositor_task(void);
   
@@ -868,7 +870,7 @@ if (kernel_test_mode) {
   }
   boot_stage("gui tasks ok");
 
-  /* Virtual pendrive: probe the SCSI bus and start the hot-plug watcher. */
+  // Virtual pendrive: probe the SCSI bus and start the hot-plug watcher. 
   extern void pen_init(void);
   extern void pen_task(void);
   pen_init();
@@ -876,10 +878,12 @@ if (kernel_test_mode) {
 
   boot_splash_set_progress(100, "Pronto!");
   boot_splash_done();
+  */
 
   /* Stable serial marker consumed by the headless regression suite. */
   serial_print("LIWUS_BOOT_READY\n");
   serial_print("sti...\n");
+  vga_puts("\n[KERNEL] LIWUSOS TEXTO PRONTO - entering idle loop\n");
   asm volatile("sti");
   while (1) {
     asm volatile("hlt");
