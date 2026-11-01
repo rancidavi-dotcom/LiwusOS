@@ -34,9 +34,9 @@ void kheap_set_start(uint64_t start) {
     serial_print("KERNEL PANIC: no contiguous RAM for KHeap\n");
     for (;;) asm volatile("hlt");
   }
-  kheap_start = arena_start;
-  kheap_current = arena_start;
-  kheap_limit = arena_start + arena_size;
+  kheap_start = (uint64_t)phys_to_virt(arena_start);
+  kheap_current = kheap_start;
+  kheap_limit = (uint64_t)phys_to_virt(arena_start + arena_size);
 }
 
 char *itoa(int value, char *str, int base);
@@ -55,7 +55,7 @@ void *kmalloc(size_t size) {
   uint64_t eflags = push_interrupts();
   spinlock_acquire(&kheap_lock);
   if (kheap_start == 0)
-    kheap_set_start(kernel_virt_to_phys(end) + 0x1000);
+    kheap_set_start(virt_to_phys(end) + 0x1000);
 
   size = (size + 3) & ~3;
   uint32_t total = size + HEADER_SIZE;
@@ -82,11 +82,9 @@ void *kmalloc(size_t size) {
 
   free_header_t *header = (free_header_t *)(uint64_t)kheap_current;
   header->size = total;
-  /* The bump heap is identity-mapped physical RAM.  Keep every frame it
-   * consumes out of the physical allocator, otherwise DMA/user pages can
-   * overwrite live kernel data on machines whose memory map differs from
-   * QEMU's. */
-  pmm_reserve_region(kheap_current, total);
+  /* The bump heap uses the direct-map alias. Keep every physical frame it
+   * consumes out of the allocator so DMA/user pages cannot overwrite it. */
+  pmm_reserve_region(virt_to_phys((void *)kheap_current), total);
   kheap_current += total;
   spinlock_release(&kheap_lock);
   pop_interrupts(eflags);
@@ -97,7 +95,7 @@ void *kmalloc_a(size_t size) {
   uint64_t eflags = push_interrupts();
   spinlock_acquire(&kheap_lock);
   if (kheap_start == 0)
-    kheap_set_start(kernel_virt_to_phys(end) + 0x1000);
+    kheap_set_start(virt_to_phys(end) + 0x1000);
 
   // We want the returned address `aligned` to be page-aligned (multiple of 4096),
   // and we need to place the block header right before it (at `aligned - HEADER_SIZE`).
@@ -118,7 +116,7 @@ void *kmalloc_a(size_t size) {
   free_header_t *header = (free_header_t *)header_pos;
   header->size = size + HEADER_SIZE;
 
-  pmm_reserve_region(kheap_current, total);
+  pmm_reserve_region(virt_to_phys((void *)kheap_current), total);
   kheap_current += total;
 
   spinlock_release(&kheap_lock);
@@ -130,7 +128,7 @@ void *kmalloc_ap(size_t size, uint64_t *phys) {
   uint64_t eflags = push_interrupts();
   spinlock_acquire(&kheap_lock);
   if (kheap_start == 0)
-    kheap_set_start(kernel_virt_to_phys(end) + 0x1000);
+    kheap_set_start(virt_to_phys(end) + 0x1000);
 
   if (kheap_current % 4096 != 0)
     kheap_current += 4096 - (kheap_current % 4096);
@@ -144,7 +142,7 @@ void *kmalloc_ap(size_t size, uint64_t *phys) {
     if (curr->size >= total && ((uint64_t)curr % 4096) == 0) {
       *prev = curr->next;
       curr->size = total;
-      if (phys) *phys = (uint64_t)curr;
+      if (phys) *phys = virt_to_phys(curr);
       spinlock_release(&kheap_lock);
       pop_interrupts(eflags);
       return (void*)((uint64_t)curr + HEADER_SIZE);
@@ -160,9 +158,9 @@ void *kmalloc_ap(size_t size, uint64_t *phys) {
 
   free_header_t *header = (free_header_t *)(uint64_t)kheap_current;
   header->size = total;
-  pmm_reserve_region(kheap_current, total);
+  pmm_reserve_region(virt_to_phys((void *)kheap_current), total);
   kheap_current += total;
-  if (phys) *phys = (uint64_t)header;
+  if (phys) *phys = virt_to_phys(header);
   spinlock_release(&kheap_lock);
   pop_interrupts(eflags);
   return (void*)((uint64_t)header + HEADER_SIZE);

@@ -47,6 +47,8 @@ static inline uint64_t vaddr_pdi(uint64_t vaddr)   { return (vaddr >> 21) & 0x1F
 static inline uint64_t vaddr_pti(uint64_t vaddr)   { return (vaddr >> 12) & 0x1FF; }
 
 void init_vmm(uint64_t memory_size);
+/* `phys` may be a physical address cast to a pointer (MMIO/identity alias) or
+ * a kernel pointer; direct-map and higher-half pointers are translated. */
 void vmm_map_page(void *phys, void *virt, uint64_t flags);
 int vmm_set_page_flags(void *virt, uint64_t flags);
 int vmm_unmap_page(void *virt);

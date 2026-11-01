@@ -1,6 +1,7 @@
 #include "vmm.h"
 #include "kheap.h"
 #include "pmm.h"
+#include "kernel_layout.h"
 #include "string.h"
 #include "serial.h"
 #include "usercopy.h"
@@ -49,26 +50,26 @@ static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
     if (!flags) return 0;
     pdp_t *new_pdp = (pdp_t *)alloc_pt_page();
     if (!new_pdp) return 0;
-    pml4->entries[pml4_i] = ((uint64_t)new_pdp) | alloc_flags;
+    pml4->entries[pml4_i] = virt_to_phys(new_pdp) | alloc_flags;
     walk_pt_modified_pml4 = 1;
   } else if ((flags & PTE_U) && !(pml4->entries[pml4_i] & PTE_U)) {
     pml4->entries[pml4_i] |= PTE_U;
     walk_pt_modified_pml4 = 1;
   }
 
-  pdp_t *pdp = (pdp_t *)(uint64_t)(pml4->entries[pml4_i] & ~0xFFFULL);
+  pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[pml4_i] & ~0xFFFULL);
   uint64_t pdp_i = vaddr_pdpi(vaddr);
 
   if (!(pdp->entries[pdp_i] & PTE_P)) {
     if (!flags) return 0;
     pd_t *new_pd = (pd_t *)alloc_pt_page();
     if (!new_pd) return 0;
-    pdp->entries[pdp_i] = ((uint64_t)new_pd) | alloc_flags;
+    pdp->entries[pdp_i] = virt_to_phys(new_pd) | alloc_flags;
   } else if ((flags & PTE_U) && !(pdp->entries[pdp_i] & PTE_U)) {
     pdp->entries[pdp_i] |= PTE_U;
   }
 
-  pd_t *pd = (pd_t *)(uint64_t)(pdp->entries[pdp_i] & ~0xFFFULL);
+  pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[pdp_i] & ~0xFFFULL);
   uint64_t pd_i = vaddr_pdi(vaddr);
 
   if (pd->entries[pd_i] & PTE_PS) {
@@ -81,25 +82,25 @@ static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
     for (int j = 0; j < 512; j++) {
       new_pt->entries[j] = (large_base + j * 4096) | (large_flags & ~PTE_PS);
     }
-    pd->entries[pd_i] = ((uint64_t)new_pt) | alloc_flags;
+    pd->entries[pd_i] = virt_to_phys(new_pt) | alloc_flags;
   }
 
   if (!(pd->entries[pd_i] & PTE_P)) {
     if (!flags) return 0;
     pt_t *new_pt = (pt_t *)alloc_pt_page();
     if (!new_pt) return 0;
-    pd->entries[pd_i] = ((uint64_t)new_pt) | alloc_flags;
+    pd->entries[pd_i] = virt_to_phys(new_pt) | alloc_flags;
   } else if ((flags & PTE_U) && !(pd->entries[pd_i] & PTE_U)) {
     pd->entries[pd_i] |= PTE_U;
   }
 
-  pt_t *pt = (pt_t *)(uint64_t)(pd->entries[pd_i] & ~0xFFFULL);
+  pt_t *pt = (pt_t *)phys_to_virt(pd->entries[pd_i] & ~0xFFFULL);
   uint64_t pt_i = vaddr_pti(vaddr);
   return &pt->entries[pt_i];
 }
 
 void vmm_map_page(void *phys, void *virt, uint64_t flags) {
-  uint64_t p = (uint64_t)phys;
+  uint64_t p = virt_to_phys(phys);
   uint64_t v = (uint64_t)virt;
   uint64_t f = flags;
   if ((f & PTE_U) && !is_user_addr(virt)) return;
@@ -139,18 +140,18 @@ int vmm_unmap_page(void *virt) {
   uint64_t pt_i = vaddr_pti(v);
 
   if (!(pml4->entries[pml4_i] & PTE_P) || !(pml4->entries[pml4_i] & PTE_U)) return -1;
-  pdp_t *pdp = (pdp_t *)(uint64_t)(pml4->entries[pml4_i] & ~0xFFFULL);
+  pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[pml4_i] & ~0xFFFULL);
   if (!(pdp->entries[pdp_i] & PTE_P) || !(pdp->entries[pdp_i] & PTE_U)) return -1;
-  pd_t *pd = (pd_t *)(uint64_t)(pdp->entries[pdp_i] & ~0xFFFULL);
+  pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[pdp_i] & ~0xFFFULL);
   if (!(pd->entries[pd_i] & PTE_P) || !(pd->entries[pd_i] & PTE_U)) return -1;
 
   // Não desmapear dentro de um mapping 2 MB (large page)
   if (pd->entries[pd_i] & PTE_PS) return -1;
 
-  pt_t *pt = (pt_t *)(uint64_t)(pd->entries[pd_i] & ~0xFFFULL);
+  pt_t *pt = (pt_t *)phys_to_virt(pd->entries[pd_i] & ~0xFFFULL);
   if (!(pt->entries[pt_i] & PTE_P) || !(pt->entries[pt_i] & PTE_U)) return -1;
 
-  pmm_free_block((void *)(pt->entries[pt_i] & ~0xFFFULL));
+  pmm_free_block(phys_to_virt(pt->entries[pt_i] & ~0xFFFULL));
   pt->entries[pt_i] = 0;
   asm volatile("invlpg (%0)" : : "r"(v) : "memory");
   return 0;
@@ -180,7 +181,7 @@ void init_vmm(uint64_t memory_size) {
   uint64_t cr3;
   asm volatile("mov %%cr3, %0" : "=r"(cr3));
   kernel_directory->pml4_phys = cr3;
-  kernel_directory->pml4_virt = (pml4_t *)(uint64_t)cr3;
+  kernel_directory->pml4_virt = (pml4_t *)phys_to_virt(cr3);
   current_directory = kernel_directory;
 }
 
@@ -191,7 +192,7 @@ page_directory_t *vmm_create_directory() {
   pml4_t *new_pml4 = (pml4_t *)alloc_pt_page();
   if (!new_pml4) { kfree(dir); return 0; }
   dir->pml4_virt = new_pml4;
-  dir->pml4_phys = (uint64_t)new_pml4;
+  dir->pml4_phys = virt_to_phys(new_pml4);
   pml4_t *kernel_pml4 = kernel_directory->pml4_virt;
   /* Give each address space its own page-table pages. Leaf mappings for
    * supervisor memory still point at the same physical frames. This lets
@@ -200,9 +201,9 @@ page_directory_t *vmm_create_directory() {
     if (!(kernel_pml4->entries[i] & PTE_P)) continue;
     pdp_t *new_pdp = (pdp_t *)alloc_pt_page();
     if (!new_pdp) { vmm_free_directory(dir); return 0; }
-    new_pml4->entries[i] = (uint64_t)new_pdp |
+    new_pml4->entries[i] = virt_to_phys(new_pdp) |
                            (kernel_pml4->entries[i] & 0xFFF & ~PTE_U);
-    pdp_t *old_pdp = (pdp_t *)(kernel_pml4->entries[i] & ~0xFFFULL);
+    pdp_t *old_pdp = (pdp_t *)phys_to_virt(kernel_pml4->entries[i] & ~0xFFFULL);
     for (int j = 0; j < 512; j++) {
       if (!(old_pdp->entries[j] & PTE_P)) continue;
       if (old_pdp->entries[j] & PTE_PS) {
@@ -211,9 +212,9 @@ page_directory_t *vmm_create_directory() {
       }
       pd_t *new_pd = (pd_t *)alloc_pt_page();
       if (!new_pd) { vmm_free_directory(dir); return 0; }
-      new_pdp->entries[j] = (uint64_t)new_pd |
+      new_pdp->entries[j] = virt_to_phys(new_pd) |
                             (old_pdp->entries[j] & 0xFFF & ~PTE_U);
-      pd_t *old_pd = (pd_t *)(old_pdp->entries[j] & ~0xFFFULL);
+      pd_t *old_pd = (pd_t *)phys_to_virt(old_pdp->entries[j] & ~0xFFFULL);
       for (int k = 0; k < 512; k++) {
         if (!(old_pd->entries[k] & PTE_P)) continue;
         if (old_pd->entries[k] & PTE_PS) {
@@ -222,9 +223,9 @@ page_directory_t *vmm_create_directory() {
         }
         pt_t *new_pt = (pt_t *)alloc_pt_page();
         if (!new_pt) { vmm_free_directory(dir); return 0; }
-        new_pd->entries[k] = (uint64_t)new_pt |
+        new_pd->entries[k] = virt_to_phys(new_pt) |
                              (old_pd->entries[k] & 0xFFF & ~PTE_U);
-        pt_t *old_pt = (pt_t *)(old_pd->entries[k] & ~0xFFFULL);
+        pt_t *old_pt = (pt_t *)phys_to_virt(old_pd->entries[k] & ~0xFFFULL);
         memcpy(new_pt, old_pt, PAGE_SIZE);
         for (int l = 0; l < 512; l++) new_pt->entries[l] &= ~PTE_U;
       }
@@ -237,10 +238,10 @@ static int copy_user_leaves(page_directory_t *src, page_directory_t *dest) {
   pml4_t *sp = src->pml4_virt;
   for (int i = 0; i < 512; i++) {
     if (!(sp->entries[i] & PTE_P)) continue;
-    pdp_t *sdp = (pdp_t *)(sp->entries[i] & ~0xFFFULL);
+    pdp_t *sdp = (pdp_t *)phys_to_virt(sp->entries[i] & ~0xFFFULL);
     for (int j = 0; j < 512; j++) {
       if (!(sdp->entries[j] & PTE_P) || (sdp->entries[j] & PTE_PS)) continue;
-      pd_t *sd = (pd_t *)(sdp->entries[j] & ~0xFFFULL);
+      pd_t *sd = (pd_t *)phys_to_virt(sdp->entries[j] & ~0xFFFULL);
       for (int k = 0; k < 512; k++) {
         if (!(sd->entries[k] & PTE_P)) continue;
         uint64_t va = ((uint64_t)i << 39) | ((uint64_t)j << 30) |
@@ -252,24 +253,24 @@ static int copy_user_leaves(page_directory_t *src, page_directory_t *dest) {
           for (int l = 0; l < 512; l++) {
             void *page = pmm_alloc_block();
             if (!page) return -1;
-            memcpy(page, (void *)(phys + (uint64_t)l * PAGE_SIZE), PAGE_SIZE);
+            memcpy(page, phys_to_virt(phys + (uint64_t)l * PAGE_SIZE), PAGE_SIZE);
             pte_t *pte = walk_pt(dest, va + (uint64_t)l * PAGE_SIZE,
                                  PTE_P | PTE_U | PTE_W);
             if (!pte) { pmm_free_block(page); return -1; }
-            *pte = (uint64_t)page | flags;
+            *pte = virt_to_phys(page) | flags;
           }
           continue;
         }
-        pt_t *st = (pt_t *)(sd->entries[k] & ~0xFFFULL);
+        pt_t *st = (pt_t *)phys_to_virt(sd->entries[k] & ~0xFFFULL);
         for (int l = 0; l < 512; l++) {
           if (!(st->entries[l] & PTE_P) || !(st->entries[l] & PTE_U)) continue;
           void *page = pmm_alloc_block();
           if (!page) return -1;
-          memcpy(page, (void *)(st->entries[l] & ~0xFFFULL), PAGE_SIZE);
+          memcpy(page, phys_to_virt(st->entries[l] & ~0xFFFULL), PAGE_SIZE);
           pte_t *pte = walk_pt(dest, va + (uint64_t)l * PAGE_SIZE,
                                PTE_P | PTE_U | PTE_W);
           if (!pte) { pmm_free_block(page); return -1; }
-          *pte = (uint64_t)page | (st->entries[l] & 0xFFFULL);
+          *pte = virt_to_phys(page) | (st->entries[l] & 0xFFFULL);
         }
       }
     }
@@ -297,20 +298,20 @@ void vmm_free_directory(page_directory_t *dir) {
   }
   for (int i = 0; i < 512; i++) {
     if (pml4->entries[i] & PTE_P) {
-      pdp_t *pdp = (pdp_t *)(uint64_t)(pml4->entries[i] & ~0xFFFULL);
+      pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[i] & ~0xFFFULL);
       for (int j = 0; j < 512; j++) {
         if (pdp->entries[j] & PTE_P) {
           if (pdp->entries[j] & PTE_PS) continue;
-          pd_t *pd = (pd_t *)(uint64_t)(pdp->entries[j] & ~0xFFFULL);
+          pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[j] & ~0xFFFULL);
           for (int k = 0; k < 512; k++) {
             if (pd->entries[k] & PTE_P) {
               if (pd->entries[k] & PTE_PS) {
                 /* Large leaves are shared kernel identity mappings. */
               } else {
-                pt_t *pt = (pt_t *)(uint64_t)(pd->entries[k] & ~0xFFFULL);
+                pt_t *pt = (pt_t *)phys_to_virt(pd->entries[k] & ~0xFFFULL);
                 for (int l = 0; l < 512; l++) {
                   if ((pt->entries[l] & (PTE_P | PTE_U)) == (PTE_P | PTE_U)) {
-                    pmm_free_block((void *)(pt->entries[l] & ~0xFFFULL));
+                    pmm_free_block(phys_to_virt(pt->entries[l] & ~0xFFFULL));
                   }
                 }
                 pmm_free_block(pt);

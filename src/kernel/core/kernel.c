@@ -316,7 +316,7 @@ static void user_init_supervisor_task(void) {
 
 void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   (void)magic;
-  uint64_t reserved_start = kernel_virt_to_phys(end) + 0x1000;
+  uint64_t reserved_start = virt_to_phys(end) + 0x1000;
   uint64_t pmm_bitmap_bytes;
   uint64_t heap_start;
 
@@ -325,7 +325,7 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   serial_print("[boot] kernel_main virt=");
   serial_print_hex((uint64_t)(uintptr_t)&kernel_main);
   serial_print(" phys=");
-  serial_print_hex(kernel_virt_to_phys((const void *)&kernel_main));
+  serial_print_hex(virt_to_phys((const void *)&kernel_main));
   serial_print("\n");
 
   parse_multiboot2(mbi_addr);

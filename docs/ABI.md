@@ -90,7 +90,8 @@ this document.
 | `0x0000000001000000`–`0x0000000001009fff` | boot stub (`.boot`), VMA = LMA at 16 MiB: multiboot header, boot page tables and boot stack |
 | `0x0000000002000000`–`0x000000000202c000` | physical load address of the kernel image; reachable through the identity map |
 | `0xffffffff80000000`–`0xffffffff8002c000` | kernel image VMA (`.text`, `.rodata`, `.data`, `.bss`) |
-| `0x0000000000000000`–`0x000000003fffffff` | 1 GiB identity window kept during step 9a: PMM, `kheap`, page tables and low aliases of the boot stub and kernel image |
+| `0x0000000000000000`–`0x000000003fffffff` | 1 GiB identity window retained temporarily for boot and legacy physical aliases |
+| `0xffff800000000000`–`0xffff80003fffffff` | direct-map alias of physical `0`–`1 GiB`; PMM allocations and `kheap` pointers use this range |
 | `0x0000000000400000`–`0x0000000000ffffff` | user segments loaded below 16 MiB (current test binaries) |
 | `0x0000000040000000`–`0x00000000bfffffff` | user image, heap (`brk`) and `mmap` |
 | `0x00000000c0000000` | top of the user stack (exclusive ceiling) |
@@ -98,9 +99,10 @@ this document.
 - Physical memory is currently capped at 1 GiB (`kernel.c`).
 - The kernel image is linked at `0xffffffff80000000` and loaded at 32 MiB. The
   boot stub installs a 128 MiB higher-half window with 2 MiB pages, so
-  `virt = phys + 0xffffffff7e000000` for image symbols. `kernel_virt_to_phys()`
-  converts those symbols; the PMM, `kheap` and page tables still use identity
-  addresses.
+  `virt = phys + 0xffffffff7e000000` for image symbols. `virt_to_phys()`
+  converts image and direct-map pointers, and `phys_to_virt()` converts physical
+  addresses. PMM, `kheap` and page-table metadata use the direct map; CR3/PTEs
+  continue to store physical addresses.
 - `mmap` grows downwards from `0xBFFF0000`; `brk` grows upwards from the end of
   the loaded image. Both are rejected if they would cross `0x40000000`.
 - `USER_ADDR_MAX` is `0xC0000000`; `is_user_addr` rejects the first page,
@@ -109,8 +111,8 @@ this document.
   `PTE_U`.
 - There is no demand paging: pages are allocated eagerly by `brk`/`mmap`, and a
   page fault in user mode terminates the task.
-- The identity window is removed in step 9c and replaced by a separate direct
-  map in step 9b, as described in `MM.md` (Gate 1).
+- Step 9b adds the separate direct map while preserving this identity window.
+  Removing the identity window remains step 9c.
 
 ## 5. Processes and threads
 

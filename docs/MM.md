@@ -1,6 +1,6 @@
 # Modelo de memória do LiwusOS
 
-Este é o mapa alvo para as fases de endereçamento e VM do `ROADMAP.md`. Ele descreve o destino arquitetural; o kernel enxuto ainda inicia com identidade 1:1 e limite físico menor, que serão removidos no Gate 1. O passo 9a (subdivisão do passo 9) já liga o kernel em `0xffffffff80000000` e mantém a identidade apenas para a transição; o direct map físico e a remoção da identidade são os passos 9b e 9c.
+Este documento registra o mapa alvo e o estado implementado da Fase 1. O passo 9a liga o kernel em `0xffffffff80000000`; o passo 9b adiciona um direct map para os primeiros 1 GiB e migra PMM/kheap para usá-lo. A identidade temporária permanece até o passo 9c. O limite físico de 1 GiB também permanece até a implementação do passo 10.
 
 ## Mapa virtual x86-64 alvo
 
@@ -35,6 +35,8 @@ O limite de user virtual é exclusivo: `USER_ADDR_MAX = 0x0000800000000000`. Tod
 
 O layout exato da imagem é definido pelo linker script. Text é read-only/executable; rodata read-only/NX; data/bss read-write/NX. Boot começa com mapeamento de identidade mínimo para transição e o remove depois de instalar o mapa definitivo. MMIO não usa cache WB e é mapeado com atributos de cache apropriados.
 
+**Estado após 9b:** `DIRECT_MAP_BASE` é `0xffff800000000000` e a janela virtual dos primeiros 1 GiB está mapeada com páginas de 2 MiB instaladas pelo stub de boot. `phys_to_virt()` e `virt_to_phys()` convertem endereços; PMM retorna ponteiros direct-map e page tables continuam armazenando endereços físicos. A identidade de 1 GiB ainda está ativa para compatibilidade de boot/aliases antigos. O PMM só aloca regiões RAM que o Multiboot2 marca como disponíveis; a janela de 1 GiB também cobre buracos físicos e não deve ser usada para acessar MMIO. A política de cache/atributos do mapa temporário será tornada regional antes de remover a identidade. RAM acima de 1 GiB não é mapeada nem gerenciada ainda.
+
 ## Mapa físico e PMM
 
 - A fonte de memória física é o mapa de memória Multiboot2, não uma suposição de RAM contígua.
@@ -42,7 +44,7 @@ O layout exato da imagem é definido pelo linker script. Text é read-only/execu
 - Bitmap/estruturas do PMM ficam em RAM reservada e são acessadas pelo direct map. A implementação futura pode particionar bitmaps para evitar exigir um único intervalo contíguo.
 - Endereços físicos acima de 4 GiB são aceitos se a CPU e as page tables os suportarem; o bootloader e os tipos Multiboot2 precisam preservar os 64 bits.
 - Frame físico zero e memória de firmware não são alocados. Overflow de `base + length` é rejeitado/limitado com segurança.
-- O direct map cobre apenas RAM física instalada e necessária, não transforma MMIO em RAM cacheável.
+- O mapa alvo cobre RAM física instalada e necessária, não transforma MMIO em RAM cacheável. A janela transitória de 9b ainda mapeia os primeiros 1 GiB de forma ampla; PMM não aloca os buracos e MMIO continua acessado por mappings explícitos.
 
 ## Espaço de processo e VMA
 

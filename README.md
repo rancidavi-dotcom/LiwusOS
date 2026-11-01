@@ -35,9 +35,9 @@ Linux ABI compatibility layer. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 | Area | State |
 |---|---|
-| Boot | Multiboot2 + GRUB, own 32→64-bit transition, identity map |
+| Boot | Multiboot2 + GRUB, 32→64-bit transition, higher-half kernel and temporary identity map |
 | CPU | GDT, IDT, ISR/IRQ, PIC, LAPIC, PIT at 100 Hz, RTC |
-| Memory | Bitmap PMM, 4-level paging, kernel heap (1 GiB physical cap) |
+| Memory | Bitmap PMM, 4-level paging, 1 GiB direct map and kernel heap |
 | Processes | Preemptive scheduler, `fork`, `execve`, `waitpid`, `kill`, jobs |
 | Syscalls | 41 calls through `int $0x80` (see [docs/ABI.md](docs/ABI.md)) |
 | Userspace | Ring 3 with validated user/kernel copies |

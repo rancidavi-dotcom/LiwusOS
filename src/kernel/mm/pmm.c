@@ -1,4 +1,5 @@
 #include "pmm.h"
+#include "kernel_layout.h"
 #include "spinlock.h"
 
 #define BLOCK_SIZE 4096
@@ -22,7 +23,7 @@ static inline bool bitmap_test(uint64_t bit) {
 }
 
 void pmm_init(uint64_t start_addr, uint64_t size) {
-    pmm_bitmap = (uint32_t*)(uint64_t)start_addr;
+    pmm_bitmap = (uint32_t *)phys_to_virt(start_addr);
     pmm_max_blocks = (size / BLOCK_SIZE) & ~31ULL;
     pmm_used_blocks = pmm_max_blocks;
 
@@ -139,7 +140,7 @@ void* pmm_alloc_block() {
                     bitmap_set(block);
                     pmm_used_blocks++;
                     spinlock_release(&pmm_lock);
-                    return (void*)(uint64_t)(block * BLOCK_SIZE);
+                    return phys_to_virt(block * BLOCK_SIZE);
                 }
             }
         }
@@ -150,7 +151,7 @@ void* pmm_alloc_block() {
 
 void pmm_free_block(void* addr) {
     spinlock_acquire(&pmm_lock);
-    uint64_t block = (uint64_t)addr / BLOCK_SIZE;
+    uint64_t block = virt_to_phys(addr) / BLOCK_SIZE;
     if (block < pmm_max_blocks && bitmap_test(block)) {
         bitmap_unset(block);
         if (pmm_used_blocks) pmm_used_blocks--;

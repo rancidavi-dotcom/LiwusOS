@@ -10,6 +10,7 @@
 #include "serial.h"
 #include "string.h"
 #include "task.h"
+#include "kernel_layout.h"
 #include "timer.h"
 #include "vga.h"
 #include "vmm.h"
@@ -259,10 +260,10 @@ int launch_initrd_program_argv(const char *filename, char *const argv[]) {
     serial_print("\n");
     serial_print("  PML4[0]: "); serial_print_hex(pml4->entries[0]); serial_print("\n");
     if (pml4->entries[0] & 1) {
-      pdp_t *pdp = (pdp_t *)(pml4->entries[0] & ~0xfff);
+      pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[0] & ~0xfff);
       serial_print("  PDP[0]: "); serial_print_hex(pdp->entries[0]); serial_print("\n");
       if (pdp->entries[0] & 1) {
-        pd_t *pd = (pd_t *)(pdp->entries[0] & ~0xfff);
+        pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[0] & ~0xfff);
         uint64_t pd_i = (v >> 21) & 0x1ff;
         serial_print("  PD[");
         char pbuf[10];
@@ -275,7 +276,7 @@ int launch_initrd_program_argv(const char *filename, char *const argv[]) {
           if (pd->entries[pd_i] & 0x80) {
             serial_print("  (2MB Page mapping)\n");
           } else {
-            pt_t *pt = (pt_t *)(pd->entries[pd_i] & ~0xfff);
+            pt_t *pt = (pt_t *)phys_to_virt(pd->entries[pd_i] & ~0xfff);
             uint64_t pt_i = (v >> 12) & 0x1ff;
             serial_print("  PT[");
             itoa(pt_i, pbuf, 10);

@@ -8,19 +8,26 @@
 #define KERNEL_BOOT_PHYS_BASE 0x01000000ULL /* boot stub, VMA == LMA */
 #define KERNEL_PHYS_BASE      0x02000000ULL /* higher-half image load address */
 #define KERNEL_VIRT_BASE      0xffffffff80000000ULL
+#define DIRECT_MAP_BASE       0xffff800000000000ULL
+#define DIRECT_MAP_SIZE       0x40000000ULL /* step 9b currently maps 1 GiB */
 
 /* virt = phys + KERNEL_VIRT_OFFSET (0xffffffff7e000000) */
 #define KERNEL_VIRT_OFFSET (KERNEL_VIRT_BASE - KERNEL_PHYS_BASE)
 
-/* Convert an address of a symbol inside the kernel image to its physical
- * address. Only valid for the image itself: the kernel heap and PMM still use
- * identity-mapped memory during step 9a. */
-static inline uint64_t kernel_virt_to_phys(const void *virt) {
-  return (uint64_t)virt - KERNEL_VIRT_OFFSET;
+/* Convert RAM physical addresses to the dedicated direct-map alias. */
+static inline void *phys_to_virt(uint64_t phys) {
+  return (void *)(DIRECT_MAP_BASE + phys);
 }
 
-static inline void *kernel_phys_to_virt(uint64_t phys) {
-  return (void *)(phys + KERNEL_VIRT_OFFSET);
+/* Convert a kernel pointer to its physical address. Kernel pointers may be in
+ * the direct map, the linked kernel image, or the temporary identity alias. */
+static inline uint64_t virt_to_phys(const void *virt) {
+  uint64_t addr = (uint64_t)virt;
+  if (addr >= DIRECT_MAP_BASE && addr < DIRECT_MAP_BASE + DIRECT_MAP_SIZE)
+    return addr - DIRECT_MAP_BASE;
+  if (addr >= KERNEL_VIRT_BASE)
+    return addr - KERNEL_VIRT_OFFSET;
+  return addr;
 }
 
 #endif

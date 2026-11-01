@@ -1,5 +1,6 @@
 #include "usercopy.h"
 #include "vmm.h"
+#include "kernel_layout.h"
 #include "serial.h"
 #include "string.h"
 
@@ -16,14 +17,14 @@ static pte_t *walk_user_pt(uint64_t vaddr, int check_user, int write) {
     if (check_user && !(pml4->entries[pml4_i] & PTE_U)) return NULL;
     if (write && !(pml4->entries[pml4_i] & PTE_W)) return NULL;
 
-    pdp_t *pdp = (pdp_t *)(pml4->entries[pml4_i] & ~0xFFFULL);
+    pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[pml4_i] & ~0xFFFULL);
     uint64_t pdp_i = vaddr_pdpi(vaddr);
 
     if (!(pdp->entries[pdp_i] & PTE_P)) return NULL;
     if (check_user && !(pdp->entries[pdp_i] & PTE_U)) return NULL;
     if (write && !(pdp->entries[pdp_i] & PTE_W)) return NULL;
 
-    pd_t *pd = (pd_t *)(pdp->entries[pdp_i] & ~0xFFFULL);
+    pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[pdp_i] & ~0xFFFULL);
     uint64_t pd_i = vaddr_pdi(vaddr);
 
     if (pd->entries[pd_i] & PTE_PS) {
@@ -38,7 +39,7 @@ static pte_t *walk_user_pt(uint64_t vaddr, int check_user, int write) {
     if (check_user && !(pd->entries[pd_i] & PTE_U)) return NULL;
     if (write && !(pd->entries[pd_i] & PTE_W)) return NULL;
 
-    pt_t *pt = (pt_t *)(pd->entries[pd_i] & ~0xFFFULL);
+    pt_t *pt = (pt_t *)phys_to_virt(pd->entries[pd_i] & ~0xFFFULL);
     uint64_t pt_i = vaddr_pti(vaddr);
 
     if (!(pt->entries[pt_i] & PTE_P)) return NULL;

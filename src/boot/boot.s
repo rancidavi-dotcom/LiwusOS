@@ -74,6 +74,11 @@ _start:
   or $0x3, %eax
   mov %eax, (pml4_table + 511 * 8)
 
+  /* PML4[256] -> direct map at 0xffff800000000000 */
+  lea (pdp_direct), %eax
+  or $0x3, %eax
+  mov %eax, (pml4_table + 256 * 8)
+
   /* ---- Step 3: Build PDPs ---- */
   /* PDP[0] -> PD (identity, 0x0000000000000000) */
   lea (pd), %eax
@@ -84,6 +89,11 @@ _start:
   lea (pd_high), %eax
   or $0x3, %eax
   mov %eax, (pdp_high + 510 * 8)
+
+  /* PDP[0] -> direct-map PD */
+  lea (pd_direct), %eax
+  or $0x3, %eax
+  mov %eax, (pdp_direct)
 
   /* ---- Step 4: Build PDs (2MB pages) ---- */
   /* Identity: 512 x 2MB = first 1 GiB */
@@ -109,6 +119,17 @@ _start:
   inc %ecx
   cmp $64, %ecx
   jl 2b
+
+  /* Direct map: 512 x 2 MiB = first 1 GiB at DIRECT_MAP_BASE. */
+  mov $0x00000083, %eax
+  lea (pd_direct), %edi
+  mov $0, %ecx
+3:
+  mov %eax, (%edi, %ecx, 8)
+  add $0x200000, %eax
+  inc %ecx
+  cmp $512, %ecx
+  jl 3b
 
   /* ---- Step 5: Enable PAE ---- */
   mov %cr4, %eax
@@ -237,5 +258,9 @@ pd:
 pdp_high:
   .skip 4096
 pd_high:
+  .skip 4096
+pdp_direct:
+  .skip 4096
+pd_direct:
   .skip 4096
 page_tables_end:

@@ -80,8 +80,8 @@ static void port_rebase(hba_port_t *port, int portno) {
     (void)portno;
     port_stop_cmd(port);
 
-    uint64_t clb_phys = kernel_virt_to_phys(ahci_clb_mem);
-    uint64_t fis_phys = kernel_virt_to_phys(ahci_fis_mem);
+    uint64_t clb_phys = virt_to_phys(ahci_clb_mem);
+    uint64_t fis_phys = virt_to_phys(ahci_fis_mem);
     
     serial_print("AHCI: CLB=");
     serial_print_hex(clb_phys);
@@ -104,7 +104,7 @@ static void port_rebase(hba_port_t *port, int portno) {
     hba_cmd_header_t *cmdheader = (hba_cmd_header_t*)ahci_clb_mem;
     for (int i = 0; i < 32; i++) {
         cmdheader[i].prdtl = 1;
-        uint64_t ctba_addr = kernel_virt_to_phys(ahci_ctba_mem) + i * 256;
+        uint64_t ctba_addr = virt_to_phys(ahci_ctba_mem) + i * 256;
         cmdheader[i].ctba = (uint32_t)ctba_addr;
         cmdheader[i].ctbau = 0;
     }
@@ -250,7 +250,7 @@ static int ahci_issue_cmd(hba_port_t *port, uint64_t lba, uint32_t count, uint8_
     if (count * 512 > sizeof(ahci_bounce_buffer)) return 0;
     if (write) memcpy(ahci_bounce_buffer, buf, count * 512);
 
-    cmdtbl->prdt_entry[0].dba = (uint32_t)kernel_virt_to_phys(ahci_bounce_buffer);
+    cmdtbl->prdt_entry[0].dba = (uint32_t)virt_to_phys(ahci_bounce_buffer);
     cmdtbl->prdt_entry[0].dbau = 0;
     cmdtbl->prdt_entry[0].dbc = (count * 512) - 1;
     cmdtbl->prdt_entry[0].i = 1;
@@ -403,7 +403,7 @@ uint64_t ahci_identify(uint8_t portno) {
     hba_cmd_tbl_t *cmdtbl = (hba_cmd_tbl_t*)((uint64_t)ahci_ctba_mem + (uint64_t)slot * 256);
     memset(cmdtbl, 0, sizeof(hba_cmd_tbl_t));
     
-    cmdtbl->prdt_entry[0].dba = (uint32_t)kernel_virt_to_phys(ahci_bounce_buffer);
+    cmdtbl->prdt_entry[0].dba = (uint32_t)virt_to_phys(ahci_bounce_buffer);
     cmdtbl->prdt_entry[0].dbau = 0;
     cmdtbl->prdt_entry[0].dbc = 511; // 512 bytes
     cmdtbl->prdt_entry[0].i = 1;
