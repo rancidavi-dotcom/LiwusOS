@@ -43,6 +43,8 @@ void ap_kernel_main(void) {
      * don't crash with NULL current_task. */
     extern task_t *task_list;
     set_current_task(task_list);
+    extern void init_syscall_cpu(void);
+    init_syscall_cpu();
 
     serial_print("APIC: AP core (CPU ");
     char num_buf[4] = {'0' + cpu_idx, 0};

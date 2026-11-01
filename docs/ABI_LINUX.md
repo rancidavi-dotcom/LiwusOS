@@ -90,6 +90,8 @@ Os valores completos e layouts binários devem ser definidos em headers sob `inc
 
 O stub salva estado de usuário de modo que interrupções e preempção preservem a mesma estrutura de contexto do scheduler. A implementação não reutiliza RCX como quarto argumento Linux: SYSCALL grava RIP em RCX e RFLAGS em R11.
 
+**Implementado parcialmente:** STAR/LSTAR/SFMASK são configurados por CPU; `SYSCALL` troca GS com `swapgs`, salva RSP de usuário em `cpu_local_t`, muda para a kernel stack da tarefa e constrói `registers_t`. O dispatcher Linux inicial traduz `read`, `write`, `close`, `mmap`, `munmap`, `brk`, `getpid`, `exit` e `exit_group`. O retorno usa IRETQ, que restaura CS/SS/RIP/RSP/RFLAGS sem depender de SYSRET; a otimização SYSRET com validação de contexto ainda não foi adicionada. Os outros números Linux retornam `-ENOSYS`.
+
 ### Sequência obrigatória de entrada (antes do passo 35)
 
 - `SYSCALL` entra com RSP ainda apontando para a stack de usuário. O stub não pode usar a pilha antes de trocar para a kernel stack.

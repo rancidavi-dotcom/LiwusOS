@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 void init_syscalls();
+void init_syscall_cpu();
 void syscall_handler(registers_t *regs);
 int launch_initrd_program(const char *filename);
 int launch_initrd_program_argv(const char *filename, char *const argv[]);

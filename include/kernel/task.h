@@ -12,6 +12,11 @@ typedef enum {
   TASK_ZOMBIE
 } task_state_t;
 
+typedef enum {
+  TASK_ABI_LIWUS = 0,
+  TASK_ABI_LINUX_X86_64 = 1
+} task_abi_t;
+
 #include "vfs.h"
 
 #define PIPE_BUF_SIZE 4096
@@ -71,6 +76,7 @@ typedef struct task {
   int time_slice;     // ticks restantes no quantum atual
   uint64_t wake_tick; // 0 = sem wake agendado; senao tick absoluto do timer
   bool user_mode;
+  task_abi_t abi;
   char name[32];
   char cwd[256];
   kfile_t file_descriptors[32];
@@ -155,6 +161,7 @@ typedef struct {
     int padding;
     task_t *current_task_ptr;
     uint64_t kernel_stack;
+  uint64_t syscall_user_rsp;
 } __attribute__((packed)) cpu_local_t;
 
 static inline uint64_t read_gs_qword(uint32_t offset) {
@@ -175,6 +182,7 @@ static inline int get_cpu_id(void) {
 
 static inline void set_current_task(task_t *task) {
     write_gs_qword(8, (uint64_t)task);
+  if (task) write_gs_qword(16, task->kernel_stack);
 }
 
 void init_cpu_local(int cpu_id);

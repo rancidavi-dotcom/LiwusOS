@@ -85,6 +85,8 @@ void init_cpu_local(int cpu_id) {
     uint32_t low = val & 0xFFFFFFFF;
     uint32_t high = val >> 32;
     asm volatile("wrmsr" : : "a"(low), "d"(high), "c"(0xC0000101));
+    /* User GS starts at zero; SWAPGS moves the per-CPU base across the ring. */
+    asm volatile("wrmsr" : : "a"(0), "d"(0), "c"(0xC0000102));
 }
 
 // Helper function to convert int to string if not in string.h

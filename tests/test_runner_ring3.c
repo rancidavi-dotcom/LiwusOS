@@ -6,6 +6,8 @@
 #include "task.h"
 #include "vfs.h"
 
+extern task_t *task_list;
+
 int test_ring3_processes(void) {
     uint64_t free_before = pmm_get_free_memory();
     uint64_t nodes_before = vfs_live_owned_nodes();
@@ -26,6 +28,31 @@ int test_ring3_processes(void) {
     if (waited != pid || status != 0)
         FAIL("ring3_processes", "ET_DYN PIE did not run at high user base");
     serial_print("[RING3 RESULT] ET_DYN PIE executed at USER_PIE_BASE\n");
+
+    uint64_t irq_flags;
+    asm volatile("pushfq; popq %0; cli" : "=r"(irq_flags) :: "memory");
+    pid = launch_initrd_program_argv("linux_syscall_probe", NULL);
+    if (pid < 0) {
+        if (irq_flags & (1ULL << 9)) asm volatile("sti" ::: "memory");
+        FAIL("ring3_processes", "could not load Linux syscall probe");
+    }
+    task_t *linux_task = task_list;
+    if (!linux_task) FAIL("ring3_processes", "task list is empty");
+    do {
+        if (linux_task->id == pid) break;
+        linux_task = linux_task->next;
+    } while (linux_task && linux_task != task_list);
+    if (!linux_task || linux_task->id != pid) {
+        if (irq_flags & (1ULL << 9)) asm volatile("sti" ::: "memory");
+        FAIL("ring3_processes", "Linux probe task disappeared before dispatch");
+    }
+    linux_task->abi = TASK_ABI_LINUX_X86_64;
+    if (irq_flags & (1ULL << 9)) asm volatile("sti" ::: "memory");
+    status = -1;
+    waited = sys_waitpid(pid, &status, 0);
+    if (waited != pid || status != 0)
+        FAIL("ring3_processes", "Linux SYSCALL ABI probe failed");
+    serial_print("[RING3 RESULT] Linux x86-64 SYSCALL write/mmap/munmap/getpid PASS\n");
 
     if (vfs_live_owned_nodes() != nodes_before)
         FAIL("ring3_processes", "VFS lookup nodes leaked across user I/O tests");

@@ -91,27 +91,25 @@ ISR_NOERRCODE 31
 .extern isr_handler
 .global isr_common_stub
 isr_common_stub:
+  /* SYSCALL/interrupt entry from ring 3 has user GS active. */
+  testb $3, 24(%rsp)
+  jz 1f
+  swapgs
+1:
   PUSH_ALL
 
   mov $0x10, %ax          /* Kernel data segment */
   mov %ax, %ds
   mov %ax, %es
   mov %ax, %fs
-  mov %ax, %gs
-  /* Loading a data selector into %gs cleared the GS base. Re-point
-     IA32_GS_BASE at the BSP per-CPU block (cpus_local in sched/task.c).
-     NOTE: SMP APs would need their own base here. */
-  movabs $cpus_local, %rax
-  mov %rax, %r10
-  shr $32, %r10
-  mov %r10d, %edx
-  mov $0xC0000101, %ecx
-  wrmsr
-
   mov %rsp, %rdi         /* First arg: pointer to registers_t */
   call isr_handler
 
   POP_ALL
+  testb $3, 24(%rsp)
+  jz 2f
+  swapgs
+2:
   add $16, %rsp          /* Pop int_no and err_code (8 bytes each = 16) */
   iretq
 
@@ -143,26 +141,25 @@ IRQ 15, 47
 
 .extern irq_handler
 irq_common_stub:
+  testb $3, 24(%rsp)
+  jz 3f
+  swapgs
+3:
   PUSH_ALL
 
   mov $0x10, %ax          /* Kernel data segment */
   mov %ax, %ds
   mov %ax, %es
   mov %ax, %fs
-  mov %ax, %gs
-  /* Restore GS base (see comment in isr_common_stub) */
-  movabs $cpus_local, %rax
-  mov %rax, %r10
-  shr $32, %r10
-  mov %r10d, %edx
-  mov $0xC0000101, %ecx
-  wrmsr
-
   mov %rsp, %rdi          /* First arg: pointer to registers_t */
   call irq_handler
   mov %rax, %rsp          /* Schedule() returns new stack pointer */
 
   POP_ALL
+  testb $3, 24(%rsp)
+  jz 4f
+  swapgs
+4:
   add $16, %rsp           /* Pop int_no and err_code */
   iretq
 

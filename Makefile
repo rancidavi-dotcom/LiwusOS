@@ -36,6 +36,7 @@ BOOT_SRCS = $(BOOT_DIR)/boot.s $(BOOT_DIR)/interrupt.s
 
 KERNEL_C_SRCS = $(wildcard src/kernel/arch/x86_64/*.c) \
                 $(wildcard src/kernel/core/*.c) \
+                $(wildcard src/compat/linux/*.c) \
                 $(wildcard src/kernel/lib/*.c) \
                 $(wildcard src/kernel/mm/*.c) \
                 $(wildcard src/kernel/sched/*.c) \
@@ -79,6 +80,7 @@ RING3_USER_ELF = $(TEST_OBJ_DIR)/ring3/suite.elf
 RING3_EXEC_ELF = $(TEST_OBJ_DIR)/ring3/exec_target.elf
 RING3_C_APP_ELF = $(TEST_OBJ_DIR)/ring3/c_example.elf
 RING3_PIE_ELF = $(TEST_OBJ_DIR)/ring3/pie_probe.elf
+RING3_LINUX_SYSCALL_ELF = $(TEST_OBJ_DIR)/ring3/linux_syscall_probe.elf
 RING3_USER_CFLAGS = -std=gnu99 -O2 -ffreestanding -fno-pie -fno-pic \
 	-fno-stack-protector -fno-asynchronous-unwind-tables -m64 -mno-red-zone \
 	-Iinclude/uapi
@@ -110,13 +112,15 @@ smap-test: $(TEST_ISO_IMAGE)
 		-drive file=$(DISK_IMAGE),format=raw,if=none,id=disk \
 		-device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 \
 		-cdrom $(TEST_ISO_IMAGE) || test $$? -eq 124
-	@grep -E 'CR4.SMAP enabled|AP core|RESULT:|KERNEL PANIC|LIWUS_BOOT_READY' \
+	@grep -E 'CR4.SMAP enabled|AP core|Linux x86-64 SYSCALL|RESULT:|KERNEL PANIC|LIWUS_BOOT_READY' \
 		/tmp/liwusos-smap-integration.serial || true
 	@grep -q 'VMM: CR4.SMAP enabled' /tmp/liwusos-smap-integration.serial
 	@grep -q 'APIC: AP core (APIC ID 3) booted and initialized successfully!' \
 		/tmp/liwusos-smap-integration.serial
 	@grep -q 'RESULT: 43/43 PASS' /tmp/liwusos-smap-integration.serial
 	@grep -q 'RESULT: ALL PASS' /tmp/liwusos-smap-integration.serial
+	@grep -q 'Linux x86-64 SYSCALL write/mmap/munmap/getpid PASS' \
+		/tmp/liwusos-smap-integration.serial
 
 all: $(KERNEL_BIN) $(ISO_IMAGE)
 
@@ -168,6 +172,14 @@ $(TEST_OBJ_DIR)/ring3/pie_probe.o: tests/ring3/pie_probe.S
 $(RING3_PIE_ELF): $(TEST_OBJ_DIR)/ring3/pie_probe.o
 	$(LD) -nostdlib -pie -Wl,--no-dynamic-linker -Wl,--build-id=none \
 		-Wl,-e,_start -o $@ $<
+
+$(TEST_OBJ_DIR)/ring3/linux_syscall_probe.o: tests/ring3/linux_syscall_probe.S
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ -m64 -fno-pie -fno-pic
+
+$(RING3_LINUX_SYSCALL_ELF): $(TEST_OBJ_DIR)/ring3/linux_syscall_probe.o tests/ring3/suite.ld
+	$(LD) -nostdlib -static -no-pie -Wl,--build-id=none \
+		-Wl,-T,tests/ring3/suite.ld -o $@ $<
 
 $(TEST_OBJ_DIR)/ring3/exec_target.o: tests/ring3/exec_target.c
 	@mkdir -p $(dir $@)
@@ -284,7 +296,7 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 
 test-build: $(TEST_ISO_IMAGE)
 
-$(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF) $(RING3_PIE_ELF)
+$(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF) $(RING3_PIE_ELF) $(RING3_LINUX_SYSCALL_ELF)
 	@mkdir -p repo-test
 	: > repo-test/test_mode
 	@mkdir -p isodir-test/boot/grub
@@ -294,10 +306,11 @@ $(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE
 	cp -f $(RING3_EXEC_ELF) repo-test/exec_target
 	cp -f $(RING3_C_APP_ELF) repo-test/c_example
 	cp -f $(RING3_PIE_ELF) repo-test/pie_probe
+	cp -f $(RING3_LINUX_SYSCALL_ELF) repo-test/linux_syscall_probe
 	cp -f tests/ring3/invalid_elf repo-test/invalid_elf
 	tar -cf initrd-test.tar -C repo-test . --format=ustar
 	rm -f repo-test/ring3_suite
-	rm -f repo-test/exec_target repo-test/c_example repo-test/pie_probe repo-test/invalid_elf
+	rm -f repo-test/exec_target repo-test/c_example repo-test/pie_probe repo-test/linux_syscall_probe repo-test/invalid_elf
 	cp -f initrd-test.tar isodir-test/boot/initrd.tar
 	$(GRUB) -o $@ isodir-test
 

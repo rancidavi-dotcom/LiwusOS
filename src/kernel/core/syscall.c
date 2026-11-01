@@ -1621,8 +1621,35 @@ uint64_t sys_mouse_get(void *out) {
   return 0;
 }
 
+static void syscall_wrmsr(uint32_t msr, uint64_t value) {
+  uint32_t low = (uint32_t)value;
+  uint32_t high = (uint32_t)(value >> 32);
+  asm volatile("wrmsr" : : "a"(low), "d"(high), "c"(msr));
+}
+
+extern void linux_syscall_entry(void);
+
+void init_syscall_cpu(void) {
+  uint32_t eax = 0x80000000U, ebx, ecx, edx;
+  asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+  if (eax < 0x80000001U) return;
+  eax = 0x80000001U;
+  asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+  if (!(edx & (1U << 11))) return; /* SYSCALL/SYSRET */
+
+  uint32_t lo, hi;
+  asm volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xC0000080U));
+  syscall_wrmsr(0xC0000080U, (((uint64_t)hi << 32) | lo) | 1ULL);
+  syscall_wrmsr(0xC0000081U, ((uint64_t)0x1B << 48) |
+                              ((uint64_t)0x08 << 32));
+  syscall_wrmsr(0xC0000082U, (uint64_t)linux_syscall_entry);
+  syscall_wrmsr(0xC0000084U, (1ULL << 8) | (1ULL << 9) |
+                              (1ULL << 10) | (1ULL << 14) | (1ULL << 18));
+}
+
 void init_syscalls() {
   memset(fd_table, 0, sizeof(fd_table));
   kernel_termios.c_cc[VMIN] = 1;
   kernel_termios.c_cc[VTIME] = 0;
+  init_syscall_cpu();
 }
