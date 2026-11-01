@@ -1,4 +1,5 @@
 #include "kheap.h"
+#include "kernel_layout.h"
 #include "pmm.h"
 #include "serial.h"
 #include "spinlock.h"
@@ -54,7 +55,7 @@ void *kmalloc(size_t size) {
   uint64_t eflags = push_interrupts();
   spinlock_acquire(&kheap_lock);
   if (kheap_start == 0)
-    kheap_set_start((uint64_t)end + 0x1000);
+    kheap_set_start(kernel_virt_to_phys(end) + 0x1000);
 
   size = (size + 3) & ~3;
   uint32_t total = size + HEADER_SIZE;
@@ -96,7 +97,7 @@ void *kmalloc_a(size_t size) {
   uint64_t eflags = push_interrupts();
   spinlock_acquire(&kheap_lock);
   if (kheap_start == 0)
-    kheap_set_start((uint64_t)end + 0x1000);
+    kheap_set_start(kernel_virt_to_phys(end) + 0x1000);
 
   // We want the returned address `aligned` to be page-aligned (multiple of 4096),
   // and we need to place the block header right before it (at `aligned - HEADER_SIZE`).
@@ -129,7 +130,7 @@ void *kmalloc_ap(size_t size, uint64_t *phys) {
   uint64_t eflags = push_interrupts();
   spinlock_acquire(&kheap_lock);
   if (kheap_start == 0)
-    kheap_set_start((uint64_t)end + 0x1000);
+    kheap_set_start(kernel_virt_to_phys(end) + 0x1000);
 
   if (kheap_current % 4096 != 0)
     kheap_current += 4096 - (kheap_current % 4096);

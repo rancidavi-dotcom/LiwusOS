@@ -64,18 +64,29 @@ _start:
   rep stosl
 
   /* ---- Step 2: Build PML4 ---- */
-  /* PML4[0] -> PDP (identity map) */
+  /* PML4[0] -> PDP (identity map, kept during the transition) */
   lea (pdp), %eax
   or $0x3, %eax
   mov %eax, (pml4_table)
 
-  /* ---- Step 3: Build PDP ---- */
-  /* PDP[0] -> PD */
+  /* PML4[511] -> PDP for the higher-half window */
+  lea (pdp_high), %eax
+  or $0x3, %eax
+  mov %eax, (pml4_table + 511 * 8)
+
+  /* ---- Step 3: Build PDPs ---- */
+  /* PDP[0] -> PD (identity, 0x0000000000000000) */
   lea (pd), %eax
   or $0x3, %eax
   mov %eax, (pdp)
 
-  /* ---- Step 4: Build PD (2MB pages covering first 256MB) ---- */
+  /* PDP[510] -> PD (higher half, 0xffffffff80000000) */
+  lea (pd_high), %eax
+  or $0x3, %eax
+  mov %eax, (pdp_high + 510 * 8)
+
+  /* ---- Step 4: Build PDs (2MB pages) ---- */
+  /* Identity: 512 x 2MB = first 1 GiB */
   mov $0x83, %eax
   lea (pd), %edi
   mov $0, %ecx
@@ -85,6 +96,19 @@ _start:
   inc %ecx
   cmp $512, %ecx
   jl 1b
+
+  /* Higher half: 64 x 2MB = 128 MiB, 0xffffffff80000000 -> 32 MiB.
+   * The kernel image is linked at KERNEL_VIRT_BASE and loaded at
+   * KERNEL_PHYS_BASE (see linker.ld). */
+  mov $0x02000083, %eax
+  lea (pd_high), %edi
+  mov $0, %ecx
+2:
+  mov %eax, (%edi, %ecx, 8)
+  add $0x200000, %eax
+  inc %ecx
+  cmp $64, %ecx
+  jl 2b
 
   /* ---- Step 5: Enable PAE ---- */
   mov %cr4, %eax
@@ -127,10 +151,12 @@ entry_64:
 
   /* Do not rely on the upper half/preservation of RBX across the mode
    * transition.  Multiboot2 supplies a 32-bit physical address, saved above.
+   * kernel_main lives in the higher-half window, which the boot page tables
+   * already installed, so the call target must be a full 64-bit immediate.
    */
   mov mb2_info_phys_low(%rip), %rsi
   mov $0x36D76289, %edi /* Multiboot2 boot magic */
-  mov $kernel_main, %rax
+  movabs $kernel_main, %rax
   call *%rax
 
   /* Should never return */
@@ -207,5 +233,9 @@ pml4_table:
 pdp:
   .skip 4096
 pd:
+  .skip 4096
+pdp_high:
+  .skip 4096
+pd_high:
   .skip 4096
 page_tables_end:

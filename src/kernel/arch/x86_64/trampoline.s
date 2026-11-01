@@ -5,7 +5,14 @@
 .extern ap_stack_val
 .extern ap_entry_val
 .extern ap_status
-.extern gdt_ptr
+.extern cpus_gdt
+
+/* virt - KERNEL_VIRT_OFFSET = phys. Keep in sync with kernel_layout.h.
+ * The trampoline runs at physical 0x8000 with paging off in 16-bit mode and
+ * with the identity map active in 32-bit mode, so the 32-bit absolute
+ * references below must use physical (low) aliases of kernel symbols. */
+.equ KERNEL_VIRT_OFFSET, 0xffffffff7e000000
+.equ GDT_ENTRIES, 9 /* keep in sync with include/kernel/gdt.h */
 
 .text
 
@@ -46,6 +53,13 @@ temp_gdt_ptr:
     .word (temp_gdt_end - temp_gdt - 1)
     .long (temp_gdt - trampoline_start + 0x8000)
 
+# 32-bit GDT pointer using the physical alias of the shared kernel GDT.
+# Needed because LGDT in 32-bit mode only loads a 32-bit base.
+.align 8
+ap_gdt_ptr:
+    .word (GDT_ENTRIES * 8 - 1)
+    .long (cpus_gdt - KERNEL_VIRT_OFFSET)
+
 .code32
 entry32:
     # Load 32-bit data segment selector (0x10)
@@ -56,8 +70,9 @@ entry32:
     mov %ax, %fs
     mov %ax, %gs
 
-    # Load PML4 address into CR3
-    mov $ap_pml4_val, %eax
+    # Load PML4 address into CR3 (physical alias; identity map is active
+    # after CR0.PG is set, but the read happens before that)
+    mov $(ap_pml4_val - KERNEL_VIRT_OFFSET), %eax
     mov (%eax), %eax
     mov %eax, %cr3
 
@@ -77,11 +92,14 @@ entry32:
     or $(1 << 31), %eax
     mov %eax, %cr0
 
-    # Load the main 64-bit kernel GDT descriptor
-    lgdt (gdt_ptr)
+    # Load the main 64-bit kernel GDT through its physical alias. The
+    # descriptors are identical to the higher-half copy.
+    lgdt (ap_gdt_ptr - trampoline_start + 0x8000)
 
-    # Far jump to 64-bit Long Mode code segment selector 0x08
-    ljmp $0x08, $entry64
+    # Far jump to 64-bit Long Mode code segment selector 0x08. The target is
+    # the physical alias of entry64: the trampoline copy at 0x8000 is
+    # identity-mapped and executable after paging is enabled.
+    ljmp $0x08, $(entry64 - trampoline_start + 0x8000)
 
 .code64
 entry64:
@@ -93,16 +111,17 @@ entry64:
     mov %ax, %fs
     mov %ax, %gs
 
-    # Load the custom per-CPU kernel stack allocated by the BSP
-    mov $ap_stack_val, %rax
+    # Load the custom per-CPU kernel stack allocated by the BSP. From here on
+    # the higher-half window is active, so 64-bit absolute addresses work.
+    movabs $ap_stack_val, %rax
     mov (%rax), %rsp
 
     # Signal the BSP that this core has initialized successfully
-    mov $ap_status, %rax
+    movabs $ap_status, %rax
     movq $1, (%rax)
 
     # Jump to the C entrypoint function: `ap_kernel_main()`
-    mov $ap_entry_val, %rax
+    movabs $ap_entry_val, %rax
     mov (%rax), %rax
     jmp *%rax
 

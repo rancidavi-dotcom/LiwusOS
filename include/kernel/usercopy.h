@@ -7,11 +7,12 @@
 /*
  * LiwusOS User/Kernel boundary enforcement.
  *
- * The kernel does not use a high-half layout: user code lives around 4MB,
- * the stack at ~3GB, and the kernel itself at 16MB+. Therefore a fixed
- * address-range check is not sufficient. User pages are always mapped with
- * PTE_U, while kernel pages are not. Validation therefore checks that every
- * covered page is mapped and has PTE_U set.
+ * The kernel image is linked in the higher half (0xffffffff80000000) and
+ * loaded at 32 MiB. During step 9a a 1 GiB identity window is still kept for
+ * the PMM, the kernel heap, page tables and the image's physical alias, so a
+ * fixed address-range check is not sufficient on its own. User pages are
+ * always mapped with PTE_U, while kernel pages are not. Validation therefore
+ * checks that every covered page is mapped and has PTE_U set.
  */
 
 #define USER_ADDR_MAX  0xC0000000ULL /* top of the user stack space */

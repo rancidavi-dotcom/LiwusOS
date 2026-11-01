@@ -21,6 +21,7 @@
 #include "vmm.h"
 #include "vga.h"
 #include "terminal.h"
+#include "kernel_layout.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -315,12 +316,17 @@ static void user_init_supervisor_task(void) {
 
 void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   (void)magic;
-  uint64_t reserved_start = (uint64_t)end + 0x1000;
+  uint64_t reserved_start = kernel_virt_to_phys(end) + 0x1000;
   uint64_t pmm_bitmap_bytes;
   uint64_t heap_start;
 
   init_serial();
   serial_print("LiwusOS Kernel Booting...\n");
+  serial_print("[boot] kernel_main virt=");
+  serial_print_hex((uint64_t)(uintptr_t)&kernel_main);
+  serial_print(" phys=");
+  serial_print_hex(kernel_virt_to_phys((const void *)&kernel_main));
+  serial_print("\n");
 
   parse_multiboot2(mbi_addr);
   boot_stage("multiboot2 ok");

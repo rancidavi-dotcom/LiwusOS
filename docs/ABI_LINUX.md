@@ -90,6 +90,19 @@ Os valores completos e layouts binários devem ser definidos em headers sob `inc
 
 O stub salva estado de usuário de modo que interrupções e preempção preservem a mesma estrutura de contexto do scheduler. A implementação não reutiliza RCX como quarto argumento Linux: SYSCALL grava RIP em RCX e RFLAGS em R11.
 
+### Sequência obrigatória de entrada (antes do passo 35)
+
+- `SYSCALL` entra com RSP ainda apontando para a stack de usuário. O stub não pode usar a pilha antes de trocar para a kernel stack.
+- A primeira instrução é `swapgs`, que troca o GS de usuário pelo GS do kernel. O kernel mantém `IA32_KERNEL_GS_BASE` com a base do bloco por CPU; a troca é obrigatória na entrada e na saída, inclusive em NMI/#MC, que usam IST dedicado.
+- O bloco por CPU (acessível via GS) contém `current_thread`, `kernel_stack_top`, `user_rsp_scratch` e `cpu_id`.
+- Ordem mínima: `swapgs`; salvar o RSP de usuário no bloco por CPU; carregar RSP de `current_thread->kernel_stack_top`; construir o frame completo (RIP, RFLAGS, RCX, R11, argumentos e registradores callee-saved); chamar o dispatcher.
+- `TSS.RSP0` aponta para o topo da kernel stack da thread corrente antes de qualquer retorno a ring 3. Ele é atualizado na troca de contexto, não no caminho de entrada.
+- `IA32_FMASK` deve mascarar IF, TF, DF e AC, e o kernel assume DF limpo. NMI e #MC usam IST porque `SYSCALL` não os desabilita.
+- A stack de usuário não garante alinhamento de 16 bytes no ponto de entrada; o kernel não pode assumir alinhamento nem usar a red zone (compilação com `-mno-red-zone`).
+- Saída: se RIP e RFLAGS de retorno forem canônicos e seguros (sem TF, DF, AC ou NT), usar `SYSRET` com RCX e R11; caso contrário, montar `IRETQ`. `SYSRET` termina com `swapgs`, e a validação acontece antes de qualquer acesso com GS de usuário.
+- O retorno não pode executar `swapgs` duas vezes: interrupções aninhadas já rodam com GS de kernel e stack de kernel.
+- `int 0x80` permanece como entrada nativa do LiwusOS. Uma compatibilidade i386 Linux futura exigirá um seletor de ABI por tarefa antes de reutilizar o mesmo vetor.
+
 ## O que a compatibilidade Linux não faz
 
 - Não cria um segundo scheduler, VFS, page table manager, fork ou allocator.

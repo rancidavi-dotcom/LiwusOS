@@ -2,7 +2,7 @@
 
 Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verificáveis. A compatibilidade traduz a ABI na borda e reutiliza o mesmo motor de processos, memória virtual e VFS do sistema. Cada fase começa somente depois do gate anterior passar.
 
-> **Estado atual:** Gate 0 concluído em 2026-11-01 (commit `6402de8`, branch `lean-kernel`). Próximo marco: Fase 1, passo 9 (higher-half, direct map e remoção do teto de 1 GiB).
+> **Estado atual:** Gate 0 concluído em 2026-11-01 (commit `6402de8`, branch `lean-kernel`). Passo 9a concluído em 2026-11-01: o kernel é linkado em `0xffffffff80000000`, carregado em 32 MiB e mantém a identidade de boot. Próximo marco: passo 9b (direct map físico), após revisão do 9a.
 
 ## Fase 0 — Congelar e descrever a base
 

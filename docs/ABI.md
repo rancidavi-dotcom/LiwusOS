@@ -87,21 +87,30 @@ this document.
 |---|---|
 | `0x0000000000000000` | null guard page, never mapped |
 | `0x0000000000001000`–`0x0000000000ffffff` | low identity-mapped RAM; accepted by `is_user_addr` but has no `PTE_U`, so usercopy rejects it |
-| `0x0000000001000000`–`0x000000000fffffff` | kernel image, identity mapped (linked at 16 MiB) |
-| `0x0000000010000000`–`0x000000003fffffff` | kernel identity map / PMM-managed RAM |
+| `0x0000000001000000`–`0x0000000001009fff` | boot stub (`.boot`), VMA = LMA at 16 MiB: multiboot header, boot page tables and boot stack |
+| `0x0000000002000000`–`0x000000000202c000` | physical load address of the kernel image; reachable through the identity map |
+| `0xffffffff80000000`–`0xffffffff8002c000` | kernel image VMA (`.text`, `.rodata`, `.data`, `.bss`) |
+| `0x0000000000000000`–`0x000000003fffffff` | 1 GiB identity window kept during step 9a: PMM, `kheap`, page tables and low aliases of the boot stub and kernel image |
+| `0x0000000000400000`–`0x0000000000ffffff` | user segments loaded below 16 MiB (current test binaries) |
 | `0x0000000040000000`–`0x00000000bfffffff` | user image, heap (`brk`) and `mmap` |
 | `0x00000000c0000000` | top of the user stack (exclusive ceiling) |
 
 - Physical memory is currently capped at 1 GiB (`kernel.c`).
+- The kernel image is linked at `0xffffffff80000000` and loaded at 32 MiB. The
+  boot stub installs a 128 MiB higher-half window with 2 MiB pages, so
+  `virt = phys + 0xffffffff7e000000` for image symbols. `kernel_virt_to_phys()`
+  converts those symbols; the PMM, `kheap` and page tables still use identity
+  addresses.
 - `mmap` grows downwards from `0xBFFF0000`; `brk` grows upwards from the end of
   the loaded image. Both are rejected if they would cross `0x40000000`.
-- `USER_ADDR_MAX` is `0xC0000000`; `is_user_addr` rejects the first page and
-  everything at or above that ceiling. Being inside the range is not enough:
-  every page must also carry `PTE_U`.
+- `USER_ADDR_MAX` is `0xC0000000`; `is_user_addr` rejects the first page,
+  everything at or above that ceiling, and the 16 MiB–1 GiB identity window.
+  Being inside the allowed range is not enough: every page must also carry
+  `PTE_U`.
 - There is no demand paging: pages are allocated eagerly by `brk`/`mmap`, and a
   page fault in user mode terminates the task.
-- This layout is temporary and is replaced by the higher-half model in
-  `MM.md` (Gate 1).
+- The identity window is removed in step 9c and replaced by a separate direct
+  map in step 9b, as described in `MM.md` (Gate 1).
 
 ## 5. Processes and threads
 

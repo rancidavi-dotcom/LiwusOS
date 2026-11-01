@@ -1,6 +1,6 @@
 # Modelo de memória do LiwusOS
 
-Este é o mapa alvo para as fases de endereçamento e VM do `ROADMAP.md`. Ele descreve o destino arquitetural; o kernel enxuto ainda inicia com identidade 1:1 e limite físico menor, que serão removidos no Gate 1.
+Este é o mapa alvo para as fases de endereçamento e VM do `ROADMAP.md`. Ele descreve o destino arquitetural; o kernel enxuto ainda inicia com identidade 1:1 e limite físico menor, que serão removidos no Gate 1. O passo 9a (subdivisão do passo 9) já liga o kernel em `0xffffffff80000000` e mantém a identidade apenas para a transição; o direct map físico e a remoção da identidade são os passos 9b e 9c.
 
 ## Mapa virtual x86-64 alvo
 
@@ -9,8 +9,8 @@ O mapa usa endereços canônicos de 48 bits (LA57 desativado). A metade baixa é
 | Faixa virtual | Uso |
 |---|---|
 | `0x0000000000000000`–`0x0000000000000fff` | página nula, permanentemente inválida |
-| `0x0000000000001000`–`0x00000000003fffff` | início livre do userspace; espaço para imagem fixa baixa existente |
-| `0x0000000000400000`–`0x0000000040000000` | imagem ELF fixa legada, heap/brk e compatibilidade de aplicações atuais, conforme VMA |
+| `0x0000000000001000`–`0x00000000003fffff` | início livre do userspace |
+| `0x0000000000400000`–`0x0000000040000000` | espaço de usuário livre; sem reserva para heap ou imagem ELF legada |
 | `0x0000000040000000`–`0x0000555555554000` | espaço livre para mappings de baixa/média faixa |
 | em torno de `0x0000555555554000` | base sugerida para PIE ET_DYN; ASLR futuro escolhe entre candidatos válidos |
 | `0x0000600000000000`–`0x00007f0000000000` | faixa de mmap de bibliotecas e arquivos |
@@ -21,6 +21,8 @@ O mapa usa endereços canônicos de 48 bits (LA57 desativado). A metade baixa é
 | `0xffff800000000000`–`0xffffffffffffffff` | metade alta do kernel |
 
 O limite de user virtual é exclusivo: `USER_ADDR_MAX = 0x0000800000000000`. Todo início e fim deve ser canônico, sem overflow e fora das regiões reservadas. O teto de endereço virtual não implica que exista RAM física no mesmo endereço.
+
+> **Decisão (Fase 1, passo 9a):** a faixa `0x0000000000400000`–`0x0000000040000000` é espaço de usuário livre, e não uma reserva para o modelo antigo de heap/ELF. O kernel enxuto ainda carrega imagens fixas e o `brk` nessa região porque o loader atual não tem VMAs; a mudança efetiva para alocação por VMA ocorre no Gate 1. Nenhum código novo deve tratar essa faixa como legado.
 
 ## Mapa kernel da metade alta
 
