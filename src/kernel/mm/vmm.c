@@ -133,6 +133,12 @@ static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
 }
 
 void vmm_map_page(void *phys, void *virt, uint64_t flags) {
+  vmm_map_page_in(current_directory, phys, virt, flags);
+}
+
+void vmm_map_page_in(page_directory_t *dir, void *phys, void *virt,
+                     uint64_t flags) {
+  if (!dir || !dir->pml4_virt) return;
   uint64_t p = virt_to_phys(phys);
   uint64_t v = (uint64_t)virt;
   uint64_t f = flags;
@@ -140,26 +146,32 @@ void vmm_map_page(void *phys, void *virt, uint64_t flags) {
   if ((f & PTE_U) && !is_user_addr(virt)) return;
 
   walk_pt_modified_pml4 = 0;
-  pte_t *entry = walk_pt(current_directory, v, f);
+  pte_t *entry = walk_pt(dir, v, f);
   if (entry) {
     *entry = (p & PTE_ADDR_MASK) | (f & (0xFFFULL | PTE_NX)) | PTE_P;
-    if (walk_pt_modified_pml4) {
+    if (dir == current_directory && walk_pt_modified_pml4) {
       uint64_t cr3;
       asm volatile("mov %%cr3, %0" : "=r"(cr3));
       asm volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
-    } else {
+    } else if (dir == current_directory) {
       asm volatile("invlpg (%0)" : : "r"(v) : "memory");
     }
   }
 }
 
 int vmm_map_large_page(uint64_t phys, uint64_t virt, uint64_t flags) {
+  return vmm_map_large_page_in(current_directory, phys, virt, flags);
+}
+
+int vmm_map_large_page_in(page_directory_t *dir, uint64_t phys,
+                          uint64_t virt, uint64_t flags) {
+  if (!dir || !dir->pml4_virt) return -1;
   if (!vmm_nx_enabled) flags &= ~PTE_NX;
   if ((phys & 0x1FFFFFULL) || (virt & 0x1FFFFFULL) ||
       vaddr_pml4i(virt) != vaddr_pml4i(virt + 0x1FFFFFULL) ||
       (flags & PTE_U)) return -1;
 
-  pml4_t *pml4 = current_directory->pml4_virt;
+  pml4_t *pml4 = dir->pml4_virt;
   uint64_t pml4_i = vaddr_pml4i(virt);
   uint64_t pdp_i = vaddr_pdpi(virt);
   uint64_t pd_i = vaddr_pdi(virt);
@@ -181,7 +193,8 @@ int vmm_map_large_page(uint64_t phys, uint64_t virt, uint64_t flags) {
   if (pd->entries[pd_i] & PTE_P) return -1;
   pd->entries[pd_i] = (phys & ~0x1FFFFFULL) |
                       (flags & (0xFFFULL | PTE_NX)) | PTE_P | PTE_W | PTE_PS;
-  asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
+  if (dir == current_directory)
+    asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
   return 0;
 }
 
@@ -252,21 +265,33 @@ static void vmm_mark_direct_map_nx(void) {
 
 /* Change leaf permissions without replacing or freeing the mapped frame. */
 int vmm_set_page_flags(void *virt, uint64_t flags) {
+  return vmm_set_page_flags_in(current_directory, virt, flags);
+}
+
+int vmm_set_page_flags_in(page_directory_t *dir, void *virt,
+                          uint64_t flags) {
+  if (!dir || !dir->pml4_virt) return -1;
   if (!vmm_nx_enabled) flags &= ~PTE_NX;
   uint64_t v = (uint64_t)virt;
-  pte_t *entry = walk_pt(current_directory, v, 0);
+  pte_t *entry = walk_pt(dir, v, 0);
   if (!entry || !(*entry & PTE_P)) return -1;
   *entry = (*entry & ~(0xFFFULL | PTE_NX)) |
            (flags & (0xFFFULL | PTE_NX)) | PTE_P;
-  asm volatile("invlpg (%0)" : : "r"(v) : "memory");
+  if (dir == current_directory)
+    asm volatile("invlpg (%0)" : : "r"(v) : "memory");
   return 0;
 }
 
 // Desmapeia uma única página (4 KB) do diretório de páginas ativo e
 // libera o frame físico correspondente de volta ao PMM. Útil para munmap.
 int vmm_unmap_page(void *virt) {
+  return vmm_unmap_page_in(current_directory, virt);
+}
+
+int vmm_unmap_page_in(page_directory_t *dir, void *virt) {
+  if (!dir || !dir->pml4_virt) return -1;
   uint64_t v = (uint64_t)virt;
-  pml4_t *pml4 = current_directory->pml4_virt;
+  pml4_t *pml4 = dir->pml4_virt;
   uint64_t pml4_i = vaddr_pml4i(v);
   uint64_t pdp_i = vaddr_pdpi(v);
   uint64_t pd_i = vaddr_pdi(v);
@@ -284,9 +309,10 @@ int vmm_unmap_page(void *virt) {
   pt_t *pt = (pt_t *)phys_to_virt(pd->entries[pd_i] & PTE_ADDR_MASK);
   if (!(pt->entries[pt_i] & PTE_P) || !(pt->entries[pt_i] & PTE_U)) return -1;
 
+  if (dir == current_directory)
+    asm volatile("invlpg (%0)" : : "r"(v) : "memory");
   pmm_free_block(phys_to_virt(pt->entries[pt_i] & PTE_ADDR_MASK));
   pt->entries[pt_i] = 0;
-  asm volatile("invlpg (%0)" : : "r"(v) : "memory");
   return 0;
 }
 

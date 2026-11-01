@@ -1388,6 +1388,8 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
   (void)fd;
   (void)offset;
   if (!current_task) return MAP_FAILED;
+  page_directory_t *mm = current_task->page_directory;
+  if (!mm) return MAP_FAILED;
   if (!(flags & MAP_ANONYMOUS)) return MAP_FAILED; // suportado apenas anônimo
   if ((prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
     return MAP_FAILED;
@@ -1407,7 +1409,7 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
   if ((flags & MAP_FIXED) && addr) {
     base = (uint64_t)addr & ~(uint64_t)4095;
   } else {
-    if (vma_find_gap_topdown(current_directory, current_task->mmap_top,
+    if (vma_find_gap_topdown(mm, current_task->mmap_top,
                              USER_ADDR_MIN, aligned_len, &base) < 0)
       return MAP_FAILED;
   }
@@ -1432,11 +1434,12 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
     if (!phys) {
       // Desfaz mapeamentos já feitos
       for (uint64_t j = 0; j < i; j++) {
-        vmm_unmap_page((void *)(base + j * 4096));
+        vmm_unmap_page_in(mm, (void *)(base + j * 4096));
       }
       return MAP_FAILED;
     }
-    vmm_map_page(phys, (void *)(base + (uint64_t)i * 4096), alloc_flags);
+    vmm_map_page_in(mm, phys, (void *)(base + (uint64_t)i * 4096),
+                    alloc_flags);
     if (validate_user_pointer((void *)(base + i * 4096), 1) < 0) {
       pmm_free_block(phys);
       break;
@@ -1445,7 +1448,7 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
   }
   if (i != aligned_len / 4096) {
     for (uint64_t j = 0; j < i; j++)
-      vmm_unmap_page((void *)(base + j * 4096));
+      vmm_unmap_page_in(mm, (void *)(base + j * 4096));
     return MAP_FAILED;
   }
 
@@ -1455,20 +1458,21 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
   if (prot & PROT_EXEC) vma_prot |= VMA_PROT_EXEC;
   uint32_t vma_flags = (flags & MAP_SHARED) ? VMA_SHARED : VMA_PRIVATE;
   vma_flags |= VMA_ANON;
-  if (vma_insert(current_directory, base, base + aligned_len, vma_prot,
+  if (vma_insert(mm, base, base + aligned_len, vma_prot,
                  vma_flags, 0, 0) < 0) {
     for (uint64_t j = 0; j < aligned_len / PAGE_SIZE; j++)
-      vmm_unmap_page((void *)(base + j * PAGE_SIZE));
+      vmm_unmap_page_in(mm, (void *)(base + j * PAGE_SIZE));
     return MAP_FAILED;
   }
 
   /* The kernel initializes frames while writable, then exposes requested
    * user permissions. This remains valid with CR0.WP enabled. */
   for (uint64_t j = 0; j < aligned_len / PAGE_SIZE; j++) {
-    if (vmm_set_page_flags((void *)(base + j * PAGE_SIZE), pte_flags) < 0) {
+    if (vmm_set_page_flags_in(mm, (void *)(base + j * PAGE_SIZE),
+                              pte_flags) < 0) {
       for (uint64_t rollback = 0; rollback < aligned_len / PAGE_SIZE; rollback++)
-        vmm_unmap_page((void *)(base + rollback * PAGE_SIZE));
-      vma_remove(current_directory, base, base + aligned_len);
+        vmm_unmap_page_in(mm, (void *)(base + rollback * PAGE_SIZE));
+      vma_remove(mm, base, base + aligned_len);
       return MAP_FAILED;
     }
   }
@@ -1486,16 +1490,18 @@ uint64_t sys_mouse_get(void *out);
 
 int sys_munmap(void *addr, uint64_t length) {
   if (!current_task) return -1;
+  page_directory_t *mm = current_task->page_directory;
+  if (!mm) return -1;
   if (!addr || !is_user_addr(addr)) return -EFAULT;
   if (length > UINT64_MAX - 4095) return -EINVAL;
   uint64_t base = (uint64_t)addr & ~(uint64_t)4095;
   uint64_t aligned_len = (length + 4095) & ~(uint64_t)4095;
   if (!aligned_len) return -EINVAL;
   if (base + aligned_len > USER_ADDR_MAX) return -EFAULT;
-  if (vma_remove(current_directory, base, base + aligned_len) < 0)
+  if (vma_remove(mm, base, base + aligned_len) < 0)
     return -ENOMEM;
   for (uint64_t i = 0; i < aligned_len / 4096; i++) {
-    vmm_unmap_page((void *)(base + i * 4096));
+    vmm_unmap_page_in(mm, (void *)(base + i * 4096));
   }
   return 0;
 }

@@ -2,7 +2,7 @@
 
 Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verificáveis. A compatibilidade traduz a ABI na borda e reutiliza o mesmo motor de processos, memória virtual e VFS do sistema. Cada fase começa somente depois do gate anterior passar.
 
-> **Estado atual:** Gate 0 concluído (`6402de8`); passos 9a/9b (`6bbb7cf`, `7fd8184`) e 9c/10/11 concluídos nesta branch. Passos 12 e 13 implementados no escopo atual: cada diretório possui lista VMA ordenada integrada com ELF, stack, heap, mmap, munmap e fork; EFER.NXE, proteção de imagem do kernel e W^X em ELF/mmap. `make test` passa 43/43, incluindo ET_DYN em `USER_PIE_BASE`, teste NX e unit test de VMA. Ainda faltam demand paging, SMAP, stacks guardadas e operações VMM explicitamente por mm para fechar o Gate 1.
+> **Estado atual:** Gate 0 concluído (`6402de8`); passos 9a/9b (`6bbb7cf`, `7fd8184`) e 9c/10/11 concluídos nesta branch. Passos 12 e 13 implementados no escopo atual: cada diretório possui lista VMA ordenada integrada com ELF, stack, heap, mmap, munmap e fork; EFER.NXE, proteção de imagem do kernel e W^X em ELF/mmap. `make test` e `make ring3-test` passam 43/43, incluindo ET_DYN em `USER_PIE_BASE`, teste NX e unit test de VMA. Boot QEMU com 4 GiB/4 CPUs também chegou a 43/43; isso revelou e corrigiu a falta de EFER.NXE no trampoline dos APs (`8211823`). O passo 17 agora oferece operações `_in(page_directory_t *)` para mapear, alterar permissões e remover páginas, e `mmap`/`munmap` as usam; a migração das demais operações ainda falta. Ainda faltam demand paging, SMAP com usercopy completo, stacks guardadas e migração completa para operações explícitas por mm para fechar o Gate 1.
 
 ## Fase 0 — Congelar e descrever a base
 
