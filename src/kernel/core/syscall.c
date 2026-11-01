@@ -191,9 +191,9 @@ static const char *resolve_path(const char *path) {
     return resolved;
   }
   // Relative path — prepend CWD
-  if (current_task && current_task->cwd[0]) {
-    int cwd_len = strlen(current_task->cwd);
-    memcpy(resolved, current_task->cwd, cwd_len);
+  if (current_task && current_task->process->cwd[0]) {
+    int cwd_len = strlen(current_task->process->cwd);
+    memcpy(resolved, current_task->process->cwd, cwd_len);
     // Ensure trailing slash
     if (resolved[cwd_len - 1] != '/') {
       resolved[cwd_len] = '/';
@@ -221,19 +221,19 @@ int launch_initrd_program_argv(const char *filename, char *const argv[]) {
   
   // Temporarily update current_task's directory so the timer interrupt
   // doesn't revert current_directory while sys_execve maps memory!
-  page_directory_t *task_old_dir = current_task ? current_task->page_directory : old_dir;
-  if (current_task) current_task->page_directory = new_dir;
+  page_directory_t *task_old_dir = current_task ? current_task->process->mm : old_dir;
+  if (current_task) current_task->process->mm = new_dir;
   
   switch_page_directory(new_dir);
   serial_print("[kernel] launch_initrd_program_argv calling sys_execve\n");
   uint64_t ret = sys_execve(filename, argv, NULL);
   if (ret == (uint64_t)-1) {
-    if (current_task) current_task->page_directory = task_old_dir;
+    if (current_task) current_task->process->mm = task_old_dir;
     switch_page_directory(old_dir);
     return -1;
   }
   if (execve_new_esp == 0) {
-    if (current_task) current_task->page_directory = task_old_dir;
+    if (current_task) current_task->process->mm = task_old_dir;
     switch_page_directory(old_dir);
     return -1;
   }
@@ -259,7 +259,7 @@ int launch_initrd_program_argv(const char *filename, char *const argv[]) {
   task_t *t = task_list->next;
   while (t && t->id != pid && t != task_list) { t = t->next; }
   if (t && t->id == pid) {
-    t->page_directory = new_dir;
+    t->process->mm = new_dir;
   }
 
   // Debug page tables for the entry point (ret)
@@ -302,7 +302,7 @@ int launch_initrd_program_argv(const char *filename, char *const argv[]) {
   }
 
   // Restore the old directory for the caller (compositor)
-  if (current_task) current_task->page_directory = task_old_dir;
+  if (current_task) current_task->process->mm = task_old_dir;
   switch_page_directory(old_dir);
   
   serial_print("launch: returning pid=");
@@ -334,7 +334,8 @@ static uint64_t live_pipe_objects = 0;
 // (qualquer tarefa, inclusive kernel tasks), usa a table isolada dele;
 // caso contrário cai na static global.
 static kfile_t *get_fd_table(void) {
-  if (current_task) return current_task->file_descriptors;
+  if (current_task && current_task->process)
+    return current_task->process->file_descriptors;
   return fd_table;
 }
 
@@ -375,9 +376,15 @@ void sys_fd_put(kfile_t *file) {
   memset(file, 0, sizeof(*file));
 }
 
+void task_process_release_io(process_t *process) {
+  if (!process) return;
+  for (int i = 0; i < 32; i++)
+    sys_fd_put(&process->file_descriptors[i]);
+}
+
 void task_release_io(task_t *task) {
   if (!task) return;
-  for (int i = 0; i < 32; i++) sys_fd_put(&task->file_descriptors[i]);
+  task_process_release_io(task->process);
 }
 
 uint64_t sys_io_live_file_descriptions(void) {
@@ -941,7 +948,7 @@ static int do_execve(registers_t *regs, const char *filename,
     return -ENOEXEC;
   }
 
-  page_directory_t *old_dir = current_task->page_directory;
+  page_directory_t *old_dir = current_task->process->mm;
   page_directory_t *new_dir = vmm_create_directory();
   if (!new_dir) {
     serial_print("[execve] new address space allocation failed\n");
@@ -950,7 +957,7 @@ static int do_execve(registers_t *regs, const char *filename,
     return -ENOMEM;
   }
 
-  current_task->page_directory = new_dir;
+  current_task->process->mm = new_dir;
   switch_page_directory(new_dir);
   last_elf_heap_start = 0;
   uint64_t entry = klass == ELFCLASS64
@@ -960,7 +967,7 @@ static int do_execve(registers_t *regs, const char *filename,
   if (owned_file) kfree(file);
   if (!entry) {
     serial_print("[execve] ELF load failed rc="); serial_print_hex((uint64_t)(int64_t)load_error); serial_print("\n");
-    current_task->page_directory = old_dir;
+    current_task->process->mm = old_dir;
     switch_page_directory(old_dir);
     vmm_free_directory(new_dir);
     last_elf_heap_start = 0;
@@ -972,7 +979,7 @@ static int do_execve(registers_t *regs, const char *filename,
   rc = exec_build_stack(new_dir, klass, kargv, argc, kenvp, envc, &new_rsp);
   if (rc < 0) {
     serial_print("[execve] user stack setup failed rc="); serial_print_hex((uint64_t)(int64_t)rc); serial_print("\n");
-    current_task->page_directory = old_dir;
+    current_task->process->mm = old_dir;
     switch_page_directory(old_dir);
     vmm_free_directory(new_dir);
     last_elf_heap_start = 0;
@@ -981,9 +988,9 @@ static int do_execve(registers_t *regs, const char *filename,
   }
 
   page_directory_t *old_to_free = old_dir;
-  current_task->heap_start = last_elf_heap_start;
-  current_task->heap_end = last_elf_heap_start;
-  current_task->mmap_top = USER_MMAP_TOP;
+  current_task->process->heap_start = last_elf_heap_start;
+  current_task->process->heap_end = last_elf_heap_start;
+  current_task->process->mmap_top = USER_MMAP_TOP;
   regs->rip = entry;
   regs->rsp = new_rsp;
   if (klass == ELFCLASS64) {
@@ -1011,7 +1018,7 @@ static int do_execve(registers_t *regs, const char *filename,
 
 int sys_getpid(void) {
   if (!current_task) return 1;
-  return current_task->id;
+  return current_task->process ? current_task->process->pid : current_task->id;
 }
 
 // S_IFMT constants matching newlib
@@ -1194,13 +1201,13 @@ int sys_chdir(const char *path) {
     return -1;
   }
   
-  strncpy(current_task->cwd, resolved, 255);
-  current_task->cwd[255] = '\0';
+  strncpy(current_task->process->cwd, resolved, 255);
+  current_task->process->cwd[255] = '\0';
   
   // Normalize: remove trailing slash unless it's just "/"
-  int len = strlen(current_task->cwd);
-  if (len > 1 && current_task->cwd[len - 1] == '/') {
-    current_task->cwd[len - 1] = '\0';
+  int len = strlen(current_task->process->cwd);
+  if (len > 1 && current_task->process->cwd[len - 1] == '/') {
+    current_task->process->cwd[len - 1] = '\0';
   }
   vfs_node_put(node);
   
@@ -1210,9 +1217,9 @@ int sys_chdir(const char *path) {
 int sys_getcwd(char *buf, uint32_t size) {
   if (!buf || !current_task || size == 0) return -EFAULT;
   if (validate_user_write(buf, size) < 0) return -EFAULT;
-  size_t len = strlen(current_task->cwd);
+  size_t len = strlen(current_task->process->cwd);
   if (len >= size) len = size - 1;
-  if (copy_to_user(buf, current_task->cwd, len) < 0) return -EFAULT;
+  if (copy_to_user(buf, current_task->process->cwd, len) < 0) return -EFAULT;
   if (len < size) {
     char zero = '\0';
     if (copy_to_user((char *)buf + len, &zero, 1) < 0) return -EFAULT;
@@ -1394,7 +1401,7 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
   (void)fd;
   (void)offset;
   if (!current_task) return MAP_FAILED;
-  page_directory_t *mm = current_task->page_directory;
+  page_directory_t *mm = current_task->process->mm;
   if (!mm) return MAP_FAILED;
   if (!(flags & MAP_ANONYMOUS)) return MAP_FAILED; // suportado apenas anônimo
   if ((prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
@@ -1415,7 +1422,7 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
   if ((flags & MAP_FIXED) && addr) {
     base = (uint64_t)addr & ~(uint64_t)4095;
   } else {
-    if (vma_find_gap_topdown(mm, current_task->mmap_top,
+    if (vma_find_gap_topdown(mm, current_task->process->mmap_top,
                              USER_ADDR_MIN, aligned_len, &base) < 0)
       return MAP_FAILED;
   }
@@ -1485,7 +1492,7 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
 
   // Atualiza o marcador de região mmap apenas para alocações dinâmicas
   if (!((flags & MAP_FIXED) && addr)) {
-    current_task->mmap_top = base;
+    current_task->process->mmap_top = base;
   }
 
   return base;
@@ -1496,7 +1503,7 @@ uint64_t sys_mouse_get(void *out);
 
 int sys_munmap(void *addr, uint64_t length) {
   if (!current_task) return -1;
-  page_directory_t *mm = current_task->page_directory;
+  page_directory_t *mm = current_task->process->mm;
   if (!mm) return -1;
   if (!addr || !is_user_addr(addr)) return -EFAULT;
   if (length > UINT64_MAX - 4095) return -EINVAL;

@@ -86,7 +86,7 @@ static int linux_copy_stat(const void *user_out) {
 /* Linux x86-64 syscall numbers and register ordering are translated here.
  * Internal services retain their native interface and return conventions. */
 void linux_syscall_handler(registers_t *regs) {
-  if (!regs || !current_task || current_task->abi != TASK_ABI_LINUX_X86_64) {
+  if (!regs || !current_task || current_task->process->abi != TASK_ABI_LINUX_X86_64) {
     if (regs) regs->rax = (uint64_t)-(int64_t)LINUX_ENOSYS;
     return;
   }

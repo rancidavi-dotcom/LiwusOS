@@ -31,7 +31,7 @@ static int run_linux_elf(const char *name) {
         if (irq_flags & (1ULL << 9)) asm volatile("sti" ::: "memory");
         return -1;
     }
-    linux_task->abi = TASK_ABI_LINUX_X86_64;
+    linux_task->process->abi = TASK_ABI_LINUX_X86_64;
     if (irq_flags & (1ULL << 9)) asm volatile("sti" ::: "memory");
 
     int status = -1;

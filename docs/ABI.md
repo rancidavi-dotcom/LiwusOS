@@ -117,9 +117,10 @@ this document.
 
 ## 5. Processes and threads
 
-- One task equals one process equals one thread. There is no `clone` or signal
-  delivery. Generic per-task FS-base storage exists for Linux personality use;
-  it does not add threads or change the native syscall ABI.
+- A process and its schedulable thread are separate kernel objects. For now
+  each process has exactly one thread; there is no `clone` or signal delivery.
+  The native `fork` and `waitpid` contract remains unchanged. FS-base storage
+  belongs to the thread object for reuse by the Linux personality.
 - `fork` copies the entire address space (`vmm_copy_directory`), with no COW.
 - Kernel task stacks use 16–32 KiB virtual slots with unmapped guards. IRQ
   stacks are per CPU; page-fault and double-fault paths use per-CPU IST stacks.

@@ -48,10 +48,35 @@ typedef struct {
   file_description_t *description;
 } kfile_t;
 
-typedef struct task {
+struct thread;
+
+typedef struct process {
+  int pid; /* process identity (TGID), distinct from thread TIDs */
+  struct process *parent;
+  struct process *next;
+  struct thread *threads;
+  struct thread *leader;
+  uint32_t thread_count;
+  uint32_t references; /* process table plus attached thread references */
+  bool zombie;
+  int exit_status;
+  page_directory_t *mm;
+  uint64_t heap_start;
+  uint64_t heap_end;
+  uint64_t mmap_top;
+  task_abi_t abi;
+  int job_id;
+  int spawn_job_id;
+  char cwd[256];
+  kfile_t file_descriptors[32];
+  void *gui;
+  uint32_t uid, euid, gid, egid;
+  uint32_t umask;
+} process_t;
+
+typedef struct thread {
   int id;
   task_state_t state;
-  int exit_code;
   uint64_t stack_top;
   uint64_t kernel_stack;
   uint64_t kernel_stack_base;
@@ -60,16 +85,10 @@ typedef struct task {
   uint64_t stack_canary_addr;
   uint64_t fs_base;
   uint64_t user_gs_base;
-  struct task *parent;
-  struct task *next;
-  int job_id;
-  int spawn_job_id;
-  page_directory_t *page_directory;
+  struct thread *next;
+  struct thread *process_next;
+  process_t *process;
   void *fpu_ctx;
-  uint64_t heap_start;
-  uint64_t heap_end;
-  // Topo da região de mmap. Começa na faixa alta de userspace e cresce para baixo.
-  uint64_t mmap_top;
   uint64_t cpu_ticks;
   uint64_t switch_count;
   /* Escalonamento: quantos ticks consecutivos a tarefa roda por vez
@@ -78,12 +97,12 @@ typedef struct task {
   int time_slice;     // ticks restantes no quantum atual
   uint64_t wake_tick; // 0 = sem wake agendado; senao tick absoluto do timer
   bool user_mode;
-  task_abi_t abi;
   char name[32];
-  char cwd[256];
-  kfile_t file_descriptors[32];
-  void *gui; // gui_task_state_t* — per-process GUI node bookkeeping
-} task_t;
+} thread_t;
+
+/* Scheduler APIs still use the historical task name for a schedulable
+ * thread. Process resources are stored exclusively in process_t. */
+typedef thread_t task_t;
 
 typedef struct {
   int id;
@@ -144,6 +163,14 @@ int fork_process(registers_t *regs);
 int sys_waitpid(int pid, int *status, int options);
 void sys_exit_process(int status);
 void sys_kill_by_pid(int pid);
+extern process_t *process_list;
+process_t *task_process_create(int pid, process_t *parent,
+                               page_directory_t *mm);
+void task_process_discard(process_t *process);
+void task_process_attach(process_t *process, thread_t *thread);
+void task_process_detach(process_t *process, thread_t *thread);
+void task_process_set_mm(process_t *process, page_directory_t *mm);
+void task_process_release_io(process_t *process);
 void task_release_io(task_t *task);
 void sys_fd_get(kfile_t *file);
 void sys_fd_put(kfile_t *file);

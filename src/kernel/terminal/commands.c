@@ -95,7 +95,7 @@ void cmd_echo(int argc, char **argv) {
             return;
         }
         char path[256], disk_path[256];
-        join_path(current_task ? current_task->cwd : "/", argv[i + 1], path, sizeof(path));
+        join_path(current_task ? current_task->process->cwd : "/", argv[i + 1], path, sizeof(path));
         vfs_to_sdfs_path(path, disk_path, sizeof(disk_path));
         uint32_t old_size = 0;
         uint8_t *old = NULL;
@@ -181,7 +181,7 @@ void cmd_sed(int argc, char **argv) {
     if (argv[file_arg][0] == '/') {
         strncpy(path, argv[file_arg], sizeof(path) - 1);
     } else if (current_task) {
-        join_path(current_task->cwd, argv[file_arg], path, sizeof(path));
+        join_path(current_task->process->cwd, argv[file_arg], path, sizeof(path));
     } else {
         strncpy(path, argv[file_arg], sizeof(path) - 1);
     }
@@ -231,15 +231,15 @@ void cmd_sed(int argc, char **argv) {
 void cmd_pwd(int argc, char **argv) {
     (void)argc; (void)argv;
     if (current_task) {
-        vga_puts(current_task->cwd);
+        vga_puts(current_task->process->cwd);
         vga_puts("\n");
-        serial_print(current_task->cwd);
+        serial_print(current_task->process->cwd);
         serial_print("\n");
     }
 }
 
 void cmd_ls(int argc, char **argv) {
-    const char *path = current_task ? current_task->cwd : "/";
+    const char *path = current_task ? current_task->process->cwd : "/";
     if (argc > 1) {
         path = argv[1];
     }
@@ -301,7 +301,7 @@ void cmd_cd(int argc, char **argv) {
     const char *path = argc > 1 ? argv[1] : "/";
     
     char resolved[256];
-    resolve_path(current_task->cwd, path, resolved, sizeof(resolved));
+    resolve_path(current_task->process->cwd, path, resolved, sizeof(resolved));
 
     /* Normalize: strip trailing slashes (except root "/") so paths from
      * completion (e.g. "Nova Pasta/") resolve cleanly in SDFS. */
@@ -327,8 +327,8 @@ void cmd_cd(int argc, char **argv) {
         return;
     }
     
-    strncpy(current_task->cwd, resolved, sizeof(current_task->cwd) - 1);
-    current_task->cwd[sizeof(current_task->cwd) - 1] = '\0';
+    strncpy(current_task->process->cwd, resolved, sizeof(current_task->process->cwd) - 1);
+    current_task->process->cwd[sizeof(current_task->process->cwd) - 1] = '\0';
     vfs_node_put(dir);
 }
 
@@ -342,7 +342,7 @@ void cmd_cat(int argc, char **argv) {
     if (argv[1][0] == '/') {
         strncpy(path, argv[1], sizeof(path) - 1);
     } else if (current_task) {
-        join_path(current_task->cwd, argv[1], path, sizeof(path));
+        join_path(current_task->process->cwd, argv[1], path, sizeof(path));
     } else {
         strncpy(path, argv[1], sizeof(path) - 1);
     }
@@ -397,7 +397,7 @@ void cmd_mkdir(int argc, char **argv) {
     if (argv[1][0] == '/') {
         strncpy(path, argv[1], sizeof(path) - 1);
     } else if (current_task) {
-        join_path(current_task->cwd, argv[1], path, sizeof(path));
+        join_path(current_task->process->cwd, argv[1], path, sizeof(path));
     } else {
         strncpy(path, argv[1], sizeof(path) - 1);
     }
@@ -435,7 +435,7 @@ void cmd_touch(int argc, char **argv) {
     if (argv[1][0] == '/') {
         strncpy(path, argv[1], sizeof(path) - 1);
     } else if (current_task) {
-        join_path(current_task->cwd, argv[1], path, sizeof(path));
+        join_path(current_task->process->cwd, argv[1], path, sizeof(path));
     } else {
         strncpy(path, argv[1], sizeof(path) - 1);
     }
@@ -464,7 +464,7 @@ void cmd_rm(int argc, char **argv) {
     if (argv[1][0] == '/') {
         strncpy(path, argv[1], sizeof(path) - 1);
     } else if (current_task) {
-        join_path(current_task->cwd, argv[1], path, sizeof(path));
+        join_path(current_task->process->cwd, argv[1], path, sizeof(path));
     } else {
         strncpy(path, argv[1], sizeof(path) - 1);
     }
@@ -487,12 +487,12 @@ void cmd_mv(int argc, char **argv) {
     
     char src[256], dst[256];
     if (argv[1][0] == '/') strncpy(src, argv[1], sizeof(src) - 1);
-    else if (current_task) join_path(current_task->cwd, argv[1], src, sizeof(src));
+    else if (current_task) join_path(current_task->process->cwd, argv[1], src, sizeof(src));
     else strncpy(src, argv[1], sizeof(src) - 1);
     src[sizeof(src) - 1] = '\0';
     
     if (argv[2][0] == '/') strncpy(dst, argv[2], sizeof(dst) - 1);
-    else if (current_task) join_path(current_task->cwd, argv[2], dst, sizeof(dst));
+    else if (current_task) join_path(current_task->process->cwd, argv[2], dst, sizeof(dst));
     else strncpy(dst, argv[2], sizeof(dst) - 1);
     dst[sizeof(dst) - 1] = '\0';
     
@@ -514,12 +514,12 @@ void cmd_cp(int argc, char **argv) {
     
     char src[256], dst[256];
     if (argv[1][0] == '/') strncpy(src, argv[1], sizeof(src) - 1);
-    else if (current_task) join_path(current_task->cwd, argv[1], src, sizeof(src));
+    else if (current_task) join_path(current_task->process->cwd, argv[1], src, sizeof(src));
     else strncpy(src, argv[1], sizeof(src) - 1);
     src[sizeof(src) - 1] = '\0';
     
     if (argv[2][0] == '/') strncpy(dst, argv[2], sizeof(dst) - 1);
-    else if (current_task) join_path(current_task->cwd, argv[2], dst, sizeof(dst));
+    else if (current_task) join_path(current_task->process->cwd, argv[2], dst, sizeof(dst));
     else strncpy(dst, argv[2], sizeof(dst) - 1);
     dst[sizeof(dst) - 1] = '\0';
     

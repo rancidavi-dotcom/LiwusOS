@@ -73,6 +73,7 @@ TEST_SRCS = tests/test_runner_kernel.c \
             tests/test_vma.c \
             tests/test_pmm_high.c \
             tests/test_kstack.c \
+            tests/test_process_model.c \
             tests/test_runner_ring3.c
 
 TEST_OBJS = $(patsubst %.c,$(TEST_OBJ_DIR)/%.o,$(TEST_SRCS))
@@ -124,7 +125,7 @@ smap-test: $(TEST_ISO_IMAGE)
 	@grep -q 'VMM: CR4.SMAP enabled' /tmp/liwusos-smap-integration.serial
 	@grep -q 'APIC: AP core (APIC ID 3) booted and initialized successfully!' \
 		/tmp/liwusos-smap-integration.serial
-	@grep -q 'RESULT: 45/45 PASS' /tmp/liwusos-smap-integration.serial
+	@grep -q 'RESULT: 46/46 PASS' /tmp/liwusos-smap-integration.serial
 	@grep -q 'RESULT: ALL PASS' /tmp/liwusos-smap-integration.serial
 	@grep -q 'Linux x86-64 SYSCALL getpid/fstat/openat/mmap/munmap/FS-TLS/write PASS' \
 		/tmp/liwusos-smap-integration.serial

@@ -17,6 +17,7 @@
 cpu_local_t cpus_local[16];
 spinlock_t scheduler_lock = {0};
 task_t *task_list = NULL;
+process_t *process_list = NULL;
 
 /* The scheduler also runs from the timer interrupt. On this single-CPU
  * kernel, any code taking this lock must prevent a timer interrupt from
@@ -74,6 +75,82 @@ int last_foreground_pid = -1;
 int foreground_job_id = -1;
 static int next_job_id = 1;
 static void task_kill_job_locked(int job_id);
+
+process_t *task_process_create(int pid, process_t *parent,
+                               page_directory_t *mm) {
+  process_t *process = (process_t *)kmalloc(sizeof(*process));
+  if (!process) return NULL;
+  memset(process, 0, sizeof(*process));
+  process->pid = pid;
+  process->parent = parent;
+  process->mm = mm;
+  process->mmap_top = USER_MMAP_TOP;
+  process->umask = 022;
+  strcpy(process->cwd, "/");
+  process->references = 1; /* process table owns it until wait/reap */
+
+  uint64_t flags = scheduler_lock_irqsave();
+  process->next = process_list;
+  process_list = process;
+  scheduler_unlock_irqrestore(flags);
+  return process;
+}
+
+void task_process_attach(process_t *process, thread_t *thread) {
+  if (!process || !thread) return;
+  uint64_t flags = scheduler_lock_irqsave();
+  thread->process = process;
+  thread->process_next = process->threads;
+  process->threads = thread;
+  process->thread_count++;
+  process->references++;
+  if (!process->leader) process->leader = thread;
+  scheduler_unlock_irqrestore(flags);
+}
+
+void task_process_detach(process_t *process, thread_t *thread) {
+  if (!process || !thread) return;
+  uint64_t flags = scheduler_lock_irqsave();
+  thread_t **link = &process->threads;
+  while (*link && *link != thread) link = &(*link)->process_next;
+  if (*link == thread) {
+    *link = thread->process_next;
+    if (process->thread_count) process->thread_count--;
+    if (process->references) process->references--;
+    if (process->leader == thread) process->leader = process->threads;
+  }
+  thread->process_next = NULL;
+  thread->process = NULL;
+  scheduler_unlock_irqrestore(flags);
+}
+
+void task_process_set_mm(process_t *process, page_directory_t *mm) {
+  if (process) process->mm = mm;
+}
+
+void task_process_discard(process_t *process) {
+  if (!process) return;
+  uint64_t flags = scheduler_lock_irqsave();
+  if (process->thread_count != 0 || process->references != 1) {
+    scheduler_unlock_irqrestore(flags);
+    return;
+  }
+  process_t **link = &process_list;
+  while (*link && *link != process) link = &(*link)->next;
+  if (*link == process) *link = process->next;
+  process->next = NULL;
+  scheduler_unlock_irqrestore(flags);
+  task_process_release_io(process);
+  if (process->mm && process->mm != kernel_directory)
+    vmm_free_directory(process->mm);
+  kfree(process);
+}
+
+static void process_wake_parent(process_t *process) {
+  if (process && process->parent && process->parent->leader &&
+      process->parent->leader->state == TASK_SLEEPING)
+    process->parent->leader->state = TASK_READY;
+}
 
 void init_cpu_local(int cpu_id) {
     if (cpu_id < 0 || cpu_id >= 16) return;
@@ -136,10 +213,13 @@ void init_tasking() {
   init_cpu_local(0); // Initialize BSP (CPU 0) local storage
 
   task_t *init_task = (task_t *)kmalloc(sizeof(task_t));
+  if (!init_task) return;
   memset(init_task, 0, sizeof(task_t));
   init_task->id = 0;
   init_task->state = TASK_RUNNING;
-  init_task->page_directory = current_directory;
+  process_t *init_process = task_process_create(0, NULL, current_directory);
+  if (!init_process) { kfree(init_task); return; }
+  task_process_attach(init_process, init_task);
   init_task->kernel_stack_base = (uint64_t)kernel_stack_boot_base();
   init_task->kernel_stack_size = (uint32_t)kernel_stack_boot_size();
   init_task->kernel_stack = init_task->kernel_stack_base +
@@ -147,7 +227,7 @@ void init_tasking() {
   init_task->stack_canary = 0xDEADBEEFCAFEBABE;
   *(uint64_t *)init_task->kernel_stack_base = init_task->stack_canary;
   init_task->user_mode = false;
-  strcpy(init_task->cwd, "/");
+  strcpy(init_task->process->cwd, "/");
   task_assign_name(init_task, "kernel", false);
   task_sched_fields_init(init_task);
 
@@ -174,14 +254,16 @@ int create_task_named_prio(void (*entry_point)(), const char *name,
 int create_task_named_stack(void (*entry_point)(), const char *name,
                              int priority, uint64_t stack_size) {
   task_t *new_task = (task_t *)kmalloc(sizeof(task_t));
+  if (!new_task) return -1;
   memset(new_task, 0, sizeof(task_t));
   new_task->id = next_pid++;
   int pid = new_task->id;
   new_task->state = TASK_READY;
-  new_task->parent = current_task;
-  new_task->page_directory = current_directory;
+  process_t *process = task_process_create(
+      pid, current_task ? current_task->process : NULL, current_directory);
+  if (!process) { kfree(new_task); return -1; }
+  strcpy(process->cwd, current_task ? current_task->process->cwd : "/");
   new_task->user_mode = false;
-  strcpy(new_task->cwd, current_task ? current_task->cwd : "/");
   task_assign_name(new_task, name, false);
   task_sched_fields_init(new_task);
   if (priority >= 1 && priority <= TASK_PRIO_MAX) {
@@ -192,7 +274,7 @@ int create_task_named_stack(void (*entry_point)(), const char *name,
   size_t actual_stack_size = 0;
   uint64_t stack_base = (uint64_t)kernel_stack_alloc((size_t)stack_size,
                                                       &actual_stack_size);
-  if (!stack_base) { kfree(new_task); return -1; }
+  if (!stack_base) { task_process_discard(process); kfree(new_task); return -1; }
   uint64_t stack = stack_base + actual_stack_size;
   new_task->kernel_stack_base = stack_base;
   new_task->kernel_stack = stack;
@@ -225,6 +307,7 @@ int create_task_named_stack(void (*entry_point)(), const char *name,
   *(uint64_t *)stack_base = 0xDEADBEEFCAFEBABE;
 
   new_task->stack_top = (uint64_t)regs;
+  task_process_attach(process, new_task);
 
   uint64_t sched_flags = scheduler_lock_irqsave();
   new_task->next = task_list->next;
@@ -240,6 +323,7 @@ int create_user_task(uint64_t entry_point, uint64_t user_stack) {
 int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
                             const char *name) {
   task_t *new_task = (task_t *)kmalloc(sizeof(task_t));
+  if (!new_task) return -1;
   uint64_t stack;
   registers_t *regs;
 
@@ -247,18 +331,20 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
   new_task->id = next_pid++;
   int pid = new_task->id;
   new_task->state = TASK_READY;
-  new_task->parent = current_task;
-  new_task->page_directory = current_directory;
+  process_t *process = task_process_create(
+      new_task->id, current_task ? current_task->process : NULL,
+      current_directory);
+  if (!process) { kfree(new_task); return -1; }
   new_task->user_mode = true;
-  new_task->job_id = pid;
-  strcpy(new_task->cwd, current_task ? current_task->cwd : "/");
+  process->job_id = pid;
+  strcpy(process->cwd, current_task ? current_task->process->cwd : "/");
   task_assign_name(new_task, name, true);
   task_sched_fields_init(new_task);
 
   size_t stack_size = 0;
   uint64_t stack_base = (uint64_t)kernel_stack_alloc(KERNEL_STACK_MIN_SIZE,
                                                       &stack_size);
-  if (!stack_base) { kfree(new_task); return -1; }
+  if (!stack_base) { task_process_discard(process); kfree(new_task); return -1; }
   stack = stack_base + stack_size;
   /* Alinhar kernel stack para 16 bytes (ABI x86_64) */
   stack = stack & ~0xF;
@@ -281,9 +367,9 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
   regs->rsp = user_stack;
 
   new_task->stack_top = (uint64_t)regs;
-  new_task->heap_start = 0x40000000;
-  new_task->heap_end = 0x40000000;
-  new_task->mmap_top = USER_MMAP_TOP;
+  process->heap_start = 0x40000000;
+  process->heap_end = 0x40000000;
+  task_process_attach(process, new_task);
 
   serial_print("DBG_TASK: pid=");
   char nbuf[12];
@@ -305,6 +391,7 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
 int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
                                const char *name) {
   task_t *new_task = (task_t *)kmalloc(sizeof(task_t));
+  if (!new_task) return -1;
   uint64_t stack;
   registers_t *regs;
 
@@ -312,18 +399,20 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
   new_task->id = next_pid++;
   int pid = new_task->id;
   new_task->state = TASK_READY;
-  new_task->parent = current_task;
-  new_task->page_directory = current_directory;
+  process_t *process = task_process_create(
+      new_task->id, current_task ? current_task->process : NULL,
+      current_directory);
+  if (!process) { kfree(new_task); return -1; }
   new_task->user_mode = true;
-  new_task->job_id = pid;
-  strcpy(new_task->cwd, current_task ? current_task->cwd : "/");
+  process->job_id = pid;
+  strcpy(process->cwd, current_task ? current_task->process->cwd : "/");
   task_assign_name(new_task, name, true);
   task_sched_fields_init(new_task);
 
   size_t stack_size = 0;
   uint64_t stack_base = (uint64_t)kernel_stack_alloc(KERNEL_STACK_MIN_SIZE,
                                                       &stack_size);
-  if (!stack_base) { kfree(new_task); return -1; }
+  if (!stack_base) { task_process_discard(process); kfree(new_task); return -1; }
   stack = stack_base + stack_size;
   /* Alinhar kernel stack para 16 bytes (ABI x86_64) */
   stack = stack & ~0xF;
@@ -348,9 +437,9 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
 
   new_task->stack_top = (uint64_t)regs;
   uint64_t hstart = last_elf_heap_start ? last_elf_heap_start : 0x40000000;
-  new_task->heap_start = hstart;
-  new_task->heap_end = hstart;
-  new_task->mmap_top = USER_MMAP_TOP;
+  process->heap_start = hstart;
+  process->heap_end = hstart;
+  task_process_attach(process, new_task);
 
   serial_print("DBG_TASK64: pid=");
   char nbuf[12];
@@ -432,9 +521,12 @@ uint64_t schedule(uint64_t current_rsp) {
         if (fg->id == last_foreground_pid && fg->user_mode) {
           task_release_io(fg);
           fg->state = TASK_ZOMBIE;
-          fg->exit_code = 128 + 2;
           last_foreground_pid = -1;
-          if (fg->parent) fg->parent->state = TASK_READY;
+          if (fg->process) {
+            fg->process->zombie = true;
+            fg->process->exit_status = 128 + 2;
+            process_wake_parent(fg->process);
+          }
           break;
         }
         fg = fg->next;
@@ -501,8 +593,8 @@ uint64_t schedule(uint64_t current_rsp) {
   global_switch_count++;
 
   /* VMM Switch: Trocar CR3 se mudou de processo */
-  if (new_curr->page_directory != current_directory) {
-    switch_page_directory(new_curr->page_directory);
+  if (new_curr->process->mm != current_directory) {
+    switch_page_directory(new_curr->process->mm);
   }
 
   /* Atualiza TSS ESP0 para a pilha de kernel da nova tarefa */
@@ -594,7 +686,7 @@ int task_set_foreground(int pid) {
   uint64_t sched_flags = scheduler_lock_irqsave();
   foreground_job_id = -1;
   last_foreground_pid = pid;
-  current_task->spawn_job_id = 0;
+  current_task->process->spawn_job_id = 0;
   scheduler_unlock_irqrestore(sched_flags);
   return 0;
 }
@@ -607,7 +699,7 @@ int task_create_job(void) {
     next_job_id = 2;
     job_id = 1;
   }
-  current_task->spawn_job_id = job_id;
+  current_task->process->spawn_job_id = job_id;
   scheduler_unlock_irqrestore(sched_flags);
   return job_id;
 }
@@ -619,7 +711,8 @@ int task_set_foreground_job(int job_id) {
     bool found = false;
     task_t *t = task_list;
     if (t) do {
-      if (t->parent == current_task && t->job_id == job_id) {
+      if (t->process && t->process->parent == current_task->process &&
+          t->process->job_id == job_id) {
         found = true;
         break;
       }
@@ -630,7 +723,7 @@ int task_set_foreground_job(int job_id) {
       return -1;
     }
   }
-  current_task->spawn_job_id = 0;
+  current_task->process->spawn_job_id = 0;
   foreground_job_id = job_id;
   last_foreground_pid = -1;
   scheduler_unlock_irqrestore(sched_flags);
@@ -641,11 +734,13 @@ static void task_kill_job_locked(int job_id) {
   if (!task_list || job_id < 0) return;
   task_t *t = task_list;
   do {
-    if (t->user_mode && t->job_id == job_id && t->state != TASK_ZOMBIE) {
+      if (t->user_mode && t->process && t->process->job_id == job_id &&
+          t->state != TASK_ZOMBIE) {
       task_release_io(t);
       t->state = TASK_ZOMBIE;
-      t->exit_code = 128 + 2;
-      if (t->parent) t->parent->state = TASK_READY;
+      t->process->zombie = true;
+      t->process->exit_status = 128 + 2;
+      process_wake_parent(t->process);
     }
     t = t->next;
   } while (t != task_list);
@@ -682,10 +777,11 @@ int task_snapshot(task_info_t *out, int max_entries) {
     task_info_t snapshot;
     memset(&snapshot, 0, sizeof(snapshot));
     snapshot.id = t->id;
-    snapshot.parent_id = t->parent ? t->parent->id : -1;
+    snapshot.parent_id = t->process && t->process->parent
+                             ? t->process->parent->pid : -1;
     snapshot.state = t->state;
-    snapshot.heap_start = t->heap_start;
-    snapshot.heap_end = t->heap_end;
+    snapshot.heap_start = t->process->heap_start;
+    snapshot.heap_end = t->process->heap_end;
     snapshot.cpu_ticks = t->cpu_ticks;
     snapshot.switch_count = t->switch_count;
     snapshot.priority = t->priority;
@@ -755,13 +851,16 @@ int fork_process(registers_t *regs) {
 
   new_task->id = next_pid++;
   new_task->state = TASK_READY;
-  new_task->parent = parent;
-  new_task->job_id = parent->spawn_job_id > 0
-      ? parent->spawn_job_id : parent->job_id;
+  process_t *child_process = task_process_create(
+      new_task->id, parent->process, NULL);
+  if (!child_process) { kfree(new_task); return -ENOMEM; }
+  child_process->job_id = parent->process->spawn_job_id > 0
+      ? parent->process->spawn_job_id : parent->process->job_id;
 
   // Real copy of user-space memory
-  new_task->page_directory = vmm_copy_directory(parent->page_directory);
-  if (!new_task->page_directory) {
+  child_process->mm = vmm_copy_directory(parent->process->mm);
+  if (!child_process->mm) {
+    task_process_discard(child_process);
     kfree(new_task);
     return -ENOMEM;
   }
@@ -770,7 +869,9 @@ int fork_process(registers_t *regs) {
   uint64_t kernel_stack_base = (uint64_t)kernel_stack_alloc(
       KERNEL_STACK_MIN_SIZE, &kernel_stack_size);
   if (!kernel_stack_base) {
-    vmm_free_directory(new_task->page_directory);
+    vmm_free_directory(child_process->mm);
+    child_process->mm = NULL;
+    task_process_discard(child_process);
     kfree(new_task);
     return -ENOMEM;
   }
@@ -790,25 +891,31 @@ int fork_process(registers_t *regs) {
   new_task->stack_top = new_stack_ptr;
 
   // Copy heap limits and cwd
-  new_task->heap_start = parent->heap_start;
-  new_task->heap_end = parent->heap_end;
-  new_task->mmap_top = parent->mmap_top;
+  child_process->heap_start = parent->process->heap_start;
+  child_process->heap_end = parent->process->heap_end;
+  child_process->mmap_top = parent->process->mmap_top;
+  child_process->uid = parent->process->uid;
+  child_process->euid = parent->process->euid;
+  child_process->gid = parent->process->gid;
+  child_process->egid = parent->process->egid;
+  child_process->umask = parent->process->umask;
   new_task->user_mode = parent->user_mode;
-  new_task->abi = parent->abi;
+  child_process->abi = parent->process->abi;
   new_task->fs_base = parent->fs_base;
   new_task->user_gs_base = parent->user_gs_base;
   new_task->priority = parent->priority;
   new_task->time_slice = task_quantum(new_task);
   new_task->wake_tick = 0;
-  strcpy(new_task->cwd, parent->cwd);
+  strcpy(child_process->cwd, parent->process->cwd);
 
   // Copy file descriptors
   for (int i = 0; i < 32; i++) {
-    new_task->file_descriptors[i] = parent->file_descriptors[i];
-    sys_fd_get(&new_task->file_descriptors[i]);
+    child_process->file_descriptors[i] = parent->process->file_descriptors[i];
+    sys_fd_get(&child_process->file_descriptors[i]);
   }
 
   task_assign_name(new_task, "fork", new_task->user_mode);
+  task_process_attach(child_process, new_task);
   uint64_t sched_flags = scheduler_lock_irqsave();
   new_task->next = task_list->next;
   task_list->next = new_task;
@@ -817,88 +924,83 @@ int fork_process(registers_t *regs) {
   scheduler_unlock_irqrestore(sched_flags);
 
   asm volatile("sti");
-  return new_task->id;
+  return child_process->pid;
 }
 
 int sys_waitpid(int pid, int *status, int options) {
-  (void)options;
-  task_t *parent = current_task;
-  if (status && parent && parent->user_mode &&
+  thread_t *parent_thread = current_task;
+  process_t *parent = parent_thread ? parent_thread->process : NULL;
+  if (!parent) return -1;
+  if (status && parent_thread->user_mode &&
       validate_user_write(status, sizeof(*status)) < 0)
     return -EFAULT;
 
   while (1) {
     uint64_t sched_flags = scheduler_lock_irqsave();
-    task_t *t = task_list;
+    process_t *child = process_list;
     bool found = false;
     bool any_child = false;
-
-    do {
-      if (t->parent && t->parent->id == parent->id) {
+    while (child) {
+      if (child->parent == parent) {
         any_child = true;
-        if (pid == -1 || t->id == pid) {
-          if (t->state == TASK_ZOMBIE) {
+        if (pid == -1 || child->pid == pid) {
+          found = true;
+          if (child->zombie) {
             if (status) {
-              if (parent->user_mode) {
-                if (copy_to_user(status, &t->exit_code, sizeof(t->exit_code)) < 0) {
+              if (parent_thread->user_mode) {
+                if (copy_to_user(status, &child->exit_status,
+                                 sizeof(child->exit_status)) < 0) {
                   scheduler_unlock_irqrestore(sched_flags);
                   return -EFAULT;
                 }
               } else {
-                *status = t->exit_code;
+                *status = child->exit_status;
               }
             }
-            int child_id = t->id;
+            int child_pid = child->pid;
+            thread_t *leader = child->leader;
+            process_t *init_process = process_list;
+            while (init_process && init_process->pid != 0)
+              init_process = init_process->next;
+            for (process_t *orphan = process_list; orphan;
+                 orphan = orphan->next)
+              if (orphan->parent == child) orphan->parent = init_process;
 
-            // Simple cleanup: remove from task list
-            task_t *prev = task_list;
-            while (prev->next != t)
-              prev = prev->next;
-            prev->next = t->next;
-
+            if (leader && task_list) {
+              task_t *prev = task_list;
+              while (prev->next != leader && prev->next != task_list)
+                prev = prev->next;
+              if (prev->next == leader) {
+                if (leader == task_list) task_list = leader->next;
+                prev->next = leader->next;
+              }
+            }
             scheduler_unlock_irqrestore(sched_flags);
 
-            if (t->kernel_stack_base && t->kernel_stack_size && t->id != 0) {
-               kernel_stack_free((void *)t->kernel_stack_base,
-                                 t->kernel_stack_size);
+            if (leader && leader->kernel_stack_base &&
+                leader->kernel_stack_size && leader->id != 0)
+              kernel_stack_free((void *)leader->kernel_stack_base,
+                                leader->kernel_stack_size);
+            if (leader) {
+              task_process_detach(child, leader);
+              kfree(leader);
             }
-
-            // Reparent children to avoid Use-After-Free
-            task_t *reparent_curr = task_list;
-            do {
-              if (reparent_curr->parent == t) {
-                reparent_curr->parent = task_list;
-              }
-              reparent_curr = reparent_curr->next;
-            } while (reparent_curr != task_list);
-
-            // Free page directory
-            extern page_directory_t *kernel_directory;
-            if (t->page_directory && t->page_directory != kernel_directory) {
-              vmm_free_directory(t->page_directory);
-            }
-
-            kfree(t);
-            return child_id;
+            task_process_discard(child);
+            return child_pid;
           }
-          found = true;
         }
       }
-      t = t->next;
-    } while (t != task_list);
-
+      child = child->next;
+    }
     if (!any_child || (pid != -1 && !found)) {
       scheduler_unlock_irqrestore(sched_flags);
       return -1;
     }
-
     if ((options & 1) && found) {
       scheduler_unlock_irqrestore(sched_flags);
       return 0;
     }
-
-    // Wait and reschedule
-    parent->state = TASK_SLEEPING;
+    parent_thread->state = TASK_SLEEPING;
     scheduler_unlock_irqrestore(sched_flags);
     switch_task();
   }
@@ -907,22 +1009,18 @@ int sys_waitpid(int pid, int *status, int options) {
 void sys_kill_by_pid(int pid) {
   if (pid < 0) return;
   uint64_t sched_flags = scheduler_lock_irqsave();
-  task_t *t = task_list;
-  do {
-    if (t->id == pid) {
-      if (!t->user_mode) break;
-      task_release_io(t);
-      t->state = TASK_ZOMBIE;
-      t->exit_code = 128 + 2;
-      if (t->id == last_foreground_pid)
-        last_foreground_pid = -1;
-      if (t->parent) {
-        t->parent->state = TASK_READY;
-      }
-      break;
-    }
-    t = t->next;
-  } while (t != task_list);
+  for (process_t *process = process_list; process; process = process->next) {
+    if (process->pid != pid) continue;
+    thread_t *thread = process->leader;
+    if (!thread || !thread->user_mode || process->zombie) break;
+    task_release_io(thread);
+    thread->state = TASK_ZOMBIE;
+    process->zombie = true;
+    process->exit_status = 128 + 2;
+    if (process->pid == last_foreground_pid) last_foreground_pid = -1;
+    process_wake_parent(process);
+    break;
+  }
   scheduler_unlock_irqrestore(sched_flags);
 }
 
@@ -931,15 +1029,14 @@ void sys_exit_process(int status) {
 
   task_release_io(current_task);
   uint64_t sched_flags = scheduler_lock_irqsave();
-  if (current_task->id == last_foreground_pid)
+  process_t *process = current_task->process;
+  if (process->pid == last_foreground_pid)
     last_foreground_pid = -1;
   current_task->state = TASK_ZOMBIE;
-  current_task->exit_code = status;
+  process->zombie = true;
+  process->exit_status = status;
 
-  // Wake up parent
-  if (current_task->parent) {
-    current_task->parent->state = TASK_READY;
-  }
+  process_wake_parent(process);
   scheduler_unlock_irqrestore(sched_flags);
 
   while (1) {

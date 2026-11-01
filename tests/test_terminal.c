@@ -18,8 +18,8 @@ static void execute_line(const char *text) {
 
 int test_terminal_files(void) {
     char saved_cwd[256];
-    strcpy(saved_cwd, current_task->cwd);
-    strcpy(current_task->cwd, "/");
+    strcpy(saved_cwd, current_task->process->cwd);
+    strcpy(current_task->process->cwd, "/");
     execute_line("mkdir docs");
     execute_line("echo \"hello world\" > docs/readme.txt");
     uint32_t size = 0;
@@ -40,7 +40,7 @@ int test_terminal_files(void) {
     valid = data && size == 4 && memcmp(data, "new\n", 4) == 0;
     if (data) kfree(data);
     ASSERT(valid, "redirection truncates previous contents");
-    strcpy(current_task->cwd, saved_cwd);
+    strcpy(current_task->process->cwd, saved_cwd);
     sdfs_delete("/docs/readme.txt");
     sdfs_delete("/docs");
     PASS("test_terminal_files");

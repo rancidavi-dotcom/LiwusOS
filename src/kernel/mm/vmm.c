@@ -659,11 +659,11 @@ void vmm_free_directory(page_directory_t *dir) {
 #include "task.h"
 uint64_t sys_brk(uint64_t addr) {
   if (!current_task) return 0;
-  page_directory_t *mm = current_task->page_directory;
+  page_directory_t *mm = current_task->process->mm;
   if (!mm) return 0;
-  if (addr == 0) return current_task->heap_end;
-  uint64_t brk_top = current_task->heap_end;
-  if (brk_top < current_task->heap_start) brk_top = current_task->heap_start;
+  if (addr == 0) return current_task->process->heap_end;
+  uint64_t brk_top = current_task->process->heap_end;
+  if (brk_top < current_task->process->heap_start) brk_top = current_task->process->heap_start;
   if (addr <= brk_top) return brk_top;
   uint64_t start = (brk_top + 0xFFF) & ~0xFFFULL;
   if (addr > USER_ADDR_MAX - PAGE_SIZE) return brk_top;
@@ -686,13 +686,13 @@ uint64_t sys_brk(uint64_t addr) {
       return brk_top;
     }
   }
-  uint64_t heap_vma_start = current_task->heap_start & ~(uint64_t)(PAGE_SIZE - 1);
+  uint64_t heap_vma_start = current_task->process->heap_start & ~(uint64_t)(PAGE_SIZE - 1);
   if (end > heap_vma_start &&
       vma_resize_heap(mm, heap_vma_start, end) < 0) {
     for (uint64_t p = start; p < end; p += PAGE_SIZE)
       vmm_unmap_page_in(mm, (void *)p);
     return brk_top;
   }
-  current_task->heap_end = end;
-  return current_task->heap_end;
+  current_task->process->heap_end = end;
+  return current_task->process->heap_end;
 }
