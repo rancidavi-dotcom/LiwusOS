@@ -1,515 +1,307 @@
-all: $(LIBGLOSS_A) zlib libpng libjpeg $(CRT0_OBJ) liwusos.iso
-CC = gcc
-AR = ar
-HOSTCC = gcc
-M32 = -m32
+# ============================================================
+# LiwusOS - build enxuto (kernel + SDFS + terminal)
+# ============================================================
+
+.DEFAULT_GOAL := all
+
+CC       = gcc
+LD       = gcc
+OBJCOPY  = objcopy
+GRUB     = grub-mkrescue
+QEMU     = qemu-system-x86_64
+
 M64 = -m64 -mno-red-zone
 
-KERNEL_INCLUDES = -Iinclude -Iinclude/kernel -Iinclude/drivers -Iinclude/fs -Iinclude/gui -Iinclude/uapi \
-  -Isrc/kernel -Isrc/kernel/gui -Isrc/kernel/gui/core -Isrc/kernel/gui/scene -Isrc/kernel/gui/render \
-  -Isrc/kernel/gui/input -Isrc/kernel/gui/input/tools -Isrc/kernel/gui/widgets -Isrc/kernel/gui/layout \
-  -Isrc/kernel/gui/window -Isrc/kernel/gui/assets -Isrc/kernel/gui/math -Isrc/kernel/gui/apps \
-  -Isrc/kernel/terminal -Isrc/drivers -Isrc/fs -Isrc/net -Itests
+KERNEL_INCLUDES = -Iinclude -Iinclude/kernel -Iinclude/drivers -Iinclude/fs \
+                  -Iinclude/uapi -Isrc/kernel -Isrc/kernel/terminal -Itests
 
-CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra $(KERNEL_INCLUDES) $(M64) -fno-pie -fno-pic -mcmodel=large -mno-sse -mno-sse2 -mno-mmx
+CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Werror $(KERNEL_INCLUDES) $(M64) \
+         -fno-pie -fno-pic -mcmodel=large -mno-sse -mno-sse2 -mno-mmx \
+         -fno-stack-protector -fno-asynchronous-unwind-tables
+
 LDFLAGS = -Wl,-no-pie
-USER_CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Isdk/include -m64 -mno-red-zone -fno-pie -fno-pic
-USER_LDFLAGS = -T sdk/liwus.ld
-LIBGCC = -lgcc
-NEWLIB_DIR = sdk/lib
-LIBC_A = $(NEWLIB_DIR)/libc.a
-LIBM_A = $(NEWLIB_DIR)/libm.a
-LIBGLOSS_A = sdk/lib/libgloss.a
-CRT0_OBJ = libgloss/crt0.o
+LIBGCC  = -lgcc
 
-$(CRT0_OBJ): libgloss/crt0.S
-	$(CC) -c $< -o $@ $(USER_CFLAGS)
-
-CRTI_OBJ = libgloss/crti.o
-CRTN_OBJ = libgloss/crtn.o
-
-$(CRTI_OBJ): libgloss/crti.S
-	$(CC) -c $< -o $@ $(USER_CFLAGS)
-
-$(CRTN_OBJ): libgloss/crtn.S
-	$(CC) -c $< -o $@ $(USER_CFLAGS)
-
-SRC_DIR = src
-BOOT_DIR = $(SRC_DIR)/boot
-KERNEL_DIR = $(SRC_DIR)/kernel
-DRIVERS_DIR = $(SRC_DIR)/drivers
-FS_DIR = $(SRC_DIR)/fs
-NET_DIR = $(SRC_DIR)/net
-APPS_DIR = $(SRC_DIR)/apps
 OBJ_DIR = obj
+TEST_OBJ_DIR = obj-test
 
+BOOT_DIR = src/boot
 KERNEL_BIN = kernel.bin
+TEST_KERNEL_BIN = kernel-test.bin
 ISO_IMAGE = liwusos.iso
-CALC_ELF = apps/calc/calc.elf
-HELLO_ELF = apps/hello/hello.elf
-DOOMPROBE_ELF = apps/doomprobe/doomprobe.elf
-LUA_ELF = apps/lua/lua.elf
-CRUN_ELF = apps/c4/crun.elf
-EDITOR_NANO_ELF = apps/editor_nano/editor_nano.elf
-TCC_ELF = apps/tcc/tcc.elf
-NANO_ELF = apps/kilo/kilo.elf
-DEMO_GUI_ELF = apps/demo_gui/demo_gui.elf
-LDE_ELF = lde/src/lde.elf
-
+TEST_ISO_IMAGE = liwusos-test.iso
+DISK_IMAGE = liwus_disk.img
 
 BOOT_SRCS = $(BOOT_DIR)/boot.s $(BOOT_DIR)/interrupt.s
-KERNEL_SRCS = $(wildcard $(KERNEL_DIR)/*.c) $(wildcard $(KERNEL_DIR)/*.s) \
-              $(wildcard $(KERNEL_DIR)/arch/x86_64/*.c) $(wildcard $(KERNEL_DIR)/arch/x86_64/*.s) \
-              $(wildcard $(KERNEL_DIR)/core/*.c) \
-              $(wildcard $(KERNEL_DIR)/lib/*.c) $(wildcard $(KERNEL_DIR)/lib/*.s) \
-              $(wildcard $(KERNEL_DIR)/mm/*.c) \
-              $(wildcard $(KERNEL_DIR)/sched/*.c) \
-              $(wildcard $(KERNEL_DIR)/terminal/*.c) \
-              $(wildcard $(KERNEL_DIR)/gui/*.c) \
-              $(wildcard $(KERNEL_DIR)/gui/core/*.c) \
-              $(wildcard $(KERNEL_DIR)/gui/scene/*.c) \
-              $(wildcard $(KERNEL_DIR)/gui/render/*.c) \
-              $(wildcard $(KERNEL_DIR)/gui/input/*.c) \
-              $(wildcard $(KERNEL_DIR)/gui/input/tools/*.c) \
-              $(wildcard $(KERNEL_DIR)/gui/widgets/*.c) \
-              $(wildcard $(KERNEL_DIR)/gui/layout/*.c) \
-              $(wildcard $(KERNEL_DIR)/gui/window/*.c) \
-              $(wildcard $(KERNEL_DIR)/gui/assets/*.c) \
-              $(wildcard $(KERNEL_DIR)/gui/apps/*.c) \
-              $(wildcard $(KERNEL_DIR)/gui/math/*.c) $(wildcard $(KERNEL_DIR)/gui/math/*.s) \
-              src/kernel/gui/core/app_registry.o
-DRIVERS_SRCS = $(wildcard $(DRIVERS_DIR)/*.c)
-FS_SRCS = $(wildcard $(FS_DIR)/*.c)
-NET_SRCS = $(wildcard $(NET_DIR)/*.c)
-APPS_SRCS = $(filter-out $(APPS_DIR)/liw_app.c $(APPS_DIR)/editor.c, $(wildcard $(APPS_DIR)/*.c))
 
-KERNEL_C_SRCS = $(KERNEL_SRCS) $(DRIVERS_SRCS) $(FS_SRCS) $(NET_SRCS) $(APPS_SRCS)
-KERNEL_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(filter %.c,$(KERNEL_C_SRCS))) \
-              $(patsubst %.s,$(OBJ_DIR)/%.o,$(filter %.s,$(KERNEL_C_SRCS))) \
-              $(patsubst %.s,$(OBJ_DIR)/%.o,$(BOOT_SRCS)) \
-              $(OBJ_DIR)/$(DRIVERS_DIR)/font.o
+KERNEL_C_SRCS = $(wildcard src/kernel/arch/x86_64/*.c) \
+                $(wildcard src/kernel/core/*.c) \
+                $(wildcard src/kernel/lib/*.c) \
+                $(wildcard src/kernel/mm/*.c) \
+                $(wildcard src/kernel/sched/*.c) \
+                $(wildcard src/kernel/terminal/*.c) \
+                $(wildcard src/drivers/*.c) \
+                $(wildcard src/fs/*.c)
 
-LIBGLOSS_SRCS = libgloss/syscalls.c
-LIBGLOSS_OBJS = $(OBJ_DIR)/libgloss/syscalls.o
+KERNEL_S_SRCS = $(wildcard src/kernel/arch/x86_64/*.s) \
+                $(wildcard src/kernel/lib/*.s) \
+                $(BOOT_SRCS)
 
-LUA_DIR = third_party/lua/src
-LUA_CFLAGS = $(USER_CFLAGS) -I$(LUA_DIR) -DLUA_USE_C89
-LUA_ALL_SRCS = $(wildcard $(LUA_DIR)/*.c)
-LUA_SRCS = $(filter-out $(LUA_DIR)/lua.c $(LUA_DIR)/luac.c, $(LUA_ALL_SRCS)) apps/lua/lua_main.c
+KERNEL_C_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(KERNEL_C_SRCS))
+KERNEL_S_OBJS = $(patsubst %.s,$(OBJ_DIR)/%.o,$(KERNEL_S_SRCS))
+KERNEL_OBJS = $(KERNEL_C_OBJS) $(KERNEL_S_OBJS) $(OBJ_DIR)/src/drivers/font.o
 
-ZLIB_LIB = sdk/lib/libz.a
-PNG_LIB = sdk/lib/libpng.a
-JPEG_LIB = sdk/lib/libjpeg.a
-BEARSSL_LIB = sdk/lib/libbearssl.a
+TEST_SRCS = tests/test_runner_kernel.c \
+            tests/test_terminal.c \
+            tests/test_sdfs_create.c \
+            tests/test_sdfs_rw.c \
+            tests/test_sdfs_dir.c \
+            tests/test_sdfs_rename.c \
+            tests/test_sdfs_delete.c \
+            tests/test_sdfs_persist.c \
+            tests/test_sdfs_diskfull.c \
+            tests/test_sdfs_crc32.c \
+            tests/test_sdfs_journal.c \
+            tests/test_sdfs_perms.c \
+            tests/test_sdfs_v2.c \
+            tests/test_sched.c \
+            tests/test_runner_ring3.c
 
-ZLIB_DIR = third_party/zlib
-PNG_DIR = third_party/libpng
-JPEG_DIR = third_party/libjpeg
-BEARSSL_DIR = third_party/bearssl
+TEST_OBJS = $(patsubst %.c,$(TEST_OBJ_DIR)/%.o,$(TEST_SRCS))
+# Kernel compilado com -DKERNEL_TEST (substitui o kernel.o normal)
+TEST_KERNEL_OBJS = $(filter-out $(OBJ_DIR)/src/kernel/core/kernel.o,$(KERNEL_OBJS)) \
+                   $(TEST_OBJ_DIR)/src/kernel/core/kernel.o \
+                   $(TEST_OBJS)
 
-# ============================================================
-# Test infrastructure
-# ============================================================
-TEST_DIR = tests
-TEST_FW = $(TEST_DIR)/framework.h
+TEST_CFLAGS = $(CFLAGS) -DKERNEL_TEST
+RING3_USER_ELF = $(TEST_OBJ_DIR)/ring3/suite.elf
+RING3_EXEC_ELF = $(TEST_OBJ_DIR)/ring3/exec_target.elf
+RING3_C_APP_ELF = $(TEST_OBJ_DIR)/ring3/c_example.elf
+RING3_USER_CFLAGS = -std=gnu99 -O2 -ffreestanding -fno-pie -fno-pic \
+	-fno-stack-protector -fno-asynchronous-unwind-tables -m64 -mno-red-zone \
+	-Iinclude/uapi
+USER_SHELL_ELF = $(OBJ_DIR)/programs/user_shell.elf
+USER_SHELL_CFLAGS = $(RING3_USER_CFLAGS) -Iprograms/c_example
+USER_INIT_ELF = $(OBJ_DIR)/programs/user_init.elf
+USER_EDITOR_ELF = $(OBJ_DIR)/programs/user_editor.elf
 
-KERNEL_TEST_CFLAGS = $(CFLAGS) -DKERNEL_TEST -I$(TEST_DIR)
+.PHONY: all run run-log test test-build ring3-test user-c-example clean
 
-KERNEL_TEST_SRCS = $(TEST_DIR)/test_runner_kernel.c \
-                   $(TEST_DIR)/test_sdfs_create.c \
-                   $(TEST_DIR)/test_sdfs_rw.c \
-                   $(TEST_DIR)/test_sdfs_dir.c \
-                   $(TEST_DIR)/test_sdfs_rename.c \
-                   $(TEST_DIR)/test_sdfs_delete.c \
-                   $(TEST_DIR)/test_sdfs_persist.c \
-                   $(TEST_DIR)/test_sdfs_diskfull.c \
-                   $(TEST_DIR)/test_sdfs_crc32.c \
-                   $(TEST_DIR)/test_sdfs_journal.c \
-                   $(TEST_DIR)/test_sdfs_perms.c \
-                   $(TEST_DIR)/test_sdfs_v2.c \
-                   $(TEST_DIR)/test_net_http.c \
-                   $(TEST_DIR)/test_sched.c
+user-c-example: $(RING3_C_APP_ELF)
 
-KERNEL_TEST_OBJS = $(patsubst %.c, $(OBJ_DIR)/%.o, $(KERNEL_TEST_SRCS))
+ring3-test: $(TEST_ISO_IMAGE)
+	timeout 90 $(QEMU) -machine q35 -m 2048 -display none -monitor none \
+		-serial file:/tmp/liwusos-ring3-integration.serial -no-reboot \
+		-cdrom $(TEST_ISO_IMAGE) || test $$? -eq 124
+	@grep -E 'RING3 (PASS|FAIL|RESULT)|RESULT:|KERNEL PANIC|LIWUS_BOOT_READY' \
+		/tmp/liwusos-ring3-integration.serial || true
+	@grep -q '\[RING3 RESULT\] ALL PASS' /tmp/liwusos-ring3-integration.serial
+	@grep -q 'RESULT: ALL PASS' /tmp/liwusos-ring3-integration.serial
 
-USER_TEST_SRCS = $(TEST_DIR)/test_runner_user.c \
-                 $(TEST_DIR)/test_user_open.c \
-                 $(TEST_DIR)/test_user_fork.c \
-                 $(TEST_DIR)/test_user_pipe.c \
-                 $(TEST_DIR)/test_user_misc.c \
-                 $(TEST_DIR)/test_user_process.c
+all: $(KERNEL_BIN) $(ISO_IMAGE)
 
-TEST_USER_ELF = $(TEST_DIR)/test_runner.elf
+# ------------------------------------------------------------
+# Kernel
+# ------------------------------------------------------------
 
-.PHONY: all run run-serial run-log run-bios run-lan hw-prep qa-boot-persistence clean zlib libpng libjpeg test test-sdfs test-user test-clean uefi-iso uefi-check run-j1800 run-j1800-bios run-j1800-log
+$(KERNEL_BIN): $(KERNEL_OBJS) $(BOOT_DIR)/linker.ld
+	$(LD) -T $(BOOT_DIR)/linker.ld -o $@ $(CFLAGS) $(LDFLAGS) \
+		-nostdlib -static -Wl,--build-id=none $(KERNEL_OBJS) $(LIBGCC)
 
-# ---- Audio (Intel HDA -> host) ----
-# O hardware universal (PC J1800) usa Intel HDA + codec Realtek ALC269VC,
-# por isso o padrao aqui tambem e HDA. Para ouvir no host o QEMU precisa
-# de um "audio backend":
-#   Windows (MSYS2/Git Bash) -> dsound
-#   WSL2 com WSLg             -> pa (PulseAudio -> alto-falantes do Windows)
-#   outro Linux               -> sdl
-# Para forcar:  make run AUDIO_BACKEND=none   (e.g. sem som)
-UNAME_S := $(shell uname -s)
-AUDIO_BACKEND ?= $(if $(findstring MINGW,$(UNAME_S)),dsound,$(if $(wildcard /mnt/wslg/PulseServer),pa,sdl))
-# Placa de som virtual:
-#   hda (padrao)  -> Intel High Definition Audio (controlador + codec duplex)
-#   ac97          -> controlador legado Intel 82801AA (teste do driver AC'97)
-# Para usar AC'97:  make run AUDIO_DEV=ac97
-AUDIO_DEV ?= hda
-ifeq ($(AUDIO_DEV),hda)
-AUDIO_FLAGS = -audiodev $(AUDIO_BACKEND),id=aud0 -device intel-hda -device hda-duplex,audiodev=aud0
-else
-AUDIO_FLAGS = -audiodev $(AUDIO_BACKEND),id=aud0 -device AC97,audiodev=aud0
-endif
-
-# Armazenamento virtual:
-#   ahci (padrao) -> disco SATA no controlador AHCI
-#   nvme          -> SSD NVMe (controlador NVMe + namespace)
-# Para testar o driver NVMe:  make run DISK_DEV=nvme
-DISK_DEV ?= ahci
-ifeq ($(DISK_DEV),nvme)
-DISK_FLAGS = -drive id=disk,file=liwus_disk.img,if=none,format=raw -device nvme,serial=liwus,drive=disk
-else
-DISK_FLAGS = -drive id=disk,file=liwus_disk.img,if=none,format=raw -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0
-endif
-
-# Rede.
-#   NET_MODE=user (padrao) -> user-mode SLIRP: internet simulada (10.0.2.x) +
-#                             port-forwards para o host (acessivel via IP do
-#                             Windows na rede local).
-#   NET_MODE=tap  -> placa TAP: coloca a NIC do OS NA LAN de verdade (L2).
-#                    Exige bridge/tap configurado (ver 'make run-lan').
-# RTL8139 e o modelo de NIC classico que o driver de rede do kernel suporta.
-ifeq ($(NET_MODE),tap)
-NET_FLAGS = -netdev tap,id=net0,script=no,downscript=no -device rtl8139,netdev=net0
-else
-NET_FLAGS = -netdev user,id=net0,restrict=off,hostfwd=tcp::2222-:2222,hostfwd=tcp::8080-:80 -device rtl8139,netdev=net0
-endif
-
-
-
-zlib:
-	@if [ ! -f $(ZLIB_LIB) ] && [ -d $(ZLIB_DIR) ]; then \
-		cd $(ZLIB_DIR) && CHOST=i686-elf CC=$(CC) CFLAGS="$(USER_CFLAGS) -I$(CURDIR)/sdk/include" ./configure --static --prefix=$(CURDIR)/sdk && $(MAKE) libz.a && \
-		cp libz.a ../../$(ZLIB_LIB) && cp *.h ../../sdk/include/; \
-	fi
-
-libpng: zlib $(CRT0_OBJ)
-	@if [ ! -f $(PNG_LIB) ] && [ -d $(PNG_DIR) ]; then \
-		cd $(PNG_DIR) && \
-		CPPFLAGS="-I$(CURDIR)/sdk/include" \
-		LDFLAGS="-L$(CURDIR)/sdk/lib -nostdlib" \
-		LIBS="-lgloss -lc -lm -lgcc" \
-		./configure --host=i686-elf --prefix=$(CURDIR)/sdk \
-		--enable-static --disable-shared \
-		--with-zlib-prefix=$(CURDIR)/sdk \
-		ac_cv_func_malloc_0_nonnull=yes \
-		ac_cv_func_realloc_0_nonnull=yes \
-		ac_cv_lib_z_zlibVersion=yes && \
-		$(MAKE) libpng16.la && \
-		cp .libs/libpng16.a ../../$(PNG_LIB) && cp *.h ../../sdk/include/; \
-	fi
-
-libjpeg: $(CRT0_OBJ)
-	@if [ ! -f $(JPEG_LIB) ] && [ -d $(JPEG_DIR) ]; then \
-		cd $(JPEG_DIR) && \
-		./configure --host=i686-elf --prefix=$(CURDIR)/sdk \
-		--enable-static --disable-shared \
-		CC=$(CC) CFLAGS="$(USER_CFLAGS) -I$(CURDIR)/sdk/include" \
-		LDFLAGS="-L$(CURDIR)/sdk/lib -nostdlib" \
-		LIBS="-lgloss -lc -lm -lgcc" \
-		ac_cv_func_malloc_0_nonnull=yes \
-		ac_cv_func_realloc_0_nonnull=yes && \
-		$(MAKE) libjpeg.la && \
-		cp .libs/libjpeg.a ../../$(JPEG_LIB) && cp *.h ../../sdk/include/; \
-	fi
-
-bearssl: $(CRT0_OBJ)
-	@if [ ! -f $(BEARSSL_LIB) ] && [ -d $(BEARSSL_DIR) ]; then \
-		cd $(BEARSSL_DIR) && \
-		$(MAKE) CC=$(CC) CFLAGS="$(USER_CFLAGS) -U_FORTIFY_SOURCE -fno-stack-protector -DBR_USE_URANDOM=0 -DBR_USE_WIN32_RAND=0 -I$(CURDIR)/sdk/include" lib && \
-		cp build/libbearssl.a ../../$(BEARSSL_LIB) && \
-		cp -r inc/* ../../sdk/include/; \
-	fi
-
-$(KERNEL_BIN): bearssl $(KERNEL_OBJS) $(KERNEL_TEST_OBJS) $(BOOT_DIR)/linker.ld
-	$(CC) -T $(BOOT_DIR)/linker.ld -o $@ $(CFLAGS) $(LDFLAGS) -nostdlib -static -Wl,--build-id=none $(KERNEL_OBJS) $(KERNEL_TEST_OBJS) $(BEARSSL_LIB) $(LIBGCC)
+$(TEST_KERNEL_BIN): $(TEST_KERNEL_OBJS) $(BOOT_DIR)/linker.ld
+	$(LD) -T $(BOOT_DIR)/linker.ld -o $@ $(CFLAGS) $(LDFLAGS) \
+		-nostdlib -static -Wl,--build-id=none $(TEST_KERNEL_OBJS) $(LIBGCC)
 
 $(OBJ_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $< -o $@ $(CFLAGS)
 
-# mp3.c uses float (minimp3). GCC 15 refuses float returns under -mno-sse,
-# so this translation unit gets SSE enabled (still no SIMD intrinsics via
-# MINIMP3_NO_SIMD). -mstackrealign guarantees 16-byte stack alignment in
-# every function, so its movaps stores never fault (#GP) on the misaligned
-# task stacks some allocations produce.
-$(OBJ_DIR)/$(DRIVERS_DIR)/mp3.o: $(DRIVERS_DIR)/mp3.c
-	@mkdir -p $(dir $@)
-	$(CC) -c $< -o $@ $(CFLAGS) -msse -mstackrealign
-
 $(OBJ_DIR)/%.o: %.s
 	@mkdir -p $(dir $@)
 	$(CC) -c $< -o $@ $(M64)
 
-$(OBJ_DIR)/$(DRIVERS_DIR)/font.o: $(DRIVERS_DIR)/font.psf
+$(OBJ_DIR)/src/drivers/font.o: src/drivers/font.psf
 	@mkdir -p $(dir $@)
-	objcopy -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
 
-$(LIBGLOSS_A): $(LIBGLOSS_OBJS)
+# kernel de teste: mesmo codigo, mas com -DKERNEL_TEST
+$(TEST_OBJ_DIR)/src/kernel/core/kernel.o: src/kernel/core/kernel.c
 	@mkdir -p $(dir $@)
-	$(AR) rcs $@ $(LIBGLOSS_OBJS)
+	$(CC) -c $< -o $@ $(TEST_CFLAGS)
 
-$(LIBGLOSS_OBJS): libgloss/syscalls.c
+$(TEST_OBJ_DIR)/tests/%.o: tests/%.c tests/framework.h
 	@mkdir -p $(dir $@)
-	$(CC) -c $< -o $@ $(USER_CFLAGS)
+	$(CC) -c $< -o $@ $(TEST_CFLAGS)
 
-
-$(HELLO_ELF): apps/hello/hello.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
-	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/hello/hello.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
-
-$(DOOMPROBE_ELF): apps/doomprobe/doomprobe.c $(CRT0_OBJ) $(LIBGLOSS_A)
-	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/doomprobe/doomprobe.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
-
-$(LUA_ELF): $(LUA_SRCS) $(CRT0_OBJ) $(LIBGLOSS_A)
-	$(CC) $(LUA_CFLAGS) -nostdlib -static $(CRT0_OBJ) $(LUA_SRCS) -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
-
-$(EDITOR_NANO_ELF): apps/editor_nano/editor_nano.c apps/editor_nano/font.h $(CRT0_OBJ) $(LIBGLOSS_A)
+$(TEST_OBJ_DIR)/ring3/suite.o: tests/ring3/suite.c
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/editor_nano/editor_nano.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) -c $< -o $@ $(RING3_USER_CFLAGS)
 
-$(NANO_ELF): apps/kilo/kilo.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
+$(RING3_USER_ELF): $(TEST_OBJ_DIR)/ring3/suite.o tests/ring3/suite.ld
+	$(LD) -nostdlib -static -no-pie -Wl,--build-id=none \
+		-Wl,-T,tests/ring3/suite.ld -o $@ $(TEST_OBJ_DIR)/ring3/suite.o
+
+$(TEST_OBJ_DIR)/ring3/exec_target.o: tests/ring3/exec_target.c
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/kilo/kilo.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) -c $< -o $@ $(RING3_USER_CFLAGS)
 
-$(CRUN_ELF): apps/c4/c4.c $(CRT0_OBJ) $(LIBGLOSS_A)
+$(TEST_OBJ_DIR)/ring3/exec_target_entry.o: tests/ring3/exec_target.S
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/c4/c4.c -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) -c $< -o $@ -m64 -fno-pie -fno-pic
 
-$(CALC_ELF): apps/calc/calc.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/libliwus_gui.a
+$(RING3_EXEC_ELF): $(TEST_OBJ_DIR)/ring3/exec_target.o $(TEST_OBJ_DIR)/ring3/exec_target_entry.o tests/ring3/exec_target.ld
+	$(LD) -nostdlib -static -no-pie -Wl,--build-id=none \
+		-Wl,-T,tests/ring3/exec_target.ld -o $@ \
+		$(TEST_OBJ_DIR)/ring3/exec_target_entry.o $(TEST_OBJ_DIR)/ring3/exec_target.o
+
+$(TEST_OBJ_DIR)/ring3/c_example.o: programs/c_example/main.c programs/c_example/liwus.h
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/calc/calc.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) -c $< -o $@ $(RING3_USER_CFLAGS)
 
-TCC_DIR = third_party/tcc
-TCC_CFLAGS = $(USER_CFLAGS) -I$(TCC_DIR) -DONE_SOURCE=1 -DTCC_TARGET_X86_64 \
-             -DCONFIG_TCCDIR=\"/house/localhost/tccsdk\" -DCONFIG_TCC_SEMLOCK=0 \
-             -DCONFIG_TCC_BACKTRACE=0 -DCONFIG_TCC_BCHECK=0 \
-             -DCONFIG_TCC_LIBPATHS=\"/house/localhost/tccsdk/lib\" \
-             -DCONFIG_TCC_CRTPREFIX=\"/house/localhost/tccsdk/lib\" \
-             -DCONFIG_TCC_ELFINTERP=\"-\"
-
-$(TCC_ELF): apps/tcc/tcc.c $(CRT0_OBJ) $(LIBGLOSS_A) $(LIBC_A) $(LIBM_A)
+$(TEST_OBJ_DIR)/ring3/c_runtime.o: programs/c_example/runtime.c programs/c_example/liwus.h
 	@mkdir -p $(dir $@)
-	$(CC) $(TCC_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/tcc/tcc.c -L$(NEWLIB_DIR) -lgloss -lc -lm -Wl,--allow-multiple-definition -o $@ $(LIBGCC)
+	$(CC) -c $< -o $@ $(RING3_USER_CFLAGS)
 
-# TCC e opcional: se a submodule '$(TCC_DIR)' nao estiver presente (ex.: apos
-# o cleanup do repo), o app TCC e simplesmente omitido do build do ISO.
-ifeq ($(wildcard $(TCC_DIR)/tcc.c),)
-ISO_TCC_DEP =
-else
-ISO_TCC_DEP = $(TCC_ELF)
-endif
-
-
-
-sdk/lib/libliwus_gui.a: sdk/lib/liwus_gui.c
-	$(CC) -c $< -o sdk/lib/liwus_gui.o $(USER_CFLAGS) -I$(CURDIR)/sdk/include
-	$(AR) rcs $@ sdk/lib/liwus_gui.o
-
-$(DEMO_GUI_ELF): apps/demo_gui/demo_gui.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/libliwus_gui.a
+$(TEST_OBJ_DIR)/ring3/c_start.o: programs/c_example/start.S
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) apps/demo_gui/demo_gui.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) -c $< -o $@ -m64 -fno-pie -fno-pic
 
-$(LDE_ELF): lde/src/main.c lde/src/system_bridge.c $(CRT0_OBJ) $(LIBGLOSS_A) sdk/lib/libliwus_gui.a
+$(RING3_C_APP_ELF): $(TEST_OBJ_DIR)/ring3/c_example.o $(TEST_OBJ_DIR)/ring3/c_runtime.o $(TEST_OBJ_DIR)/ring3/c_start.o programs/c_example/linker.ld
+	$(LD) -nostdlib -static -no-pie -Wl,--build-id=none \
+		-Wl,-T,programs/c_example/linker.ld -o $@ \
+		$(TEST_OBJ_DIR)/ring3/c_start.o $(TEST_OBJ_DIR)/ring3/c_runtime.o $(TEST_OBJ_DIR)/ring3/c_example.o
+
+$(OBJ_DIR)/programs/user_shell/main.o: programs/user_shell/main.c programs/c_example/liwus.h
 	@mkdir -p $(dir $@)
-	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -nostdlib -static $(CRT0_OBJ) lde/src/main.c lde/src/system_bridge.c -L$(NEWLIB_DIR) -Lsdk/lib -lliwus_gui -lgloss -lc -lm -o $@ $(LIBGCC)
+	$(CC) -c $< -o $@ $(USER_SHELL_CFLAGS)
 
-$(ISO_IMAGE): $(KERNEL_BIN) $(BOOT_DIR)/test.elf $(DEMO_GUI_ELF) $(LDE_ELF) $(ISO_TCC_DEP)
-	$(HOSTCC) -Iinclude -Iinclude/uapi sdk/tools/liw-builder.c -o sdk/tools/liw-builder
-	$(HOSTCC) sdk/tools/img-gen.c -o sdk/tools/img-gen
-	./sdk/tools/liw-builder src/boot/test.liw src/boot/test.elf src/boot/test_manifest.json
-	grub-file --is-x86-multiboot2 $(KERNEL_BIN)
-	mkdir -p repo
-	./sdk/tools/img-gen
-	if [ -f $(DEMO_GUI_ELF) ]; then cp $(DEMO_GUI_ELF) repo/demo_gui; fi
-	if [ -f $(LDE_ELF) ]; then cp $(LDE_ELF) repo/lde; fi
-	if [ -f $(TCC_ELF) ]; then cp $(TCC_ELF) repo/tcc; fi
+$(OBJ_DIR)/programs/user_shell/runtime.o: programs/c_example/runtime.c programs/c_example/liwus.h include/uapi/syscall_nums.h
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ $(USER_SHELL_CFLAGS)
 
-	# Instala o SDK do TCC dentro do initrd (CONFIG_TCCDIR=/tccsdk).
-	# estrutura: /tccsdk/include/*.h e /tccsdk/lib/libtcc1.a + libc/libm/gloss
-	mkdir -p repo/tccsdk/lib repo/tccsdk/include
-	if [ -f $(TCC_DIR)/tcclib.h ]; then cp $(TCC_DIR)/tcclib.h repo/tccsdk/include/; fi
-	cp $(TCC_DIR)/include/*.h repo/tccsdk/include/ 2>/dev/null || true
-	cp -r sdk/include/. repo/tccsdk/include/ 2>/dev/null || true
-	if [ -f $(TCC_DIR)/lib/libtcc1.a ]; then cp $(TCC_DIR)/lib/libtcc1.a repo/tccsdk/lib/; fi
-	if [ -f $(TCC_DIR)/libtcc1.a ]; then cp $(TCC_DIR)/libtcc1.a repo/tccsdk/lib/; fi
-	cp $(LIBC_A) $(LIBM_A) $(LIBGLOSS_A) libgloss/crt0.o repo/tccsdk/lib/ 2>/dev/null || true
-	# Objetos CRT exigidos pelo TCC ao linkar executáveis (crt1 = crt0)
-	cp libgloss/crt0.o repo/tccsdk/lib/crt1.o 2>/dev/null || true
-	$(MAKE) $(CRTI_OBJ) $(CRTN_OBJ)
-	cp $(CRTI_OBJ) $(CRTN_OBJ) repo/tccsdk/lib/ 2>/dev/null || true
+$(OBJ_DIR)/programs/user_shell/start.o: programs/c_example/start.S
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ -m64 -fno-pie -fno-pic
 
-	tar -cvf initrd.tar -C repo . --format=ustar
-	mkdir -p isodir/boot/grub
-	cp $(KERNEL_BIN) isodir/boot/kernel.bin
-	cp $(BOOT_DIR)/grub.cfg isodir/boot/grub/grub.cfg
+$(USER_SHELL_ELF): $(OBJ_DIR)/programs/user_shell/main.o $(OBJ_DIR)/programs/user_shell/runtime.o $(OBJ_DIR)/programs/user_shell/start.o programs/user_shell/linker.ld
+	$(LD) -nostdlib -static -no-pie -Wl,--build-id=none \
+		-Wl,-T,programs/user_shell/linker.ld -o $@ \
+		$(OBJ_DIR)/programs/user_shell/start.o $(OBJ_DIR)/programs/user_shell/runtime.o $(OBJ_DIR)/programs/user_shell/main.o
+
+# ------------------------------------------------------------
+# Imagens
+# ------------------------------------------------------------
+
+$(DISK_IMAGE):
+	dd if=/dev/zero of=$@ bs=1M count=64 status=none
+
+isodir/boot/kernel.bin: $(KERNEL_BIN)
+	@mkdir -p isodir/boot/grub
+	cp $(KERNEL_BIN) $@
+
+isodir/boot/grub/grub.cfg: $(BOOT_DIR)/grub.cfg
+	@mkdir -p $(dir $@)
+	cp $< $@
+
+$(OBJ_DIR)/programs/user_init/main.o: programs/user_init/main.c programs/c_example/liwus.h
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ $(USER_SHELL_CFLAGS)
+
+$(OBJ_DIR)/programs/user_init/runtime.o: programs/c_example/runtime.c programs/c_example/liwus.h include/uapi/syscall_nums.h
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ $(USER_SHELL_CFLAGS)
+
+$(OBJ_DIR)/programs/user_init/start.o: programs/c_example/start.S
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ -m64 -fno-pie -fno-pic
+
+$(USER_INIT_ELF): $(OBJ_DIR)/programs/user_init/main.o $(OBJ_DIR)/programs/user_init/runtime.o $(OBJ_DIR)/programs/user_init/start.o programs/user_init/linker.ld
+	$(LD) -nostdlib -static -no-pie -Wl,--build-id=none \
+		-Wl,-T,programs/user_init/linker.ld -o $@ \
+		$(OBJ_DIR)/programs/user_init/start.o $(OBJ_DIR)/programs/user_init/runtime.o $(OBJ_DIR)/programs/user_init/main.o
+
+$(OBJ_DIR)/programs/user_editor/main.o: programs/user_editor/main.c programs/c_example/liwus.h
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ $(USER_SHELL_CFLAGS)
+
+$(OBJ_DIR)/programs/user_editor/runtime.o: programs/c_example/runtime.c programs/c_example/liwus.h include/uapi/syscall_nums.h
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ $(USER_SHELL_CFLAGS)
+
+$(OBJ_DIR)/programs/user_editor/start.o: programs/c_example/start.S
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ -m64 -fno-pie -fno-pic
+
+$(USER_EDITOR_ELF): $(OBJ_DIR)/programs/user_editor/main.o $(OBJ_DIR)/programs/user_editor/runtime.o $(OBJ_DIR)/programs/user_editor/start.o programs/user_editor/linker.ld
+	$(LD) -nostdlib -static -no-pie -Wl,--build-id=none \
+		-Wl,-T,programs/user_editor/linker.ld -o $@ \
+		$(OBJ_DIR)/programs/user_editor/start.o $(OBJ_DIR)/programs/user_editor/runtime.o $(OBJ_DIR)/programs/user_editor/main.o
+
+$(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_SHELL_ELF) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF)
+	@mkdir -p repo
+	tar -cf initrd.tar -C repo . --format=ustar
+	tar -rf initrd.tar --format=ustar --transform='s|user_shell.elf|liwus_shell|' -C $(OBJ_DIR)/programs user_shell.elf
+	tar -rf initrd.tar --format=ustar --transform='s|user_shell.elf|bin/liwus_shell|' -C $(OBJ_DIR)/programs user_shell.elf
+	tar -rf initrd.tar --format=ustar --transform='s|user_init.elf|liwus_init|' -C $(OBJ_DIR)/programs user_init.elf
+	tar -rf initrd.tar --format=ustar --transform='s|user_editor.elf|edit|' -C $(OBJ_DIR)/programs user_editor.elf
+	tar -rf initrd.tar --format=ustar --transform='s|user_editor.elf|bin/edit|' -C $(OBJ_DIR)/programs user_editor.elf
+	tar -rf initrd.tar --format=ustar --transform='s|c_example.elf|c_example|' -C $(TEST_OBJ_DIR)/ring3 c_example.elf
+	tar -rf initrd.tar --format=ustar --transform='s|c_example.elf|bin/c_example|' -C $(TEST_OBJ_DIR)/ring3 c_example.elf
 	cp initrd.tar isodir/boot/initrd.tar
-	# Create SDFS disk image for persistent storage (only if not exists)
-	if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
-	grub-mkrescue -o $(ISO_IMAGE) isodir
+	$(GRUB) -o $@ isodir
 
-# ============================================================
-# UEFI / hardware moderno (ver ROADMAP.md, Fase 0)
-# ============================================================
+# ------------------------------------------------------------
+# Testes (kernel-side)
+# ------------------------------------------------------------
 
-# ISO com boot UEFI (OVMF e hardware real). Ver scripts/make_uefi_iso.sh.
-uefi-iso: $(ISO_IMAGE)
-	bash scripts/make_uefi_iso.sh liwusos-uefi.iso
+test-build: $(TEST_ISO_IMAGE)
 
-# Testa o boot UEFI headless em QEMU + OVMF.
-uefi-check: uefi-iso
-	bash scripts/uefi_boot_check.sh liwusos-uefi.iso
+$(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF)
+	@mkdir -p repo-test
+	: > repo-test/test_mode
+	@mkdir -p isodir-test/boot/grub
+	cp -f $(TEST_KERNEL_BIN) isodir-test/boot/kernel.bin
+	cp -f $(BOOT_DIR)/grub.cfg isodir-test/boot/grub/grub.cfg
+	cp -f $(RING3_USER_ELF) repo-test/ring3_suite
+	cp -f $(RING3_EXEC_ELF) repo-test/exec_target
+	cp -f $(RING3_C_APP_ELF) repo-test/c_example
+	cp -f tests/ring3/invalid_elf repo-test/invalid_elf
+	tar -cf initrd-test.tar -C repo-test . --format=ustar
+	rm -f repo-test/ring3_suite
+	rm -f repo-test/exec_target repo-test/c_example repo-test/invalid_elf
+	cp -f initrd-test.tar isodir-test/boot/initrd.tar
+	$(GRUB) -o $@ isodir-test
 
+test: $(TEST_ISO_IMAGE)
+	rm -f test_serial.log
+	timeout 90 $(QEMU) -machine q35 -m 2048 -display none -monitor none \
+		-serial file:test_serial.log -no-reboot \
+		-drive file=$(DISK_IMAGE),format=raw,if=none,id=disk \
+		-device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 \
+		-cdrom $(TEST_ISO_IMAGE) || true
+	@echo "---- serial ----"
+	@grep -E '=== TEST RUNNER|RESULT:|FAIL|KERNEL PANIC|LIWUS_BOOT_READY' test_serial.log || true
+	@if grep -q 'RESULT: ALL PASS' test_serial.log; then echo "TESTES OK"; \
+	 else echo "TESTES FALHARAM"; exit 1; fi
 
-# ============================================================
-# Test ELF
-# ============================================================
+# ------------------------------------------------------------
+# Execucao
+# ------------------------------------------------------------
 
-$(BOOT_DIR)/test.elf: $(BOOT_DIR)/test.s
-	$(CC) -nostdlib -static $< -o $@ -m32 -Ttext 0x100000
+QEMU_BASE = -machine q35 -m 2048 -no-reboot \
+            -drive file=$(DISK_IMAGE),format=raw,if=none,id=disk \
+            -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0
 
-# ---- Kernel-side test objects (SDFS tests) ----
-$(OBJ_DIR)/$(TEST_DIR)/%.o: $(TEST_DIR)/%.c $(TEST_FW)
-	@mkdir -p $(dir $@)
-	$(CC) -c $< -o $@ $(KERNEL_TEST_CFLAGS)
+run: all
+	$(QEMU) $(QEMU_BASE) -cdrom $(ISO_IMAGE) -serial stdio
 
-# ---- Userspace test runner ----
-$(TEST_USER_ELF): $(USER_TEST_SRCS) $(CRT0_OBJ) $(LIBGLOSS_A)
-	$(CC) $(USER_CFLAGS) $(USER_LDFLAGS) -I$(TEST_DIR) -nostdlib -static $(CRT0_OBJ) \
-	    $(USER_TEST_SRCS) -L$(NEWLIB_DIR) -lgloss -lc -lm -o $@ $(LIBGCC)
-
-# ---- Test targets ----
-test-sdfs: $(KERNEL_BIN)
-	bash scripts/run_tests.sh --sdfs
-
-test-net: $(KERNEL_BIN)
-	bash scripts/run_tests.sh --net
-
-test-user: $(KERNEL_BIN) $(TEST_USER_ELF)
-	bash scripts/run_tests.sh --user
-
-test: $(KERNEL_BIN) $(TEST_USER_ELF)
-	bash scripts/run_tests.sh --full
-
-test-clean:
-	rm -f $(TEST_USER_ELF)
-	rm -f $(KERNEL_TEST_OBJS)
-
-# Atalho de compatibilidade: KVM=1 continua funcionando.
-KVM_FLAGS = $(if $(filter 1,$(KVM)),-enable-kvm,)
-
-# ============================================================
-# HARDWARE DE TESTE UNIVERSAL - PC Bay Trail / Celeron J1800
-# ============================================================
-# TODO alvo de execucao (run/run-serial/run-log/run-lan/run-bios) emula o
-# PC real do projeto, que e tambem o alvo de hardware fisico:
-#   CPU  : Celeron J1800 (Silvermont, 2C/2T)  -> KVM: -cpu host | TCG: -cpu max
-#   RAM  : 2 GB DDR3-1333
-#   Firm.: AMI UEFI 5.6.5 (2014)              -> OVMF (run-bios: SeaBIOS)
-#   Disco: SATA AHCI (WD WD5000LPVX)          -> ahci + ide-hd
-#   USB  : xHCI + EHCI                        -> qemu-xhci + usb-ehci
-#   Audio: Intel HDA + Realtek ALC269VC       -> intel-hda + hda-duplex
-#   Rede : RTL8168/8111 (r8169)               -> rtl8139 (QEMU nao emula r8169)
-#   WiFi : RTL8188CE                          -> nao usado
-#
-# O QEMU NAO emula o RTL8168/r8169 nem a GPU Intel Gen7; usamos o rtl8139
-# (Realtek, suportado pelo kernel). O r8169 so e validado no metal.
-#
-# Ajustes:  HW_MEM/HW_SMP   desliga KVM: HW_KVM=0   disco: DISK_DEV=nvme
-#           audio: AUDIO_DEV=ac97   LAN real: make run-lan
-# ============================================================
-
-HW_MACHINE   ?= q35
-HW_MEM       ?= 2048
-HW_SMP       ?= 2
-HW_KVM       ?= $(if $(shell test -w /dev/kvm && echo 1),1,)
-HW_CPU       ?= $(if $(filter 1,$(HW_KVM)),host,max)
-HW_KVM_FLAGS  = $(if $(filter 1,$(HW_KVM)),-enable-kvm,)
-
-HW_OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
-HW_OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
-HW_VARS       = build/uefi_vars.fd
-HW_UEFI_ISO  ?= liwusos-uefi.iso
-
-HW_SMBIOS = \
-	-smbios type=0,vendor="American Megatrends Inc.",version="5.6.5",date="05/13/2014" \
-	-smbios type=1,manufacturer="AOC",product="BTDD-EAIO",version="1.0",serial="Default string" \
-	-smbios type=4,manufacturer="Intel(R) Corporation",version="Intel(R) Celeron(R) CPU J1800 @ 2.41GHz",serial="To be filled by O.E.M." \
-	-smbios type=17,manufacturer="Samsung",serial="Default string",part="DDR3",speed=1333
-
-HW_FLAGS = \
-	-machine $(HW_MACHINE) \
-	-cpu $(HW_CPU) -smp $(HW_SMP) -m $(HW_MEM) \
-	$(DISK_FLAGS) \
-	-device qemu-xhci,id=xhci,p2=4,p3=4 \
-	-device usb-ehci,id=ehci \
-	-device usb-kbd,bus=xhci.0 -device usb-mouse,bus=xhci.0 \
-	$(NET_FLAGS) \
-	$(AUDIO_FLAGS) \
-	$(HW_SMBIOS)
-
-HW_UEFI = \
-	-drive if=pflash,format=raw,readonly=on,file=$(HW_OVMF_CODE) \
-	-drive if=pflash,format=raw,file=$(HW_VARS)
-
-HW_AUDIO_ENV = PULSE_SERVER=$(if $(filter pa,$(AUDIO_BACKEND)),/mnt/wslg/PulseServer,) GDK_BACKEND=x11 SDL_VIDEODRIVER=x11
-
-hw-prep:
-	@mkdir -p build
-	@if [ ! -f liwus_disk.img ]; then dd if=/dev/zero of=liwus_disk.img bs=1M count=64 2>/dev/null; fi
-	@if [ ! -f $(HW_VARS) ]; then cp $(HW_OVMF_VARS) $(HW_VARS); fi
-
-# Janela (UEFI/OVMF = firmware do PC real).
-run: uefi-iso hw-prep
-	$(HW_AUDIO_ENV) \
-	qemu-system-x86_64 $(HW_KVM_FLAGS) $(HW_FLAGS) $(HW_UEFI) -cdrom $(HW_UEFI_ISO)
-
-# Janela + serial no terminal + erros de guest.
-run-serial: uefi-iso hw-prep
-	$(HW_AUDIO_ENV) \
-	qemu-system-x86_64 $(HW_KVM_FLAGS) $(HW_FLAGS) $(HW_UEFI) -cdrom $(HW_UEFI_ISO) -serial stdio -d guest_errors -no-reboot
-
-# Headless: serial -> qemu_serial.log + depuracao de interrupcoes.
-run-log: AUDIO_BACKEND = none
-run-log: uefi-iso hw-prep
-	qemu-system-x86_64 $(HW_KVM_FLAGS) $(HW_FLAGS) $(HW_UEFI) -cdrom $(HW_UEFI_ISO) \
-		-display none -monitor none -serial file:qemu_serial.log -D qemu_debug.log -d int,cpu_reset -no-reboot
-
-# Hardware universal com firmware legado (SeaBIOS) - comparacao/debug.
-run-bios: $(ISO_IMAGE) hw-prep
-	$(HW_AUDIO_ENV) \
-	qemu-system-x86_64 $(HW_KVM_FLAGS) $(HW_FLAGS) -cdrom $(ISO_IMAGE)
-
-# Roda o OS na LAN de VERDADE (placa TAP na rede local).
-run-lan: uefi-iso
-	bash scripts/run_lan.sh
-	@$(MAKE) run NET_MODE=tap
-
-# Aliases (mesmo hardware e firmware).
-run-j1800: run
-run-j1800-bios: run-bios
-run-j1800-log: run-log
-
-qa-boot-persistence: $(ISO_IMAGE)
-	bash ./scripts/qa_boot_persistence.sh
+run-log: all
+	rm -f qemu_serial.log
+	$(QEMU) $(QEMU_BASE) -cdrom $(ISO_IMAGE) -display none -monitor none \
+		-serial file:qemu_serial.log -d guest_errors -D qemu_debug.log
 
 clean:
-	rm -rf $(OBJ_DIR)
-	rm -f $(KERNEL_BIN) $(ISO_IMAGE) liwusos-uefi.iso initrd.tar src/boot/test.elf src/boot/test.liw $(CALC_ELF) $(HELLO_ELF) $(DOOMPROBE_ELF) $(LUA_ELF) $(CRUN_ELF) $(EDITOR_NANO_ELF) $(DEMO_GUI_ELF) $(LDE_ELF) $(TCC_ELF) $(LIBGLOSS_A) $(LIBGLOSS_OBJS) $(CRT0_OBJ)
-	rm -f $(TEST_USER_ELF) $(KERNEL_TEST_OBJS) test_serial.log test_disk.img
-	rm -f repo/test_mode repo/test_runner
-	@echo "  NOTA: liwus_disk.img preservado (remova manualmente se quiser disco limpo)"
-	rm -f sdk/tools/liw-builder sdk/tools/img-gen
-	rm -rf isodir repo
+	rm -rf $(OBJ_DIR) $(TEST_OBJ_DIR) isodir isodir-test repo repo-test
+	rm -f $(KERNEL_BIN) $(TEST_KERNEL_BIN) $(ISO_IMAGE) $(TEST_ISO_IMAGE) \
+	      initrd.tar initrd-test.tar test_serial.log qemu_serial.log qemu_debug.log
+	@echo "liwus_disk.img preservado (remova manualmente para disco limpo)"

@@ -1,78 +1,46 @@
 # Build artifacts
-*.o
 obj/
+obj-test/
 isodir/
-initrd.tar
-kernel.bin
-liwus_disk.img
-liwusos.iso
-liwusos-uefi.iso
+isodir-test/
+repo/
+repo-test/
 build/
-pendrive.img
-pen/*.mp3
-pen/*.MP3
+kernel.bin
+kernel-test.bin
+initrd.tar
+initrd-test.tar
+liwusos.iso
+liwusos-test.iso
+liwus_disk.img
 
-# Binaries and packages
+# Binaries
+*.o
+*.a
 *.elf
 *.liw
 *.liwpkg
-sdk/tools/liw-builder
-*.bin
-*.a
 *.so
 *.dll
 *.dylib
 
-# Headers gerados pelo alvo 'bearssl' (copiados de third_party/bearssl/inc)
-sdk/include/bearssl*.h
-
-# TCC toolchain artifacts
-repo/
-tcc
-lde/
-teste.*
-teste.jpg
-teste.png
-
-# CMake/build artifacts
-**/CMakeFiles/
-**/CMakeCache.txt
-**/cmake_install.cmake
-**/Makefile
-**/compile_commands.json
-
-# IDE and Tooling
-.gemini/
-.DS_Store
+# Logs e temporarios
+*.log
+*.tmp
+*.temp
 *.swp
 *.bak
-.aider*
+test_serial.log
+qemu_serial.log
+qemu_debug.log
+
+# Editor / OS
+.DS_Store
+Thumbs.db
 .vscode/
 .idea/
 *.sublime-*
 
-# Logs and Temp
-*.log
-output
-test_transform
-*backup*
-*.tmp
-*.temp
-
-# OS
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-
 # Python
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.coverage
-htmlcov/
-
-# CI/CD
-.github/workflows/*.yml.bak
-LiwusOS-backup*

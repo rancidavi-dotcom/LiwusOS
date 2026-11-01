@@ -34,13 +34,9 @@
 #define SYS_MMAP       35
 #define SYS_MUNMAP     36
 #define SYS_MOUSE_GET  37
-
-#define SYS_GUI_CANVAS_CREATE  120
-#define SYS_GUI_NODE_CREATE    121
-#define SYS_GUI_CANVAS_ADD     122
-#define SYS_GUI_NODE_MOVE      123
-#define SYS_GUI_CAMERA_ZOOM    124
-#define SYS_GUI_IMAGE_CREATE   125
-#define SYS_GUI_IMAGE_UPDATE   126
+#define SYS_RENAME     38
+#define SYS_SET_FOREGROUND 39
+#define SYS_JOB_CREATE 40
+#define SYS_JOB_FOREGROUND 41
 
 #endif

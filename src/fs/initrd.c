@@ -6,7 +6,7 @@
 #include "string.h"
 #include "vga.h"
 
-static uint32_t initrd_location;
+static uintptr_t initrd_location;
 static uint32_t initrd_size;
 
 static const char *normalize_initrd_name(const char *name) {
@@ -65,7 +65,7 @@ static struct dirent *initrd_readdir_empty(fs_node_t *node, uint32_t index) {
 static struct dirent *initrd_readdir(fs_node_t *node, uint32_t index) {
     if (!(node->flags & FS_DIRECTORY)) return NULL;
 
-    uint32_t address = initrd_location;
+    uintptr_t address = initrd_location;
     uint32_t i = 0;
     while (1) {
         struct tar_header *header = (struct tar_header *)address;
@@ -134,10 +134,10 @@ static fs_node_t *initrd_finddir(fs_node_t *node, const char *name) {
     return NULL;
 }
 
-fs_node_t* init_initrd(uint32_t location, uint32_t size) {
+fs_node_t* init_initrd(uintptr_t location, uint32_t size) {
     void *copy = kmalloc(size);
     memcpy(copy, (const void *)location, size);
-    initrd_location = (uint32_t)copy;
+    initrd_location = (uintptr_t)copy;
     initrd_size = size;
     serial_print("initrd: copiado para heap do kernel\n");
 
@@ -153,7 +153,7 @@ fs_node_t* init_initrd(uint32_t location, uint32_t size) {
 
 /* Retorna o nome do n-ésimo arquivo no disco */
 char* initrd_list_files(int index) {
-    uint32_t address = initrd_location;
+    uintptr_t address = initrd_location;
     int current = 0;
     while (1) {
         struct tar_header* header = (struct tar_header*)address;
@@ -169,7 +169,7 @@ char* initrd_list_files(int index) {
 }
 
 void* initrd_get_file(const char* name, uint32_t* size) {
-    uint32_t address = initrd_location;
+    uintptr_t address = initrd_location;
     serial_print("initrd: procurando ");
     serial_print(name);
     serial_print("\n");
@@ -217,7 +217,7 @@ void* initrd_get_file(const char* name, uint32_t* size) {
  * "/foo/bar" e no SDFS usamos "/foo/bar".
  */
 void initrd_copy_to_sdfs(copy_progress_cb cb) {
-    uint32_t address;
+    uintptr_t address;
     int total_files = 0;
     int copied = 0;
 

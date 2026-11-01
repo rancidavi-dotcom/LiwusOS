@@ -27,7 +27,7 @@ struct tar_header {
 
 typedef void (*copy_progress_cb)(int percent, const char *filename);
 
-fs_node_t* init_initrd(uint32_t location, uint32_t size);
+fs_node_t* init_initrd(uintptr_t location, uint32_t size);
 void* initrd_get_file(const char* name, uint32_t* size);
 char* initrd_list_files(int index);
 void initrd_copy_to_sdfs(copy_progress_cb cb);

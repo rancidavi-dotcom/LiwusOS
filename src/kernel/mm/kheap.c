@@ -6,7 +6,10 @@
 
 static uint64_t kheap_start = 0;
 static uint64_t kheap_current = 0;
+static uint64_t kheap_limit = 0;
 static spinlock_t kheap_lock = {0};
+
+extern uint64_t memory_size;
 
 extern uint64_t end[];
 
@@ -22,8 +25,17 @@ static free_header_t *free_list = NULL;
 void kheap_set_start(uint64_t start) {
   if (start % 4096 != 0)
     start += 4096 - (start % 4096);
-  kheap_start = start;
-  kheap_current = start;
+  uint64_t arena_start = 0, arena_size = 0;
+  uint64_t desired = 128ULL * 1024 * 1024;
+  uint64_t minimum = 8ULL * 1024 * 1024;
+  if (pmm_claim_contiguous_region(start, desired, minimum,
+                                  &arena_start, &arena_size) != 0) {
+    serial_print("KERNEL PANIC: no contiguous RAM for KHeap\n");
+    for (;;) asm volatile("hlt");
+  }
+  kheap_start = arena_start;
+  kheap_current = arena_start;
+  kheap_limit = arena_start + arena_size;
 }
 
 char *itoa(int value, char *str, int base);
@@ -37,8 +49,6 @@ uint64_t push_interrupts(void) {
 void pop_interrupts(uint64_t eflags) {
     asm volatile("push %0; popfq" :: "r"(eflags));
 }
-
-extern uint64_t memory_size;
 
 void *kmalloc(size_t size) {
   uint64_t eflags = push_interrupts();
@@ -64,7 +74,7 @@ void *kmalloc(size_t size) {
     curr = curr->next;
   }
 
-  if (kheap_current + total >= memory_size) {
+  if (kheap_current + total < kheap_current || kheap_current + total > kheap_limit) {
     serial_print("KERNEL PANIC: Out of Memory in KHeap!\n");
     asm volatile("hlt");
   }
@@ -99,7 +109,7 @@ void *kmalloc_a(size_t size) {
   uint64_t header_pos = aligned - HEADER_SIZE;
   uint64_t total = (aligned - kheap_current) + size;
 
-  if (kheap_current + total >= memory_size) {
+  if (kheap_current + total < kheap_current || kheap_current + total > kheap_limit) {
     serial_print("KERNEL PANIC: Out of Memory in KHeap (aligned)!\n");
     asm volatile("hlt");
   }
@@ -142,7 +152,7 @@ void *kmalloc_ap(size_t size, uint64_t *phys) {
     curr = curr->next;
   }
 
-  if (kheap_current + total >= memory_size) {
+  if (kheap_current + total < kheap_current || kheap_current + total > kheap_limit) {
     serial_print("KERNEL PANIC: Out of Memory in KHeap (aligned)!\n");
     asm volatile("hlt");
   }
@@ -171,12 +181,7 @@ void kfree(void *ptr) {
     return;
   }
 
-  if (blk_start % 4096 == 0 && header->size >= 4096) {
-    uint32_t pages = header->size / 4096;
-    for (uint32_t i = 0; i < pages; i++)
-      pmm_free_block((void*)(uint64_t)(blk_start + i * 4096));
-  }
-
+  /* Heap frames remain reserved when an allocation returns to the free list. */
   header->next = free_list;
   free_list = header;
   spinlock_release(&kheap_lock);

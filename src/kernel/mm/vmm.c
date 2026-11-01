@@ -3,6 +3,7 @@
 #include "pmm.h"
 #include "string.h"
 #include "serial.h"
+#include "usercopy.h"
 
 page_directory_t *kernel_directory = 0;
 page_directory_t *current_directory = 0;
@@ -32,6 +33,12 @@ void vmm_init_pat() {
 
 static int walk_pt_modified_pml4 = 0;
 
+static void *alloc_pt_page(void) {
+  void *page = pmm_alloc_block();
+  if (page) memset(page, 0, PAGE_SIZE);
+  return page;
+}
+
 static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
   pml4_t *pml4 = dir->pml4_virt;
   uint64_t pml4_i = vaddr_pml4i(vaddr);
@@ -40,8 +47,8 @@ static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
 
   if (!(pml4->entries[pml4_i] & PTE_P)) {
     if (!flags) return 0;
-    pdp_t *new_pdp = (pdp_t *)kmalloc_a(4096);
-    memset(new_pdp, 0, 4096);
+    pdp_t *new_pdp = (pdp_t *)alloc_pt_page();
+    if (!new_pdp) return 0;
     pml4->entries[pml4_i] = ((uint64_t)new_pdp) | alloc_flags;
     walk_pt_modified_pml4 = 1;
   } else if ((flags & PTE_U) && !(pml4->entries[pml4_i] & PTE_U)) {
@@ -54,8 +61,8 @@ static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
 
   if (!(pdp->entries[pdp_i] & PTE_P)) {
     if (!flags) return 0;
-    pd_t *new_pd = (pd_t *)kmalloc_a(4096);
-    memset(new_pd, 0, 4096);
+    pd_t *new_pd = (pd_t *)alloc_pt_page();
+    if (!new_pd) return 0;
     pdp->entries[pdp_i] = ((uint64_t)new_pd) | alloc_flags;
   } else if ((flags & PTE_U) && !(pdp->entries[pdp_i] & PTE_U)) {
     pdp->entries[pdp_i] |= PTE_U;
@@ -68,10 +75,9 @@ static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
     if (!flags) return 0;
     uint64_t large_base = pd->entries[pd_i] & ~0x1FFFFFULL;
     uint64_t large_flags = pd->entries[pd_i] & 0x1FFULL;
-    if (flags & PTE_U) large_flags |= PTE_U;
-    if (flags & PTE_W) large_flags |= PTE_W;
-    pt_t *new_pt = (pt_t *)kmalloc_a(4096);
-    memset(new_pt, 0, 4096);
+    /* Preserve permissions on neighboring leaves after splitting. */
+    pt_t *new_pt = (pt_t *)alloc_pt_page();
+    if (!new_pt) return 0;
     for (int j = 0; j < 512; j++) {
       new_pt->entries[j] = (large_base + j * 4096) | (large_flags & ~PTE_PS);
     }
@@ -80,8 +86,8 @@ static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
 
   if (!(pd->entries[pd_i] & PTE_P)) {
     if (!flags) return 0;
-    pt_t *new_pt = (pt_t *)kmalloc_a(4096);
-    memset(new_pt, 0, 4096);
+    pt_t *new_pt = (pt_t *)alloc_pt_page();
+    if (!new_pt) return 0;
     pd->entries[pd_i] = ((uint64_t)new_pt) | alloc_flags;
   } else if ((flags & PTE_U) && !(pd->entries[pd_i] & PTE_U)) {
     pd->entries[pd_i] |= PTE_U;
@@ -96,6 +102,7 @@ void vmm_map_page(void *phys, void *virt, uint64_t flags) {
   uint64_t p = (uint64_t)phys;
   uint64_t v = (uint64_t)virt;
   uint64_t f = flags;
+  if ((f & PTE_U) && !is_user_addr(virt)) return;
 
   walk_pt_modified_pml4 = 0;
   pte_t *entry = walk_pt(current_directory, v, f);
@@ -111,6 +118,16 @@ void vmm_map_page(void *phys, void *virt, uint64_t flags) {
   }
 }
 
+/* Change leaf permissions without replacing or freeing the mapped frame. */
+int vmm_set_page_flags(void *virt, uint64_t flags) {
+  uint64_t v = (uint64_t)virt;
+  pte_t *entry = walk_pt(current_directory, v, 0);
+  if (!entry || !(*entry & PTE_P)) return -1;
+  *entry = (*entry & ~0xFFFULL) | (flags & 0xFFFULL) | PTE_P;
+  asm volatile("invlpg (%0)" : : "r"(v) : "memory");
+  return 0;
+}
+
 // Desmapeia uma única página (4 KB) do diretório de páginas ativo e
 // libera o frame físico correspondente de volta ao PMM. Útil para munmap.
 int vmm_unmap_page(void *virt) {
@@ -121,17 +138,17 @@ int vmm_unmap_page(void *virt) {
   uint64_t pd_i = vaddr_pdi(v);
   uint64_t pt_i = vaddr_pti(v);
 
-  if (!(pml4->entries[pml4_i] & PTE_P)) return -1;
+  if (!(pml4->entries[pml4_i] & PTE_P) || !(pml4->entries[pml4_i] & PTE_U)) return -1;
   pdp_t *pdp = (pdp_t *)(uint64_t)(pml4->entries[pml4_i] & ~0xFFFULL);
-  if (!(pdp->entries[pdp_i] & PTE_P)) return -1;
+  if (!(pdp->entries[pdp_i] & PTE_P) || !(pdp->entries[pdp_i] & PTE_U)) return -1;
   pd_t *pd = (pd_t *)(uint64_t)(pdp->entries[pdp_i] & ~0xFFFULL);
-  if (!(pd->entries[pd_i] & PTE_P)) return -1;
+  if (!(pd->entries[pd_i] & PTE_P) || !(pd->entries[pd_i] & PTE_U)) return -1;
 
   // Não desmapear dentro de um mapping 2 MB (large page)
   if (pd->entries[pd_i] & PTE_PS) return -1;
 
   pt_t *pt = (pt_t *)(uint64_t)(pd->entries[pd_i] & ~0xFFFULL);
-  if (!(pt->entries[pt_i] & PTE_P)) return -1;
+  if (!(pt->entries[pt_i] & PTE_P) || !(pt->entries[pt_i] & PTE_U)) return -1;
 
   pmm_free_block((void *)(pt->entries[pt_i] & ~0xFFFULL));
   pt->entries[pt_i] = 0;
@@ -140,9 +157,13 @@ int vmm_unmap_page(void *virt) {
 }
 
 void vmm_map_framebuffer(uint64_t phys_addr, uint64_t size) {
-  for (uint64_t i = 0; i < size; i += 4096) {
+  if (!size) return;
+  uint64_t offset = phys_addr & 0xFFFULL;
+  uint64_t map_start = phys_addr & ~0xFFFULL;
+  uint64_t map_size = (offset + size + 0xFFFULL) & ~0xFFFULL;
+  for (uint64_t i = 0; i < map_size; i += 4096) {
     /* Map with PTE_PWT to select PAT1 (WC - Write Combining) */
-    vmm_map_page((void*)(phys_addr + i), (void*)(phys_addr + i), PTE_P | PTE_W | PTE_PWT);
+    vmm_map_page((void*)(map_start + i), (void*)(map_start + i), PTE_P | PTE_W | PTE_PWT);
   }
 }
 
@@ -152,6 +173,7 @@ void switch_page_directory(page_directory_t *dir) {
 }
 
 void init_vmm(uint64_t memory_size) {
+  (void)memory_size;
   vmm_init_pat();
   kernel_directory = (page_directory_t *)kmalloc_a(sizeof(page_directory_t));
   memset(kernel_directory, 0, sizeof(page_directory_t));
@@ -164,74 +186,104 @@ void init_vmm(uint64_t memory_size) {
 
 page_directory_t *vmm_create_directory() {
   page_directory_t *dir = (page_directory_t *)kmalloc(sizeof(page_directory_t));
+  if (!dir) return 0;
   memset(dir, 0, sizeof(page_directory_t));
-  pml4_t *new_pml4 = (pml4_t *)kmalloc_a(4096);
-  memset(new_pml4, 0, 4096);
-  pml4_t *kernel_pml4 = kernel_directory->pml4_virt;
-  for (int i = 0; i < 512; i++)
-    new_pml4->entries[i] = kernel_pml4->entries[i];
+  pml4_t *new_pml4 = (pml4_t *)alloc_pt_page();
+  if (!new_pml4) { kfree(dir); return 0; }
   dir->pml4_virt = new_pml4;
   dir->pml4_phys = (uint64_t)new_pml4;
+  pml4_t *kernel_pml4 = kernel_directory->pml4_virt;
+  /* Give each address space its own page-table pages. Leaf mappings for
+   * supervisor memory still point at the same physical frames. This lets
+   * user mappings split large pages without changing the kernel's tables. */
+  for (int i = 0; i < 512; i++) {
+    if (!(kernel_pml4->entries[i] & PTE_P)) continue;
+    pdp_t *new_pdp = (pdp_t *)alloc_pt_page();
+    if (!new_pdp) { vmm_free_directory(dir); return 0; }
+    new_pml4->entries[i] = (uint64_t)new_pdp |
+                           (kernel_pml4->entries[i] & 0xFFF & ~PTE_U);
+    pdp_t *old_pdp = (pdp_t *)(kernel_pml4->entries[i] & ~0xFFFULL);
+    for (int j = 0; j < 512; j++) {
+      if (!(old_pdp->entries[j] & PTE_P)) continue;
+      if (old_pdp->entries[j] & PTE_PS) {
+        new_pdp->entries[j] = old_pdp->entries[j] & ~PTE_U;
+        continue;
+      }
+      pd_t *new_pd = (pd_t *)alloc_pt_page();
+      if (!new_pd) { vmm_free_directory(dir); return 0; }
+      new_pdp->entries[j] = (uint64_t)new_pd |
+                            (old_pdp->entries[j] & 0xFFF & ~PTE_U);
+      pd_t *old_pd = (pd_t *)(old_pdp->entries[j] & ~0xFFFULL);
+      for (int k = 0; k < 512; k++) {
+        if (!(old_pd->entries[k] & PTE_P)) continue;
+        if (old_pd->entries[k] & PTE_PS) {
+          new_pd->entries[k] = old_pd->entries[k] & ~PTE_U;
+          continue;
+        }
+        pt_t *new_pt = (pt_t *)alloc_pt_page();
+        if (!new_pt) { vmm_free_directory(dir); return 0; }
+        new_pd->entries[k] = (uint64_t)new_pt |
+                             (old_pd->entries[k] & 0xFFF & ~PTE_U);
+        pt_t *old_pt = (pt_t *)(old_pd->entries[k] & ~0xFFFULL);
+        memcpy(new_pt, old_pt, PAGE_SIZE);
+        for (int l = 0; l < 512; l++) new_pt->entries[l] &= ~PTE_U;
+      }
+    }
+  }
   return dir;
+}
+
+static int copy_user_leaves(page_directory_t *src, page_directory_t *dest) {
+  pml4_t *sp = src->pml4_virt;
+  for (int i = 0; i < 512; i++) {
+    if (!(sp->entries[i] & PTE_P)) continue;
+    pdp_t *sdp = (pdp_t *)(sp->entries[i] & ~0xFFFULL);
+    for (int j = 0; j < 512; j++) {
+      if (!(sdp->entries[j] & PTE_P) || (sdp->entries[j] & PTE_PS)) continue;
+      pd_t *sd = (pd_t *)(sdp->entries[j] & ~0xFFFULL);
+      for (int k = 0; k < 512; k++) {
+        if (!(sd->entries[k] & PTE_P)) continue;
+        uint64_t va = ((uint64_t)i << 39) | ((uint64_t)j << 30) |
+                      ((uint64_t)k << 21);
+        if (sd->entries[k] & PTE_PS) {
+          if (!(sd->entries[k] & PTE_U)) continue;
+          uint64_t phys = sd->entries[k] & ~0x1FFFFFULL;
+          uint64_t flags = sd->entries[k] & 0xFFFULL & ~PTE_PS;
+          for (int l = 0; l < 512; l++) {
+            void *page = pmm_alloc_block();
+            if (!page) return -1;
+            memcpy(page, (void *)(phys + (uint64_t)l * PAGE_SIZE), PAGE_SIZE);
+            pte_t *pte = walk_pt(dest, va + (uint64_t)l * PAGE_SIZE,
+                                 PTE_P | PTE_U | PTE_W);
+            if (!pte) { pmm_free_block(page); return -1; }
+            *pte = (uint64_t)page | flags;
+          }
+          continue;
+        }
+        pt_t *st = (pt_t *)(sd->entries[k] & ~0xFFFULL);
+        for (int l = 0; l < 512; l++) {
+          if (!(st->entries[l] & PTE_P) || !(st->entries[l] & PTE_U)) continue;
+          void *page = pmm_alloc_block();
+          if (!page) return -1;
+          memcpy(page, (void *)(st->entries[l] & ~0xFFFULL), PAGE_SIZE);
+          pte_t *pte = walk_pt(dest, va + (uint64_t)l * PAGE_SIZE,
+                               PTE_P | PTE_U | PTE_W);
+          if (!pte) { pmm_free_block(page); return -1; }
+          *pte = (uint64_t)page | (st->entries[l] & 0xFFFULL);
+        }
+      }
+    }
+  }
+  return 0;
 }
 
 page_directory_t *vmm_copy_directory(page_directory_t *src) {
   if (!src) return NULL;
   page_directory_t *dest = vmm_create_directory();
-  pml4_t *src_pml4 = src->pml4_virt;
-  pml4_t *dest_pml4 = dest->pml4_virt;
-
-  for (int i = 0; i < 512; i++) {
-    if (src_pml4->entries[i] & PTE_P) {
-      pdp_t *new_pdp = (pdp_t *)kmalloc_a(4096);
-      memset(new_pdp, 0, 4096);
-      dest_pml4->entries[i] = ((uint64_t)new_pdp) | (src_pml4->entries[i] & 0xFFF);
-
-      pdp_t *src_pdp = (pdp_t *)(uint64_t)(src_pml4->entries[i] & ~0xFFFULL);
-      for (int j = 0; j < 512; j++) {
-        if (src_pdp->entries[j] & PTE_P) {
-          pd_t *new_pd = (pd_t *)kmalloc_a(4096);
-          memset(new_pd, 0, 4096);
-          new_pdp->entries[j] = ((uint64_t)new_pd) | (src_pdp->entries[j] & 0xFFF);
-
-          pd_t *src_pd = (pd_t *)(uint64_t)(src_pdp->entries[j] & ~0xFFFULL);
-          for (int k = 0; k < 512; k++) {
-            if (src_pd->entries[k] & PTE_P) {
-              if (src_pd->entries[k] & PTE_PS) {
-                /* 2 MB large page — split into 512 individual 4 KB pages
-                 * and deep-copy each so the child is fully isolated. */
-                uint64_t large_base = src_pd->entries[k] & ~0x1FFFFFULL;
-                uint64_t large_flags = src_pd->entries[k] & 0xFFF;
-                pt_t *new_pt = (pt_t *)kmalloc_a(4096);
-                memset(new_pt, 0, 4096);
-                new_pd->entries[k] = ((uint64_t)new_pt) | (large_flags & ~(PTE_PS));
-                for (int l = 0; l < 512; l++) {
-                  void *src_phys = (void *)(large_base + (uint64_t)l * 4096);
-                  void *new_phys = pmm_alloc_block();
-                  if (!new_phys) continue;
-                  memcpy(new_phys, src_phys, 4096);
-                  new_pt->entries[l] = ((uint64_t)new_phys) | large_flags;
-                }
-              } else {
-                pt_t *new_pt = (pt_t *)kmalloc_a(4096);
-                memset(new_pt, 0, 4096);
-                new_pd->entries[k] = ((uint64_t)new_pt) | (src_pd->entries[k] & 0xFFF);
-
-                pt_t *src_pt = (pt_t *)(uint64_t)(src_pd->entries[k] & ~0xFFFULL);
-                for (int l = 0; l < 512; l++) {
-                  if (src_pt->entries[l] & PTE_P) {
-                    void *dest_phys = pmm_alloc_block();
-                    new_pt->entries[l] = ((uint64_t)dest_phys) | (src_pt->entries[l] & 0xFFF);
-                    void *src_virt = (void *)(src_pt->entries[l] & ~0xFFFULL);
-                    memcpy(dest_phys, src_virt, 4096);
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
+  if (!dest) return NULL;
+  if (copy_user_leaves(src, dest) < 0) {
+    vmm_free_directory(dest);
+    return NULL;
   }
   return dest;
 }
@@ -248,29 +300,30 @@ void vmm_free_directory(page_directory_t *dir) {
       pdp_t *pdp = (pdp_t *)(uint64_t)(pml4->entries[i] & ~0xFFFULL);
       for (int j = 0; j < 512; j++) {
         if (pdp->entries[j] & PTE_P) {
+          if (pdp->entries[j] & PTE_PS) continue;
           pd_t *pd = (pd_t *)(uint64_t)(pdp->entries[j] & ~0xFFFULL);
           for (int k = 0; k < 512; k++) {
             if (pd->entries[k] & PTE_P) {
               if (pd->entries[k] & PTE_PS) {
-                pmm_free_block((void *)(pd->entries[k] & ~0x1FFFFFULL));
+                /* Large leaves are shared kernel identity mappings. */
               } else {
                 pt_t *pt = (pt_t *)(uint64_t)(pd->entries[k] & ~0xFFFULL);
                 for (int l = 0; l < 512; l++) {
-                  if (pt->entries[l] & PTE_P) {
+                  if ((pt->entries[l] & (PTE_P | PTE_U)) == (PTE_P | PTE_U)) {
                     pmm_free_block((void *)(pt->entries[l] & ~0xFFFULL));
                   }
                 }
-                kfree(pt);
+                pmm_free_block(pt);
               }
             }
           }
-          kfree(pd);
+          pmm_free_block(pd);
         }
       }
-      kfree(pdp);
+      pmm_free_block(pdp);
     }
   }
-  kfree(pml4);
+  pmm_free_block(pml4);
   kfree(dir);
 }
 
@@ -282,10 +335,22 @@ uint64_t sys_brk(uint64_t addr) {
   if (brk_top < current_task->heap_start) brk_top = current_task->heap_start;
   if (addr <= brk_top) return brk_top;
   uint64_t start = (brk_top + 0xFFF) & ~0xFFFULL;
+  if (addr > USER_ADDR_MAX - PAGE_SIZE) return brk_top;
   uint64_t end = (addr + 0xFFF) & ~0xFFFULL;
   for (uint64_t p = start; p < end; p += 4096) {
     void *phys = pmm_alloc_block();
-    vmm_map_page(phys, (void *)p, 0x7);
+    if (!phys) {
+      for (uint64_t rollback = start; rollback < p; rollback += PAGE_SIZE)
+        vmm_unmap_page((void *)rollback);
+      return brk_top;
+    }
+    vmm_map_page(phys, (void *)p, PTE_P | PTE_W | PTE_U);
+    if (validate_user_pointer((void *)p, PAGE_SIZE) < 0) {
+      pmm_free_block(phys);
+      for (uint64_t rollback = start; rollback < p; rollback += PAGE_SIZE)
+        vmm_unmap_page((void *)rollback);
+      return brk_top;
+    }
     memset((void *)p, 0, 4096);
   }
   current_task->heap_end = end;

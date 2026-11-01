@@ -10,12 +10,28 @@
 #include <stddef.h>
 #include "spinlock.h"
 #include "elf.h"
-#include "gui_syscalls.h"
 #include "timer.h"
+#include "usercopy.h"
 
 cpu_local_t cpus_local[16];
 spinlock_t scheduler_lock = {0};
 task_t *task_list = NULL;
+
+/* The scheduler also runs from the timer interrupt. On this single-CPU
+ * kernel, any code taking this lock must prevent a timer interrupt from
+ * preempting it and trying to take the same lock recursively. */
+static inline uint64_t scheduler_lock_irqsave(void) {
+  uint64_t flags;
+  asm volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+  spinlock_acquire(&scheduler_lock);
+  return flags;
+}
+
+static inline void scheduler_unlock_irqrestore(uint64_t flags) {
+  spinlock_release(&scheduler_lock);
+  if (flags & (1ULL << 9))
+    asm volatile("sti" ::: "memory");
+}
 
 /* Setado por switch_task() para forcar um reschedule mesmo quando a tarefa
  * ainda tem quantum: um "cede a CPU" voluntario (yield). */
@@ -29,12 +45,13 @@ static inline int task_quantum(const task_t *t) {
 }
 
 static void panic_stack_msg(task_t *curr, const char *type, char *buf, size_t bufsz) {
+  (void)bufsz;
   char num[16];
   buf[0] = '\0';
   strcat(buf, "STACK OVERFLOW (");
   strcat(buf, type);
   strcat(buf, ") task=");
-  strcat(buf, curr->name ? curr->name : "?");
+  strcat(buf, curr->name[0] ? curr->name : "?");
   strcat(buf, " pid=");
   itoa(curr->id, num, 10);
   strcat(buf, num);
@@ -53,6 +70,9 @@ static int next_pid = 1;
 static uint32_t global_switch_count = 0;
 
 int last_foreground_pid = -1;
+int foreground_job_id = -1;
+static int next_job_id = 1;
+static void task_kill_job_locked(int job_id);
 
 void init_cpu_local(int cpu_id) {
     if (cpu_id < 0 || cpu_id >= 16) return;
@@ -112,7 +132,7 @@ void init_tasking() {
   init_task->state = TASK_RUNNING;
   init_task->page_directory = current_directory;
   init_task->user_mode = false;
-  strcpy(init_task->cwd, "/house/localhost");
+  strcpy(init_task->cwd, "/");
   task_assign_name(init_task, "kernel", false);
   task_sched_fields_init(init_task);
 
@@ -176,21 +196,22 @@ int create_task_named_stack(void (*entry_point)(), const char *name,
   regs->rsp = (uint64_t)((stack & ~(uint64_t)0xF) - 8);
   regs->ss = 0x10;
 
-  /* Stack canary at TOP (where RSP starts) - catches overflow immediately */
-  uint64_t canary_addr = regs->rsp;
-  *(uint64_t *)canary_addr = 0xDEADBEEFCAFEBABE;
+  /* A pilha de kernel nao usa canary no topo: o endereco inicial de RSP
+   * coincide com o campo rsp/ss do frame de iret. Marcar o canary ali
+   * corromperia o frame (RSP saltaria para 0xDEAD...). O canary de base
+   * continua detectando estouro de pilha. */
   new_task->stack_canary = 0xDEADBEEFCAFEBABE;
-  new_task->stack_canary_addr = canary_addr;
+  new_task->stack_canary_addr = 0;
 
   /* Also canary at bottom for underflow detection */
   *(uint64_t *)stack_base = 0xDEADBEEFCAFEBABE;
 
   new_task->stack_top = (uint64_t)regs;
 
-  spinlock_acquire(&scheduler_lock);
+  uint64_t sched_flags = scheduler_lock_irqsave();
   new_task->next = task_list->next;
   task_list->next = new_task;
-  spinlock_release(&scheduler_lock);
+  scheduler_unlock_irqrestore(sched_flags);
   return pid;
 }
 
@@ -211,18 +232,23 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
   new_task->parent = current_task;
   new_task->page_directory = current_directory;
   new_task->user_mode = true;
+  new_task->job_id = pid;
   strcpy(new_task->cwd, current_task ? current_task->cwd : "/");
   task_assign_name(new_task, name, true);
   task_sched_fields_init(new_task);
 
   uint64_t stack_size = 8192;
   uint64_t stack_base = (uint64_t)kmalloc(stack_size);
+  if (!stack_base) { kfree(new_task); return -1; }
   stack = stack_base + stack_size;
   /* Alinhar kernel stack para 16 bytes (ABI x86_64) */
   stack = stack & ~0xF;
   new_task->kernel_stack_base = stack_base;
   new_task->kernel_stack = stack;
   new_task->kernel_stack_size = (uint32_t)stack_size;
+  new_task->stack_canary = 0xDEADBEEFCAFEBABE;
+  new_task->stack_canary_addr = 0;
+  *(uint64_t *)stack_base = new_task->stack_canary;
 
   regs = (registers_t *)(stack - sizeof(registers_t));
   for (size_t i = 0; i < sizeof(registers_t); i++) {
@@ -250,10 +276,10 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
   serial_print(" page_dir="); serial_print_hex((uint64_t)current_directory);
   serial_print("\n");
 
-  spinlock_acquire(&scheduler_lock);
+  uint64_t sched_flags = scheduler_lock_irqsave();
   new_task->next = task_list->next;
   task_list->next = new_task;
-  spinlock_release(&scheduler_lock);
+  scheduler_unlock_irqrestore(sched_flags);
   return pid;
 }
 
@@ -270,18 +296,23 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
   new_task->parent = current_task;
   new_task->page_directory = current_directory;
   new_task->user_mode = true;
+  new_task->job_id = pid;
   strcpy(new_task->cwd, current_task ? current_task->cwd : "/");
   task_assign_name(new_task, name, true);
   task_sched_fields_init(new_task);
 
   uint64_t stack_size = 8192;
   uint64_t stack_base = (uint64_t)kmalloc(stack_size);
+  if (!stack_base) { kfree(new_task); return -1; }
   stack = stack_base + stack_size;
   /* Alinhar kernel stack para 16 bytes (ABI x86_64) */
   stack = stack & ~0xF;
   new_task->kernel_stack_base = stack_base;
   new_task->kernel_stack = stack;
   new_task->kernel_stack_size = (uint32_t)stack_size;
+  new_task->stack_canary = 0xDEADBEEFCAFEBABE;
+  new_task->stack_canary_addr = 0;
+  *(uint64_t *)stack_base = new_task->stack_canary;
 
   regs = (registers_t *)(uint64_t)(stack - sizeof(registers_t));
   /* Explicitly zero with known pattern to detect corruption */
@@ -310,10 +341,10 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
   serial_print(" heap_start="); serial_print_hex(hstart);
   serial_print("\n");
 
-  spinlock_acquire(&scheduler_lock);
+  uint64_t sched_flags = scheduler_lock_irqsave();
   new_task->next = task_list->next;
   task_list->next = new_task;
-  spinlock_release(&scheduler_lock);
+  scheduler_unlock_irqrestore(sched_flags);
   return pid;
 }
 
@@ -362,25 +393,28 @@ uint64_t schedule(uint64_t current_rsp) {
     }
   }
 
-  spinlock_acquire(&scheduler_lock);
+  uint64_t sched_flags = scheduler_lock_irqsave();
 
   int forced = g_resched_force;
   g_resched_force = 0;
 
-  if (check_ctrl_c() && last_foreground_pid > 0) {
-    task_t *fg = task_list;
-    do {
-      if (fg->id == last_foreground_pid && fg->user_mode) {
-        fg->state = TASK_ZOMBIE;
-        fg->exit_code = 128 + 2;
-        last_foreground_pid = -1;
-        if (fg->parent) {
-          fg->parent->state = TASK_RUNNING;
+  if (check_ctrl_c()) {
+    if (foreground_job_id >= 0) {
+      task_kill_job_locked(foreground_job_id);
+    } else if (last_foreground_pid > 0) {
+      task_t *fg = task_list;
+      do {
+        if (fg->id == last_foreground_pid && fg->user_mode) {
+          task_release_io(fg);
+          fg->state = TASK_ZOMBIE;
+          fg->exit_code = 128 + 2;
+          last_foreground_pid = -1;
+          if (fg->parent) fg->parent->state = TASK_READY;
+          break;
         }
-        break;
-      }
-      fg = fg->next;
-    } while (fg != task_list);
+        fg = fg->next;
+      } while (fg != task_list);
+    }
   }
 
   /* Acorda tarefas adormecidas cujo wake_tick ja passou. wake_tick==0 marca
@@ -407,7 +441,7 @@ uint64_t schedule(uint64_t current_rsp) {
   if (!forced && curr->state == TASK_RUNNING) {
     if (curr->time_slice > 1) {
       curr->time_slice--;
-      spinlock_release(&scheduler_lock);
+      scheduler_unlock_irqrestore(sched_flags);
       return current_rsp;
     }
     curr->time_slice = 0;
@@ -441,21 +475,6 @@ uint64_t schedule(uint64_t current_rsp) {
   new_curr->switch_count++;
   global_switch_count++;
 
-  /* Debug: log task switch for user tasks */
-  if (new_curr->user_mode && new_curr != curr) {
-    serial_print("SCHED: switch to pid=");
-    char dbg[16];
-    itoa(new_curr->id, dbg, 10);
-    serial_print(dbg);
-    serial_print(" (");
-    serial_print(new_curr->name);
-    serial_print(") kernel_stack=");
-    serial_print_hex(new_curr->kernel_stack);
-    serial_print(" stack_top=");
-    serial_print_hex(new_curr->stack_top);
-    serial_print("\n");
-  }
-
   /* VMM Switch: Trocar CR3 se mudou de processo */
   if (new_curr->page_directory != current_directory) {
     switch_page_directory(new_curr->page_directory);
@@ -465,12 +484,6 @@ uint64_t schedule(uint64_t current_rsp) {
   extern tss_entry_t cpus_tss[16];
   if (new_curr->kernel_stack != 0) {
       cpus_tss[get_cpu_id()].rsp0 = new_curr->kernel_stack;
-  }
-
-  if (new_curr->user_mode && new_curr != curr) {
-    serial_print("SCHED: TSS.rsp0 updated to ");
-    serial_print_hex(new_curr->kernel_stack);
-    serial_print("\n");
   }
 
   /* FPU/SSE contexto: o kernel é -mno-sse, mas tasks que usam FP (ex. o
@@ -485,7 +498,7 @@ uint64_t schedule(uint64_t current_rsp) {
     }
   }
 
-  spinlock_release(&scheduler_lock);
+  scheduler_unlock_irqrestore(sched_flags);
 
   return new_curr->stack_top;
 }
@@ -504,10 +517,10 @@ void task_sleep_ms(uint32_t ms) {
   if (ticks == 0)
     ticks = 1;
 
-  spinlock_acquire(&scheduler_lock);
+  uint64_t sched_flags = scheduler_lock_irqsave();
   t->wake_tick = (uint64_t)timer_ticks + ticks;
   t->state = TASK_SLEEPING;
-  spinlock_release(&scheduler_lock);
+  scheduler_unlock_irqrestore(sched_flags);
 
   switch_task();
 }
@@ -518,7 +531,7 @@ void task_set_priority(int pid, int priority) {
   if (priority > TASK_PRIO_MAX)
     priority = TASK_PRIO_MAX;
 
-  spinlock_acquire(&scheduler_lock);
+  uint64_t sched_flags = scheduler_lock_irqsave();
   task_t *t = task_list;
   if (t) {
     do {
@@ -529,12 +542,12 @@ void task_set_priority(int pid, int priority) {
       t = t->next;
     } while (t != task_list);
   }
-  spinlock_release(&scheduler_lock);
+  scheduler_unlock_irqrestore(sched_flags);
 }
 
 int task_get_priority(int pid) {
   int found = -1;
-  spinlock_acquire(&scheduler_lock);
+  uint64_t sched_flags = scheduler_lock_irqsave();
   task_t *t = task_list;
   if (t) {
     do {
@@ -545,17 +558,95 @@ int task_get_priority(int pid) {
       t = t->next;
     } while (t != task_list);
   }
-  spinlock_release(&scheduler_lock);
+  scheduler_unlock_irqrestore(sched_flags);
   return found;
+}
+
+int task_set_foreground(int pid) {
+  if (!current_task || !current_task->user_mode ||
+      (pid != -1 && pid != current_task->id))
+    return -1;
+  uint64_t sched_flags = scheduler_lock_irqsave();
+  foreground_job_id = -1;
+  last_foreground_pid = pid;
+  current_task->spawn_job_id = 0;
+  scheduler_unlock_irqrestore(sched_flags);
+  return 0;
+}
+
+int task_create_job(void) {
+  if (!current_task || !current_task->user_mode) return -1;
+  uint64_t sched_flags = scheduler_lock_irqsave();
+  int job_id = next_job_id++;
+  if (job_id <= 0) {
+    next_job_id = 2;
+    job_id = 1;
+  }
+  current_task->spawn_job_id = job_id;
+  scheduler_unlock_irqrestore(sched_flags);
+  return job_id;
+}
+
+int task_set_foreground_job(int job_id) {
+  if (!current_task || !current_task->user_mode || job_id < -1) return -1;
+  uint64_t sched_flags = scheduler_lock_irqsave();
+  if (job_id >= 0) {
+    bool found = false;
+    task_t *t = task_list;
+    if (t) do {
+      if (t->parent == current_task && t->job_id == job_id) {
+        found = true;
+        break;
+      }
+      t = t->next;
+    } while (t != task_list);
+    if (!found) {
+      scheduler_unlock_irqrestore(sched_flags);
+      return -1;
+    }
+  }
+  current_task->spawn_job_id = 0;
+  foreground_job_id = job_id;
+  last_foreground_pid = -1;
+  scheduler_unlock_irqrestore(sched_flags);
+  return 0;
+}
+
+static void task_kill_job_locked(int job_id) {
+  if (!task_list || job_id < 0) return;
+  task_t *t = task_list;
+  do {
+    if (t->user_mode && t->job_id == job_id && t->state != TASK_ZOMBIE) {
+      task_release_io(t);
+      t->state = TASK_ZOMBIE;
+      t->exit_code = 128 + 2;
+      if (t->parent) t->parent->state = TASK_READY;
+    }
+    t = t->next;
+  } while (t != task_list);
+  if (foreground_job_id == job_id) foreground_job_id = -1;
+  last_foreground_pid = -1;
+}
+
+void task_kill_job(int job_id) {
+  uint64_t sched_flags = scheduler_lock_irqsave();
+  task_kill_job_locked(job_id);
+  scheduler_unlock_irqrestore(sched_flags);
 }
 
 int task_snapshot(task_info_t *out, int max_entries) {
   task_t *t;
   int count = 0;
+  int user_output = current_task && current_task->user_mode;
 
-  if (!task_list || !out || max_entries <= 0) {
-    return 0;
+  if (!out) return user_output ? -EFAULT : 0;
+  if (max_entries <= 0) return 0;
+  if (user_output) {
+    if ((size_t)max_entries > (size_t)-1 / sizeof(*out) ||
+        validate_user_write(out, (size_t)max_entries * sizeof(*out)) < 0)
+      return -EFAULT;
   }
+  if (!task_list) return 0;
 
   t = task_list;
   do {
@@ -563,17 +654,25 @@ int task_snapshot(task_info_t *out, int max_entries) {
       break;
     }
 
-    out[count].id = t->id;
-    out[count].parent_id = t->parent ? t->parent->id : -1;
-    out[count].state = t->state;
-    out[count].heap_start = t->heap_start;
-    out[count].heap_end = t->heap_end;
-    out[count].cpu_ticks = t->cpu_ticks;
-    out[count].switch_count = t->switch_count;
-    out[count].priority = t->priority;
-    out[count].user_mode = t->user_mode;
-    strncpy(out[count].name, t->name, sizeof(out[count].name) - 1);
-    out[count].name[sizeof(out[count].name) - 1] = '\0';
+    task_info_t snapshot;
+    memset(&snapshot, 0, sizeof(snapshot));
+    snapshot.id = t->id;
+    snapshot.parent_id = t->parent ? t->parent->id : -1;
+    snapshot.state = t->state;
+    snapshot.heap_start = t->heap_start;
+    snapshot.heap_end = t->heap_end;
+    snapshot.cpu_ticks = t->cpu_ticks;
+    snapshot.switch_count = t->switch_count;
+    snapshot.priority = t->priority;
+    snapshot.user_mode = t->user_mode;
+    strncpy(snapshot.name, t->name, sizeof(snapshot.name) - 1);
+    snapshot.name[sizeof(snapshot.name) - 1] = '\0';
+    if (user_output) {
+      if (copy_to_user(&out[count], &snapshot, sizeof(snapshot)) < 0)
+        return -EFAULT;
+    } else {
+      out[count] = snapshot;
+    }
 
     count++;
     t = t->next;
@@ -624,21 +723,37 @@ void move_to_user_mode() {
 int fork_process(registers_t *regs) {
 
   task_t *parent = (task_t *)current_task;
+  if (!parent || !regs) return -ENOMEM;
   task_t *new_task = (task_t *)kmalloc(sizeof(task_t));
+  if (!new_task) return -ENOMEM;
   memset(new_task, 0, sizeof(task_t));
 
   new_task->id = next_pid++;
   new_task->state = TASK_READY;
   new_task->parent = parent;
+  new_task->job_id = parent->spawn_job_id > 0
+      ? parent->spawn_job_id : parent->job_id;
 
   // Real copy of user-space memory
   new_task->page_directory = vmm_copy_directory(parent->page_directory);
+  if (!new_task->page_directory) {
+    kfree(new_task);
+    return -ENOMEM;
+  }
 
   uint32_t kernel_stack_size = 4096;
   uint64_t kernel_stack_base = (uint64_t)kmalloc(kernel_stack_size);
+  if (!kernel_stack_base) {
+    vmm_free_directory(new_task->page_directory);
+    kfree(new_task);
+    return -ENOMEM;
+  }
   new_task->kernel_stack_base = kernel_stack_base;
   new_task->kernel_stack = kernel_stack_base + kernel_stack_size;
   new_task->kernel_stack_size = kernel_stack_size;
+  new_task->stack_canary = 0xDEADBEEFCAFEBABE;
+  new_task->stack_canary_addr = 0;
+  *(uint64_t *)kernel_stack_base = new_task->stack_canary;
 
   uint64_t regs_size = sizeof(registers_t);
   uint64_t new_stack_ptr = new_task->kernel_stack - regs_size;
@@ -661,13 +776,17 @@ int fork_process(registers_t *regs) {
   // Copy file descriptors
   for (int i = 0; i < 32; i++) {
     new_task->file_descriptors[i] = parent->file_descriptors[i];
-    if (new_task->file_descriptors[i].type == 3) { // 3 = FD_TYPE_PIPE
-      pipe_t *p = (pipe_t *)new_task->file_descriptors[i].socket_ptr;
-      if (p) p->refcount++;
-    }
+    sys_fd_get(&new_task->file_descriptors[i]);
   }
 
-  
+  task_assign_name(new_task, "fork", new_task->user_mode);
+  uint64_t sched_flags = scheduler_lock_irqsave();
+  new_task->next = task_list->next;
+  task_list->next = new_task;
+  if (parent->user_mode)
+    last_foreground_pid = new_task->id;
+  scheduler_unlock_irqrestore(sched_flags);
+
   asm volatile("sti");
   return new_task->id;
 }
@@ -675,9 +794,12 @@ int fork_process(registers_t *regs) {
 int sys_waitpid(int pid, int *status, int options) {
   (void)options;
   task_t *parent = current_task;
+  if (status && parent && parent->user_mode &&
+      validate_user_write(status, sizeof(*status)) < 0)
+    return -EFAULT;
 
   while (1) {
-    spinlock_acquire(&scheduler_lock);
+    uint64_t sched_flags = scheduler_lock_irqsave();
     task_t *t = task_list;
     bool found = false;
     bool any_child = false;
@@ -687,8 +809,16 @@ int sys_waitpid(int pid, int *status, int options) {
         any_child = true;
         if (pid == -1 || t->id == pid) {
           if (t->state == TASK_ZOMBIE) {
-            if (status)
-              *status = t->exit_code;
+            if (status) {
+              if (parent->user_mode) {
+                if (copy_to_user(status, &t->exit_code, sizeof(t->exit_code)) < 0) {
+                  scheduler_unlock_irqrestore(sched_flags);
+                  return -EFAULT;
+                }
+              } else {
+                *status = t->exit_code;
+              }
+            }
             int child_id = t->id;
 
             // Simple cleanup: remove from task list
@@ -697,7 +827,7 @@ int sys_waitpid(int pid, int *status, int options) {
               prev = prev->next;
             prev->next = t->next;
 
-            spinlock_release(&scheduler_lock);
+            scheduler_unlock_irqrestore(sched_flags);
 
             if (t->kernel_stack_base && t->kernel_stack_size) {
                kfree((void *)t->kernel_stack_base);
@@ -728,43 +858,49 @@ int sys_waitpid(int pid, int *status, int options) {
     } while (t != task_list);
 
     if (!any_child || (pid != -1 && !found)) {
-      spinlock_release(&scheduler_lock);
+      scheduler_unlock_irqrestore(sched_flags);
       return -1;
+    }
+
+    if ((options & 1) && found) {
+      scheduler_unlock_irqrestore(sched_flags);
+      return 0;
     }
 
     // Wait and reschedule
     parent->state = TASK_SLEEPING;
-    spinlock_release(&scheduler_lock);
+    scheduler_unlock_irqrestore(sched_flags);
     switch_task();
   }
 }
 
 void sys_kill_by_pid(int pid) {
   if (pid < 0) return;
-  spinlock_acquire(&scheduler_lock);
+  uint64_t sched_flags = scheduler_lock_irqsave();
   task_t *t = task_list;
   do {
     if (t->id == pid) {
       if (!t->user_mode) break;
+      task_release_io(t);
       t->state = TASK_ZOMBIE;
       t->exit_code = 128 + 2;
+      if (t->id == last_foreground_pid)
+        last_foreground_pid = -1;
       if (t->parent) {
-        t->parent->state = TASK_RUNNING;
+        t->parent->state = TASK_READY;
       }
       break;
     }
     t = t->next;
   } while (t != task_list);
-  spinlock_release(&scheduler_lock);
+  scheduler_unlock_irqrestore(sched_flags);
 }
 
 void sys_exit_process(int status) {
   /* Clean up any GUI nodes (windows, images) owned by this process */
-  if (current_task && current_task->gui) {
-    sys_gui_cleanup_task();
-  }
 
-  spinlock_acquire(&scheduler_lock);
+  task_release_io(current_task);
+  uint64_t sched_flags = scheduler_lock_irqsave();
   if (current_task->id == last_foreground_pid)
     last_foreground_pid = -1;
   current_task->state = TASK_ZOMBIE;
@@ -772,9 +908,9 @@ void sys_exit_process(int status) {
 
   // Wake up parent
   if (current_task->parent) {
-    current_task->parent->state = TASK_RUNNING;
+    current_task->parent->state = TASK_READY;
   }
-  spinlock_release(&scheduler_lock);
+  scheduler_unlock_irqrestore(sched_flags);
 
   while (1) {
     switch_task();

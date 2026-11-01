@@ -5,6 +5,7 @@
 
 fs_node_t* fs_root = NULL;
 static vfs_mount_t* mounts = NULL;
+static uint64_t live_owned_nodes = 0;
 
 void vfs_init() {
     mounts = NULL;
@@ -48,6 +49,26 @@ void vfs_truncate(fs_node_t *node) {
     }
 }
 
+/* Mounted roots are borrowed. Current filesystem finddir callbacks allocate
+ * descendants, which the lookup caller releases with this function. */
+void vfs_node_put(fs_node_t *node) {
+    if (!node || !node->vfs_owned) return;
+    node->vfs_owned = 0;
+    if (live_owned_nodes) live_owned_nodes--;
+    if (node->close) node->close(node);
+    kfree(node);
+}
+
+void vfs_node_take_ownership(fs_node_t *node) {
+    if (!node || node->vfs_owned) return;
+    node->vfs_owned = 1;
+    live_owned_nodes++;
+}
+
+uint64_t vfs_live_owned_nodes(void) {
+    return live_owned_nodes;
+}
+
 fs_node_t* vfs_open(const char* path) {
     if (!path) return NULL;
     if (path[0] == '\0') return fs_root;
@@ -83,6 +104,7 @@ fs_node_t* vfs_open(const char* path) {
     if (!best_match) return NULL;
 
     fs_node_t* current = best_match->root;
+    int current_owned = 0;
     const char* remaining;
 
     if (strcmp(best_match->path, "/") == 0) {
@@ -105,8 +127,14 @@ fs_node_t* vfs_open(const char* path) {
         if (*remaining == '/') remaining++;
 
         fs_node_t* next_node = finddir_fs(current, part);
-        if (!next_node) return NULL;
+        if (!next_node) {
+            if (current_owned) vfs_node_put(current);
+            return NULL;
+        }
+        if (current_owned) vfs_node_put(current);
+        vfs_node_take_ownership(next_node);
         current = next_node;
+        current_owned = 1;
     }
 
     return current;
@@ -160,6 +188,7 @@ fs_node_t* vfs_create(const char* path, uint32_t flags) {
     if (!best_match) return NULL;
 
     fs_node_t* current = best_match->root;
+    int current_owned = 0;
     const char* remaining;
 
     if (strcmp(best_match->path, "/") == 0) {
@@ -183,15 +212,26 @@ fs_node_t* vfs_create(const char* path, uint32_t flags) {
             remaining++;
             // Not the last part, must be a directory
             fs_node_t* next_node = finddir_fs(current, part);
-            if (!next_node) return NULL;
+            if (!next_node) {
+                if (current_owned) vfs_node_put(current);
+                return NULL;
+            }
+            if (current_owned) vfs_node_put(current);
+            vfs_node_take_ownership(next_node);
             current = next_node;
+            current_owned = 1;
         } else {
             // Last part, this is the file to create
             if (current && (current->flags & FS_DIRECTORY) && current->create) {
-                return current->create(current, part, flags);
+                fs_node_t *created = current->create(current, part, flags);
+                if (current_owned) vfs_node_put(current);
+                vfs_node_take_ownership(created);
+                return created;
             }
+            if (current_owned) vfs_node_put(current);
             return NULL;
         }
     }
+    if (current_owned) vfs_node_put(current);
     return NULL;
 }

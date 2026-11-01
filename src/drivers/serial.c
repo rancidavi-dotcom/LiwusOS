@@ -6,6 +6,20 @@
 
 static spinlock_t serial_lock = {0};
 
+/* Serial output is also used by the scheduler and exception paths. On the
+ * single CPU, do not let a timer IRQ switch to another task while that task
+ * owns serial_lock; the scheduler may itself print before the owner resumes. */
+static inline uint64_t serial_irq_save(void) {
+   uint64_t flags;
+   __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+   return flags;
+}
+
+static inline void serial_irq_restore(uint64_t flags) {
+   if (flags & (1ULL << 9))
+      __asm__ volatile("sti" ::: "memory");
+}
+
 int init_serial() {
    outb(PORT + 1, 0x00);    // Disable all interrupts
    outb(PORT + 3, 0x80);    // Enable DLAB (set baud rate divisor)
@@ -44,15 +58,18 @@ void write_serial(char a) {
 }
 
 void serial_print(const char *str) {
+    uint64_t flags = serial_irq_save();
     spinlock_acquire(&serial_lock);
     while (*str) {
         write_serial(*str++);
     }
     spinlock_release(&serial_lock);
+    serial_irq_restore(flags);
 }
 
 // Simple helper for hex debug
 void serial_print_hex(uint64_t n) {
+    uint64_t flags = serial_irq_save();
     spinlock_acquire(&serial_lock);
     char *digits = "0123456789ABCDEF";
     write_serial('0');
@@ -61,4 +78,5 @@ void serial_print_hex(uint64_t n) {
         write_serial(digits[(n >> i) & 0xF]);
     }
     spinlock_release(&serial_lock);
+    serial_irq_restore(flags);
 }

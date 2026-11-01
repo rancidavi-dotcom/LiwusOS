@@ -9,10 +9,6 @@ extern void keyboard_update_mouse(void);
 
 void timer_handler() {
     timer_ticks++;
-    if ((timer_ticks & 0x3FF) == 0) {
-        vga_putc('T');
-        serial_print("T");
-    }
     keyboard_update_mouse();
 }
 

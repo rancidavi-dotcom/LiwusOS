@@ -16,12 +16,12 @@
 #include "vfs.h"
 #include "termios.h"
 #include "usercopy.h"
-#include "gui_syscalls.h"
 
-extern int elf_class(void *file_buffer);
-extern uint64_t elf32_load_file(void *file_buffer);
-extern uint64_t elf64_load_file(void *file_buffer);
+extern int elf_class(void *file_buffer, uint32_t file_size);
+extern uint64_t elf32_load_file(void *file_buffer, uint32_t file_size);
+extern uint64_t elf64_load_file(void *file_buffer, uint32_t file_size);
 extern uint64_t last_elf_heap_start;
+extern int last_elf_load_error;
 
 static char *launch_last_error = "nenhum erro";
 const char *get_launch_last_error() { return launch_last_error; }
@@ -38,6 +38,7 @@ struct termios kernel_termios = {
 static char stdin_esc_buf[8];
 static int stdin_esc_len = 0;
 static int stdin_esc_pos = 0;
+static const char *resolve_path(const char *path);
 
 void sys_exit(int status) {
   serial_print("[syscall] sys_exit called with status ");
@@ -57,12 +58,9 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
   void *addr = NULL;
 
   char sdfs_path[256];
-  if (filename[0] == '/') {
-    strncpy(sdfs_path, filename, 255);
-  } else {
-    sdfs_path[0] = '/';
-    strncpy(sdfs_path + 1, filename, 254);
-  }
+  const char *resolved_filename = resolve_path(filename);
+  if (!resolved_filename) return (uint64_t)-1;
+  strncpy(sdfs_path, resolved_filename, sizeof(sdfs_path) - 1);
   sdfs_path[255] = '\0';
   addr = sdfs_read_file(sdfs_path, &size);
 
@@ -76,7 +74,7 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
     return (uint64_t)-1;
   }
 
-  int eclass = elf_class(addr);
+  int eclass = elf_class(addr, size);
   if (eclass != ELFCLASS32 && eclass != ELFCLASS64) {
     launch_last_error = "ELF class invalido";
     return (uint64_t)-1;
@@ -84,10 +82,10 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
 
   uint64_t entry;
   if (eclass == ELFCLASS32) {
-    entry = elf32_load_file(addr);
+    entry = elf32_load_file(addr, size);
     sys_execve_is_64 = 0;
   } else {
-    entry = elf64_load_file(addr);
+    entry = elf64_load_file(addr, size);
     sys_execve_is_64 = 1;
   }
   if (entry == 0) {
@@ -105,7 +103,6 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
   }
 
   uint8_t *stack_bytes = (uint8_t *)stack_top;
-  char nbuf[12];
 
   int argc = 0;
   if (argv) {
@@ -318,6 +315,8 @@ return pid;
 // fallback para quando não há um processo user ativo (ex.: durante o boot
 // ou para kernel tasks) — o caminho principal é o per-processo.
 static kfile_t fd_table[32];
+static uint64_t live_file_descriptions = 0;
+static uint64_t live_pipe_objects = 0;
 
 // Retorna a fd table do processo corrente. Se houver um current_task
 // (qualquer tarefa, inclusive kernel tasks), usa a table isolada dele;
@@ -325,6 +324,64 @@ static kfile_t fd_table[32];
 static kfile_t *get_fd_table(void) {
   if (current_task) return current_task->file_descriptors;
   return fd_table;
+}
+
+void sys_fd_get(kfile_t *file) {
+  if (!file) return;
+  if (file->type == FD_TYPE_FILE && file->description) {
+    file->description->references++;
+  } else if (file->type == FD_TYPE_PIPE && file->socket_ptr) {
+    pipe_t *p = (pipe_t *)file->socket_ptr;
+    p->references++;
+    if (file->base_addr == 1) p->readers++;
+    else if (file->base_addr == 2) p->writers++;
+  }
+}
+
+void sys_fd_put(kfile_t *file) {
+  if (!file || file->type == FD_TYPE_FREE) return;
+  if (file->type == FD_TYPE_FILE && file->description) {
+    file_description_t *description = file->description;
+    file->description = NULL;
+    if (--description->references == 0) {
+      vfs_node_put(description->node);
+      kfree(description);
+      if (live_file_descriptions) live_file_descriptions--;
+    }
+  } else if (file->type == FD_TYPE_PIPE && file->socket_ptr) {
+    pipe_t *p = (pipe_t *)file->socket_ptr;
+    if (file->base_addr == 1 && p->readers > 0) p->readers--;
+    if (file->base_addr == 2 && p->writers > 0) p->writers--;
+    if (p->references > 0 && --p->references == 0) {
+      kfree(p);
+      if (live_pipe_objects) live_pipe_objects--;
+    }
+  } else if (file->type == FD_TYPE_FILE && file->socket_ptr) {
+    /* Compatibility for kernel-created file entries without a description. */
+    vfs_node_put((fs_node_t *)file->socket_ptr);
+  }
+  memset(file, 0, sizeof(*file));
+}
+
+void task_release_io(task_t *task) {
+  if (!task) return;
+  for (int i = 0; i < 32; i++) sys_fd_put(&task->file_descriptors[i]);
+}
+
+uint64_t sys_io_live_file_descriptions(void) {
+  return live_file_descriptions;
+}
+
+uint64_t sys_io_live_pipe_objects(void) {
+  return live_pipe_objects;
+}
+
+static uint32_t *file_offset(kfile_t *file) {
+  return file->description ? &file->description->offset : &file->offset;
+}
+
+static uint32_t file_size(kfile_t *file) {
+  return file->description ? file->description->size : file->size;
 }
 
 #define O_CREAT 0x0200 // Definido conforme padrão comum, ajuste se necessário
@@ -361,9 +418,23 @@ int sys_open(const char *filename, int flags) {
     if (flags & O_TRUNC) {
       vfs_truncate(node);
     }
+    file_description_t *description = (file_description_t *)kmalloc(sizeof(*description));
+    if (!description) {
+      vfs_node_put(node);
+      return -1;
+    }
+    memset(description, 0, sizeof(*description));
+    description->node = node;
+    description->offset = (flags & O_APPEND) ? node->length : 0;
+    description->size = node->length;
+    description->references = 1;
+    live_file_descriptions++;
+    if (node->open) node->open(node);
+    memset(&fd_table[fd], 0, sizeof(fd_table[fd]));
     fd_table[fd].type = FD_TYPE_FILE;
     fd_table[fd].socket_ptr = (void *)node;
-    fd_table[fd].offset = (flags & O_APPEND) ? node->length : 0;
+    fd_table[fd].description = description;
+    fd_table[fd].offset = description->offset;
     fd_table[fd].size = node->length;
     fd_table[fd].base_addr = 0;
     fd_table[fd].owned_buffer = 0;
@@ -376,13 +447,16 @@ int sys_open(const char *filename, int flags) {
 }
 
 int sys_read(int fd, void *buf, uint32_t count) {
-  if (count && validate_user_pointer(buf, count) < 0) return -EFAULT;
+  /* Validate the whole destination before a device/pipe/file can consume data. */
+  if (count && validate_user_write(buf, count) < 0) return -EFAULT;
+  if (count == 0) return 0;
   kfile_t *fd_table = get_fd_table();
   if (fd >= 0 && fd < 32 && fd_table[fd].type == FD_TYPE_PIPE) {
     pipe_t *p = (pipe_t *)fd_table[fd].socket_ptr;
     if (!p) return -1;
+    if (fd_table[fd].base_addr != 1) return -1;
     while (p->bytes_avail == 0) {
-      if (p->refcount <= 0) return 0; // EOF
+      if (p->writers == 0) return 0; // EOF after the final writer closes.
       switch_task();
     }
     uint32_t to_read = count < p->bytes_avail ? count : p->bytes_avail;
@@ -399,10 +473,7 @@ int sys_read(int fd, void *buf, uint32_t count) {
     }
     return (int)got;
   }
-  if (fd == 0) {
-    serial_print("[syscall] sys_read called from stdin\n");
-    if (count == 0) return 0;
-
+  if (fd == 0 && fd_table[0].type == FD_TYPE_FREE) {
     // Drain any buffered escape sequence bytes first
     if (stdin_esc_pos < stdin_esc_len) {
         char bc = stdin_esc_buf[stdin_esc_pos++];
@@ -443,14 +514,22 @@ int sys_read(int fd, void *buf, uint32_t count) {
     }
 
     if (icanon) {
-        // ISIG: Ctrl+C kills the current process
+        // Interrupt the selected foreground process. With no foreground
+        // child, deliver Ctrl+C to the shell so it can cancel its input line.
         if ((kernel_termios.c_lflag & ISIG) && c == 3) {
-            int my_pid = current_task ? current_task->id : -1;
-            if (my_pid > 0) {
-                sys_kill_by_pid(my_pid);
+            if (foreground_job_id >= 0) {
+                task_kill_job(foreground_job_id);
                 switch_task();
+                return -1;
             }
-            return -1;
+            int foreground_pid = last_foreground_pid;
+            if (foreground_pid > 0) {
+                sys_kill_by_pid(foreground_pid);
+                switch_task();
+                return -1;
+            }
+            if (copy_to_user(buf, &c, 1) < 0) return -EFAULT;
+            return 1;
         }
         // Cooked mode: echo always
         vga_putc(c);
@@ -461,13 +540,19 @@ int sys_read(int fd, void *buf, uint32_t count) {
 
     // Raw mode: translate special keys to ANSI escape sequences
     if ((kernel_termios.c_lflag & ISIG) && (unsigned char)c == 3) {
-        // SIGINT via Ctrl+C
-        int my_pid = current_task ? current_task->id : -1;
-        if (my_pid > 0) {
-            sys_kill_by_pid(my_pid);
+        if (foreground_job_id >= 0) {
+            task_kill_job(foreground_job_id);
             switch_task();
+            return -1;
         }
-        return -1;
+        int foreground_pid = last_foreground_pid;
+        if (foreground_pid > 0) {
+            sys_kill_by_pid(foreground_pid);
+            switch_task();
+            return -1;
+        }
+        if (copy_to_user(buf, &c, 1) < 0) return -EFAULT;
+        return 1;
     }
     if (kernel_termios.c_lflag & ECHO) {
         vga_putc(c);
@@ -496,16 +581,36 @@ int sys_read(int fd, void *buf, uint32_t count) {
   }
   if (fd < 0 || fd >= 32 || fd_table[fd].type != FD_TYPE_FILE) return -1;
   kfile_t *f = &fd_table[fd];
+  uint32_t *offset = file_offset(f);
+  uint32_t size = file_size(f);
   if (f->socket_ptr) {
-    uint32_t r = read_fs((fs_node_t *)f->socket_ptr, f->offset, count, (uint8_t *)buf);
-    f->offset += r;
-    return (int)r;
+    fs_node_t *node = (fs_node_t *)f->socket_ptr;
+    if (node->length > size) size = node->length;
+    uint32_t available = *offset < size ? size - *offset : 0;
+    uint32_t to_read = count < available ? count : available;
+    if (!to_read) return 0;
+    uint8_t tmp[512];
+    uint32_t done = 0;
+    while (done < to_read) {
+      uint32_t chunk = to_read - done;
+      if (chunk > sizeof(tmp)) chunk = sizeof(tmp);
+      uint32_t r = read_fs(node, *offset + done, chunk, tmp);
+      if (!r) break;
+      if (copy_to_user((char *)buf + done, tmp, r) < 0)
+        return done ? (int)done : -EFAULT;
+      done += r;
+      if (r < chunk) break;
+    }
+    *offset += done;
+    f->offset = *offset;
+    return (int)done;
   }
-  uint32_t available = f->size - f->offset;
+  uint32_t available = *offset < size ? size - *offset : 0;
   uint32_t to_read = count < available ? count : available;
-  if (to_read && copy_to_user(buf, (void *)(f->base_addr + f->offset), to_read) < 0)
+  if (to_read && copy_to_user(buf, (void *)(uintptr_t)(f->base_addr + *offset), to_read) < 0)
     return -EFAULT;
-  f->offset += to_read;
+  *offset += to_read;
+  f->offset = *offset;
   return (int)to_read;
 }
 
@@ -515,7 +620,8 @@ int sys_write(int fd, const void *buf, uint32_t count) {
   if (count && validate_user_pointer(buf, count) < 0) return -EFAULT;
   char tmp[64];
   uint32_t done = 0;
-  if (fd == 1 || fd == 2) {
+  kfile_t *fd_table = get_fd_table();
+  if ((fd == 1 || fd == 2) && fd_table[fd].type == FD_TYPE_FREE) {
     while (done < count) {
       uint32_t chunk = (count - done) < sizeof(tmp) ? (count - done) : (uint32_t)sizeof(tmp);
       if (copy_from_user(tmp, (const char *)buf + done, chunk) < 0) return -EFAULT;
@@ -524,12 +630,13 @@ int sys_write(int fd, const void *buf, uint32_t count) {
     }
     return count;
   }
-  kfile_t *fd_table = get_fd_table();
   if (fd < 0 || fd >= 32) return -1;
   kfile_t *f = &fd_table[fd];
   if (f->type == FD_TYPE_PIPE) {
     pipe_t *p = (pipe_t *)f->socket_ptr;
     if (!p) return -1;
+    if (f->base_addr != 2) return -1;
+    if (p->readers == 0) return -EPIPE;
     uint32_t space = PIPE_BUF_SIZE - p->bytes_avail;
     if (space == 0) return 0;
     if (count > space) count = space;
@@ -548,15 +655,18 @@ int sys_write(int fd, const void *buf, uint32_t count) {
   }
   if (f->type == FD_TYPE_FILE && f->socket_ptr) {
     fs_node_t *node = (fs_node_t *)f->socket_ptr;
+    uint32_t *offset = file_offset(f);
     while (done < count) {
       uint32_t chunk = (count - done) < sizeof(tmp) ? (count - done) : (uint32_t)sizeof(tmp);
       if (copy_from_user(tmp, (const char *)buf + done, chunk) < 0) return -EFAULT;
-      uint32_t w = write_fs(node, f->offset, chunk, (uint8_t *)tmp);
-      f->offset += w;
+      uint32_t w = write_fs(node, *offset, chunk, (uint8_t *)tmp);
+      *offset += w;
       done += w;
       if (w == 0) break;
     }
+    f->offset = *offset;
     f->size = node->length;
+    if (f->description) f->description->size = node->length;
     return (int)done;
   }
   return -1;
@@ -564,16 +674,9 @@ int sys_write(int fd, const void *buf, uint32_t count) {
 
 int sys_close(int fd) {
   kfile_t *fd_table = get_fd_table();
-  if (fd < 0 || fd >= 32) return -1;
+  if (fd < 0 || fd >= 32 || fd_table[fd].type == FD_TYPE_FREE) return -1;
   kfile_t *f = &fd_table[fd];
-  if (f->type == FD_TYPE_PIPE) {
-    pipe_t *p = (pipe_t *)f->socket_ptr;
-    if (p) {
-      p->refcount--;
-      if (p->refcount <= 0) kfree(p);
-    }
-  }
-  f->type = FD_TYPE_FREE;
+  sys_fd_put(f);
   return 0;
 }
 
@@ -581,22 +684,25 @@ int sys_lseek(int fd, int offset, int whence) {
   kfile_t *fd_table = get_fd_table();
   if (fd < 0 || fd >= 32 || fd_table[fd].type != FD_TYPE_FILE) return -1;
   kfile_t *f = &fd_table[fd];
+  uint32_t *offp = file_offset(f);
+  uint32_t size = file_size(f);
   int new_offset;
 
   if (whence == 0) {
     new_offset = offset;
   } else if (whence == 1) {
-    new_offset = (int)f->offset + offset;
+    new_offset = (int)*offp + offset;
   } else if (whence == 2) {
-    new_offset = (int)f->size + offset;
+    new_offset = (int)size + offset;
   } else {
     return -1;
   }
 
   if (new_offset < 0) return -1;
-  if ((uint32_t)new_offset > f->size) new_offset = (int)f->size;
-  f->offset = (uint32_t)new_offset;
-  return fd_table[fd].offset;
+  if ((uint32_t)new_offset > size) new_offset = (int)size;
+  *offp = (uint32_t)new_offset;
+  f->offset = *offp;
+  return (int)*offp;
 }
 
 // syscalls 12 e 13 foram removidos (framebuffer GUI)
@@ -655,106 +761,210 @@ int sys_ioctl(int fd, unsigned long request, void *argp) {
 
 extern int sys_waitpid(int pid, int *status, int options);
 
-static int do_execve(registers_t *regs, const char *filename, char *const argv[], char *const envp[]) {
-  (void)envp;
-  uint32_t size = 0;
-  void *addr = NULL;
-  char fname_buf[256];
+#define EXEC_VECTOR_MAX 32
+#define EXEC_STRING_MAX 256
+#define EXEC_STRINGS_BYTES 8192
+#define EXEC_STACK_SIZE (64 * 1024)
+#define EXEC_STACK_TOP 0xC0000000ULL
 
-  if (!filename) return -EFAULT;
-  if (strncpy_from_user(fname_buf, filename, 255) < 0) return -EFAULT;
-  fname_buf[255] = '\0';
+static int exec_copy_string(char *dst, const char *user, uint32_t capacity,
+                            uint32_t *copied) {
+  if (!dst || !user || capacity == 0) return -EFAULT;
+  for (uint32_t i = 0; i < capacity; i++) {
+    if (copy_from_user(&dst[i], user + i, 1) < 0) return -EFAULT;
+    if (dst[i] == '\0') {
+      *copied = i + 1;
+      return 0;
+    }
+  }
+  return -E2BIG;
+}
 
-  char sdfs_path[256];
-  if (fname_buf[0] == '/') {
-    strncpy(sdfs_path, fname_buf, 255);
+static int exec_copy_vector(char *const user_vec[], char *storage,
+                            uint32_t *used, char *kernel_vec[EXEC_VECTOR_MAX],
+                            uint32_t *count) {
+  *count = 0;
+  if (!user_vec) return 0;
+  for (uint32_t i = 0; i < EXEC_VECTOR_MAX; i++) {
+    char *user_string = NULL;
+    if (copy_from_user(&user_string, &user_vec[i], sizeof(user_string)) < 0)
+      return -EFAULT;
+    if (!user_string) return 0;
+    if (*used >= EXEC_STRINGS_BYTES) return -E2BIG;
+    uint32_t copied = 0;
+    uint32_t cap = EXEC_STRINGS_BYTES - *used;
+    if (cap > EXEC_STRING_MAX) cap = EXEC_STRING_MAX;
+    int rc = exec_copy_string(storage + *used, user_string, cap, &copied);
+    if (rc < 0) return rc;
+    kernel_vec[i] = storage + *used;
+    *used += copied;
+    *count = i + 1;
+  }
+  return -E2BIG; /* no NULL terminator within the bounded vector */
+}
+
+static int exec_build_stack(int elf_class_value,
+                            char *argv[EXEC_VECTOR_MAX], uint32_t argc,
+                            char *envp[EXEC_VECTOR_MAX], uint32_t envc,
+                            uint64_t *stack_out) {
+  uint64_t stack_base = EXEC_STACK_TOP - EXEC_STACK_SIZE;
+  for (uint64_t va = stack_base; va < EXEC_STACK_TOP; va += PAGE_SIZE) {
+    void *phys = pmm_alloc_block();
+    if (!phys) return -ENOMEM;
+    vmm_map_page(phys, (void *)va, PTE_P | PTE_W | PTE_U);
+    if (validate_user_pointer((void *)va, PAGE_SIZE) < 0) {
+      pmm_free_block(phys);
+      return -ENOMEM;
+    }
+    memset((void *)va, 0, PAGE_SIZE);
+  }
+
+  uint64_t argv_addr[EXEC_VECTOR_MAX], env_addr[EXEC_VECTOR_MAX];
+  uint8_t *bytes = (uint8_t *)EXEC_STACK_TOP;
+  for (int i = (int)envc - 1; i >= 0; i--) {
+    uint32_t len = strlen(envp[i]) + 1;
+    bytes -= len;
+    memcpy(bytes, envp[i], len);
+    env_addr[i] = (uint64_t)bytes;
+  }
+  for (int i = (int)argc - 1; i >= 0; i--) {
+    uint32_t len = strlen(argv[i]) + 1;
+    bytes -= len;
+    memcpy(bytes, argv[i], len);
+    argv_addr[i] = (uint64_t)bytes;
+  }
+
+  if (elf_class_value == ELFCLASS64) {
+    uint64_t *sp = (uint64_t *)((uint64_t)bytes & ~0xFULL);
+    uint64_t words = 1 + argc + 1 + envc + 1 + 2;
+    if (((uint64_t)sp - words * sizeof(uint64_t)) & 0x8) *--sp = 0;
+    *--sp = 0; *--sp = 0; /* AT_NULL */
+    *--sp = 0; /* envp terminator */
+    for (int i = (int)envc - 1; i >= 0; i--) *--sp = env_addr[i];
+    *--sp = 0; /* argv terminator */
+    for (int i = (int)argc - 1; i >= 0; i--) *--sp = argv_addr[i];
+    *--sp = argc;
+    *stack_out = (uint64_t)sp;
   } else {
-    sdfs_path[0] = '/';
-    strncpy(sdfs_path + 1, fname_buf, 254);
+    uint32_t *sp = (uint32_t *)((uint64_t)bytes & ~0xFULL);
+    uint64_t words = 1 + argc + 1 + envc + 1;
+    if (((uint64_t)sp - words * sizeof(uint32_t)) & 0x8) *--sp = 0;
+    *--sp = 0; /* envp terminator */
+    for (int i = (int)envc - 1; i >= 0; i--) *--sp = (uint32_t)env_addr[i];
+    *--sp = 0; /* argv terminator */
+    for (int i = (int)argc - 1; i >= 0; i--) *--sp = (uint32_t)argv_addr[i];
+    *--sp = argc;
+    *stack_out = (uint64_t)sp;
   }
-  sdfs_path[255] = '\0';
-  addr = sdfs_read_file(sdfs_path, &size);
-  if (!addr) {
-    size = 0;
-    addr = initrd_get_file(fname_buf, &size);
-  }
-  if (!addr) return -EFAULT;
+  return 0;
+}
 
-  int eclass = elf_class(addr);
-  if (eclass != ELFCLASS32 && eclass != ELFCLASS64) return -EFAULT;
-
-  uint64_t entry;
-  if (eclass == ELFCLASS32)
-    entry = elf32_load_file(addr);
-  else
-    entry = elf64_load_file(addr);
-  if (entry == 0) return -EFAULT;
-
-  uint64_t stack_size = 64 * 1024;
-  uint64_t stack_top = 0xC0000000;
-  uint64_t stack_base = stack_top - stack_size;
-  for (uint64_t vaddr = stack_base; vaddr < stack_top; vaddr += 4096) {
-    void *phys = kmalloc_a(4096);
-    vmm_map_page(phys, (void *)vaddr, 0x07);
-    memset((void *)vaddr, 0, 4096);
+static int do_execve(registers_t *regs, const char *filename,
+                     char *const argv[], char *const envp[]) {
+  if (!regs) return -EPERM;
+  if ((regs->cs & 3) != 3) {
+    serial_print("[execve] rejected CS="); serial_print_hex(regs->cs); serial_print("\n");
+    return -EPERM;
   }
 
-  uint8_t *stack_bytes = (uint8_t *)stack_top;
-  int argc = 0;
-  const uint32_t max_args = 16;
+  char fname[256];
+  uint32_t ignored_len = 0;
+  int rc = exec_copy_string(fname, filename, sizeof(fname), &ignored_len);
+  if (rc < 0) return rc;
 
-  char kargv[16][256];
-  char *kargv_ptrs[16];
+  char *storage = kmalloc(EXEC_STRINGS_BYTES);
+  if (!storage) return -ENOMEM;
+  char *kargv[EXEC_VECTOR_MAX], *kenvp[EXEC_VECTOR_MAX];
+  uint32_t used = 0, argc = 0, envc = 0;
+  rc = exec_copy_vector(argv, storage, &used, kargv, &argc);
+  if (rc == 0) rc = exec_copy_vector(envp, storage, &used, kenvp, &envc);
+  if (rc < 0) { kfree(storage); return rc; }
 
-  if (argv) {
-    for (argc = 0; argc < (int)max_args; argc++) {
-      char *up;
-      if (copy_from_user(&up, &((char *const *)argv)[argc], sizeof(up)) < 0)
-        return -EFAULT;
-      if (up == NULL) break;
-      if (strncpy_from_user(kargv[argc], up, 255) < 0) return -EFAULT;
-      kargv[argc][255] = '\0';
-      kargv_ptrs[argc] = kargv[argc];
-    }
+  char sdfs_path[512];
+  const char *resolved = resolve_path(fname);
+  if (!resolved) { kfree(storage); return -EFAULT; }
+  strncpy(sdfs_path, resolved, sizeof(sdfs_path) - 1);
+  sdfs_path[sizeof(sdfs_path) - 1] = '\0';
+
+  uint32_t file_size = 0;
+  int owned_file = 0;
+  void *file = sdfs_read_file(sdfs_path, &file_size);
+  if (file) owned_file = 1;
+  else {
+    file_size = 0;
+    file = initrd_get_file(fname, &file_size);
+    if (!file && fname[0] == '/') file = initrd_get_file(fname + 1, &file_size);
+  }
+  if (!file) { kfree(storage); return -ENOENT; }
+
+  int klass = elf_class(file, file_size);
+  if (klass != ELFCLASS32 && klass != ELFCLASS64) {
+    if (owned_file) kfree(file);
+    kfree(storage);
+    return -ENOEXEC;
   }
 
-  if (eclass == ELFCLASS32) {
-    uint32_t arg_ptrs[16];
-    for (int i = 0; i < argc; i++) {
-      size_t len = strlen(kargv_ptrs[i]) + 1;
-      stack_bytes -= len;
-      memcpy(stack_bytes, kargv_ptrs[i], len);
-      arg_ptrs[i] = (uint32_t)(uint64_t)stack_bytes;
-    }
-    uint32_t *esp = (uint32_t *)((uint64_t)stack_bytes & ~0xFULL);
-    esp--; *esp = 0; // envp NULL
-    esp--; *esp = 0; // argv NULL
-    for (int i = argc - 1; i >= 0; i--) {
-      esp--; *esp = arg_ptrs[i];
-    }
-    esp--; *esp = (uint32_t)argc;
-    regs->rsp = (uint64_t)esp;
+  page_directory_t *old_dir = current_task->page_directory;
+  page_directory_t *new_dir = vmm_create_directory();
+  if (!new_dir) {
+    serial_print("[execve] new address space allocation failed\n");
+    if (owned_file) kfree(file);
+    kfree(storage);
+    return -ENOMEM;
+  }
+
+  current_task->page_directory = new_dir;
+  switch_page_directory(new_dir);
+  last_elf_heap_start = 0;
+  uint64_t entry = klass == ELFCLASS64
+      ? elf64_load_file(file, file_size)
+      : elf32_load_file(file, file_size);
+  int load_error = entry ? 0 : last_elf_load_error;
+  if (owned_file) kfree(file);
+  if (!entry) {
+    serial_print("[execve] ELF load failed rc="); serial_print_hex((uint64_t)(int64_t)load_error); serial_print("\n");
+    current_task->page_directory = old_dir;
+    switch_page_directory(old_dir);
+    vmm_free_directory(new_dir);
+    last_elf_heap_start = 0;
+    kfree(storage);
+    return load_error ? load_error : -ENOEXEC;
+  }
+
+  uint64_t new_rsp = 0;
+  rc = exec_build_stack(klass, kargv, argc, kenvp, envc, &new_rsp);
+  if (rc < 0) {
+    serial_print("[execve] user stack setup failed rc="); serial_print_hex((uint64_t)(int64_t)rc); serial_print("\n");
+    current_task->page_directory = old_dir;
+    switch_page_directory(old_dir);
+    vmm_free_directory(new_dir);
+    last_elf_heap_start = 0;
+    kfree(storage);
+    return rc;
+  }
+
+  page_directory_t *old_to_free = old_dir;
+  current_task->heap_start = last_elf_heap_start;
+  current_task->heap_end = last_elf_heap_start;
+  current_task->mmap_top = 0xBFFF0000ULL;
+  regs->rip = entry;
+  regs->rsp = new_rsp;
+  if (klass == ELFCLASS64) {
+    regs->cs = 0x2B;
+    regs->ss = 0x33;
   } else {
-    uint64_t arg_ptrs[16];
-    for (int i = 0; i < argc; i++) {
-      size_t len = strlen(kargv_ptrs[i]) + 1;
-      stack_bytes -= len;
-      memcpy(stack_bytes, kargv_ptrs[i], len);
-      arg_ptrs[i] = (uint64_t)stack_bytes;
-    }
-    uint64_t *rsp = (uint64_t *)((uint64_t)stack_bytes & ~0xFULL);
-    rsp--; *rsp = 0; // auxv NULL
-    rsp--; *rsp = 0; // auxv NULL
-    rsp--; *rsp = 0; // envp NULL
-    rsp--; *rsp = 0; // argv NULL
-    for (int i = argc - 1; i >= 0; i--) {
-      rsp--; *rsp = arg_ptrs[i];
-    }
-    rsp--; *rsp = (uint64_t)argc;
-    regs->rsp = (uint64_t)rsp;
+    regs->cs = 0x1B;
+    regs->ss = 0x23;
   }
-
-regs->rip = entry;
+  regs->rax = regs->rbx = regs->rcx = regs->rdx = 0;
+  regs->rbp = regs->rsi = regs->rdi = 0;
+  regs->r8 = regs->r9 = regs->r10 = regs->r11 = 0;
+  regs->r12 = regs->r13 = regs->r14 = regs->r15 = 0;
+  regs->rflags = (regs->rflags & ~(1ULL << 10)) | 2;
+  last_elf_heap_start = 0;
+  kfree(storage);
+  if (old_to_free && old_to_free != kernel_directory)
+    vmm_free_directory(old_to_free);
   return 0;
 }
 
@@ -805,6 +1015,7 @@ struct kernel_stat {
 
 int sys_stat(const char *path, struct kernel_stat *st) {
   if (!path || !st) return -EFAULT;
+  if (validate_user_write(st, sizeof(*st)) < 0) return -EFAULT;
   char kpath[256];
   if (strncpy_from_user(kpath, path, 255) < 0) return -EFAULT;
   kpath[255] = '\0';
@@ -839,12 +1050,14 @@ int sys_stat(const char *path, struct kernel_stat *st) {
   ks.st_mtime = ks.st_atime;
   ks.st_ctime = ks.st_atime;
   
-  if (copy_to_user(st, &ks, sizeof(ks)) < 0) return -EFAULT;
-  return 0;
+  int result = copy_to_user(st, &ks, sizeof(ks)) < 0 ? -EFAULT : 0;
+  vfs_node_put(node);
+  return result;
 }
 
 int sys_fstat(int fd, struct kernel_stat *st) {
   if (!st) return -EFAULT;
+  if (validate_user_write(st, sizeof(*st)) < 0) return -EFAULT;
   struct kernel_stat ks;
   memset(&ks, 0, sizeof(ks));
   
@@ -876,9 +1089,9 @@ int sys_fstat(int fd, struct kernel_stat *st) {
   ks.st_uid = 0;
   ks.st_gid = 0;
   ks.st_rdev = 0;
-  ks.st_size = f->size;
+  ks.st_size = file_size(f);
   ks.st_blksize = 4096;
-  ks.st_blocks = (f->size + 511) / 512;
+  ks.st_blocks = (file_size(f) + 511) / 512;
   
   if (f->socket_ptr) {
     fs_node_t *node = (fs_node_t *)f->socket_ptr;
@@ -927,6 +1140,28 @@ int sys_rmdir(const char *path) {
   return sdfs_delete(resolved);
 }
 
+int sys_rename(const char *old_path, const char *new_path) {
+  if (!old_path || !new_path) return -EFAULT;
+  char old_user_path[256], new_user_path[256];
+  char old_resolved_path[512], new_resolved_path[512];
+  if (strncpy_from_user(old_user_path, old_path, sizeof(old_user_path) - 1) < 0 ||
+      strncpy_from_user(new_user_path, new_path, sizeof(new_user_path) - 1) < 0)
+    return -EFAULT;
+  old_user_path[sizeof(old_user_path) - 1] = '\0';
+  new_user_path[sizeof(new_user_path) - 1] = '\0';
+
+  const char *resolved = resolve_path(old_user_path);
+  if (!resolved) return -1;
+  strncpy(old_resolved_path, resolved, sizeof(old_resolved_path) - 1);
+  old_resolved_path[sizeof(old_resolved_path) - 1] = '\0';
+
+  resolved = resolve_path(new_user_path);
+  if (!resolved) return -1;
+  strncpy(new_resolved_path, resolved, sizeof(new_resolved_path) - 1);
+  new_resolved_path[sizeof(new_resolved_path) - 1] = '\0';
+  return sdfs_rename(old_resolved_path, new_resolved_path);
+}
+
 int sys_chdir(const char *path) {
   if (!path || !current_task) return -EFAULT;
   char kpath[256];
@@ -938,7 +1173,10 @@ int sys_chdir(const char *path) {
   // Verify the path is a directory
   fs_node_t *node = vfs_open(resolved);
   if (!node) return -1;
-  if (!(node->flags & FS_DIRECTORY)) return -1;
+  if (!(node->flags & FS_DIRECTORY)) {
+    vfs_node_put(node);
+    return -1;
+  }
   
   strncpy(current_task->cwd, resolved, 255);
   current_task->cwd[255] = '\0';
@@ -948,13 +1186,14 @@ int sys_chdir(const char *path) {
   if (len > 1 && current_task->cwd[len - 1] == '/') {
     current_task->cwd[len - 1] = '\0';
   }
+  vfs_node_put(node);
   
   return 0;
 }
 
 int sys_getcwd(char *buf, uint32_t size) {
   if (!buf || !current_task || size == 0) return -EFAULT;
-  if (validate_user_pointer(buf, size) < 0) return -EFAULT;
+  if (validate_user_write(buf, size) < 0) return -EFAULT;
   size_t len = strlen(current_task->cwd);
   if (len >= size) len = size - 1;
   if (copy_to_user(buf, current_task->cwd, len) < 0) return -EFAULT;
@@ -978,11 +1217,12 @@ int sys_gettimeofday(void *tv, void *tz) {
   struct {
     int64_t tv_sec;
     int64_t tv_usec;
-  } *t = (void *)tv;
+  } value;
   
   uint64_t ticks = timer_ticks;
-  t->tv_sec = (int64_t)(ticks / 100);
-  t->tv_usec = (int64_t)((ticks % 100) * 10000);
+  value.tv_sec = (int64_t)(ticks / 100);
+  value.tv_usec = (int64_t)((ticks % 100) * 10000);
+  if (copy_to_user(tv, &value, sizeof(value)) < 0) return -EFAULT;
   return 0;
 }
 
@@ -1002,20 +1242,10 @@ struct kernel_dirent {
 
 int sys_getdents(uint32_t fd, void *buf, uint32_t count) {
   kfile_t *fd_table = get_fd_table();
-  serial_print("[syscall] sys_getdents fd=");
-  char dbuf[16];
-  itoa(fd, dbuf, 10);
-  serial_print(dbuf);
-  serial_print(" count=");
-  itoa(count, dbuf, 10);
-  serial_print(dbuf);
-  serial_print("\n");
-
-  if (fd < 0 || fd >= 32 || fd_table[fd].type != FD_TYPE_FILE) {
-    serial_print("[syscall] sys_getdents invalid fd\n");
+  if (fd >= 32 || fd_table[fd].type != FD_TYPE_FILE) {
     return -1;
   }
-  if (count && validate_user_pointer(buf, count) < 0) return -EFAULT;
+  if (count && validate_user_write(buf, count) < 0) return -EFAULT;
 
   kfile_t *f = &fd_table[fd];
   if (!f->socket_ptr) return -1;
@@ -1024,15 +1254,13 @@ int sys_getdents(uint32_t fd, void *buf, uint32_t count) {
   if (!(node->flags & FS_DIRECTORY)) return -1;
   
   // Use f->offset as directory entry index
-  uint32_t index = f->offset;
+  uint32_t *offset = file_offset(f);
+  uint32_t index = *offset;
   uint32_t pos = 0;
   
   while (pos + (uint32_t)sizeof(struct kernel_dirent) <= count) {
     struct dirent *vfs_dirent = readdir_fs(node, index);
-    if (!vfs_dirent) {
-      serial_print("[syscall] sys_getdents EOF\n");
-      break;
-    }
+    if (!vfs_dirent) break;
     
     struct kernel_dirent kd;
     memset(&kd, 0, sizeof(kd));
@@ -1051,17 +1279,10 @@ int sys_getdents(uint32_t fd, void *buf, uint32_t count) {
   }
   
   // Update offset with how many entries we read
+  *offset = index;
   f->offset = index;
   
   return (int)pos;
-}
-
-static void pipe_add_ref(int fd) {
-  kfile_t *fd_table = get_fd_table();
-  if (fd >= 0 && fd < 32 && fd_table[fd].type == FD_TYPE_PIPE) {
-    pipe_t *p = (pipe_t *)fd_table[fd].socket_ptr;
-    if (p) p->refcount++;
-  }
 }
 
 int sys_dup(int oldfd) {
@@ -1070,7 +1291,7 @@ int sys_dup(int oldfd) {
   for (int i = 3; i < 32; i++) {
     if (fd_table[i].type == FD_TYPE_FREE) {
       memcpy(&fd_table[i], &fd_table[oldfd], sizeof(kfile_t));
-      pipe_add_ref(i);
+      sys_fd_get(&fd_table[i]);
       return i;
     }
   }
@@ -1084,18 +1305,18 @@ int sys_dup2(int oldfd, int newfd) {
   if (newfd == oldfd) return newfd;
   if (fd_table[newfd].type != FD_TYPE_FREE) sys_close(newfd);
   memcpy(&fd_table[newfd], &fd_table[oldfd], sizeof(kfile_t));
-  pipe_add_ref(newfd);
+  sys_fd_get(&fd_table[newfd]);
   return newfd;
 }
 
 int sys_pipe(int pipefd[2]) {
   if (!pipefd) return -EFAULT;
-  if (validate_user_pointer(pipefd, 2 * sizeof(int)) < 0) return -EFAULT;
+  if (validate_user_write(pipefd, 2 * sizeof(int)) < 0) return -EFAULT;
   kfile_t *fd_table = get_fd_table();
   pipe_t *p = (pipe_t *)kmalloc(sizeof(pipe_t));
   if (!p) return -1;
+  live_pipe_objects++;
   memset(p, 0, sizeof(pipe_t));
-  p->refcount = 2;
 
   int rfd = -1, wfd = -1;
   for (int i = 3; i < 32; i++) {
@@ -1120,14 +1341,16 @@ int sys_pipe(int pipefd[2]) {
   fd_table[wfd].socket_ptr = (void *)p;
   fd_table[wfd].offset = 0;
   fd_table[wfd].size = 0;
+  p->references = 2;
+  p->readers = 1;
+  p->writers = 1;
 
   int fds[2];
   fds[0] = rfd;
   fds[1] = wfd;
   if (copy_to_user(pipefd, fds, sizeof(fds)) < 0) {
-    fd_table[rfd].type = FD_TYPE_FREE;
-    fd_table[wfd].type = FD_TYPE_FREE;
-    kfree(p);
+    sys_fd_put(&fd_table[rfd]);
+    sys_fd_put(&fd_table[wfd]);
     return -EFAULT;
   }
   return 0;
@@ -1152,6 +1375,7 @@ int sys_pipe(int pipefd[2]) {
 // MAP_FAILED (-1) em erro.
 uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
                   int fd, uint64_t offset) {
+  (void)fd;
   (void)offset;
   if (!current_task) return MAP_FAILED;
   if (!(flags & MAP_ANONYMOUS)) return MAP_FAILED; // suportado apenas anônimo
@@ -1161,8 +1385,10 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
   if (addr && !is_user_addr(addr)) return MAP_FAILED;
 
   // Alinha o tamanho para cima em páginas de 4 KB
+  if (length > UINT64_MAX - 4095) return MAP_FAILED;
   uint64_t aligned_len = (length + 4095) & ~(uint64_t)4095;
   if (aligned_len == 0) aligned_len = 4096;
+  if (aligned_len > USER_ADDR_MAX) return MAP_FAILED;
 
   // Determina o endereço base
   uint64_t base;
@@ -1173,24 +1399,53 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
     base = current_task->mmap_top - aligned_len;
     if (base < 0x40000000) return MAP_FAILED; // colidiu com o heap
   }
-  if (base + aligned_len > USER_ADDR_MAX) return MAP_FAILED;
+  if (base < 0x40000000ULL && base + aligned_len > 0x01000000ULL)
+    return MAP_FAILED; /* do not replace the kernel's identity-mapped RAM */
+  if (base + aligned_len < base || base + aligned_len > USER_ADDR_MAX)
+    return MAP_FAILED;
 
-  uint64_t pte_flags = PTE_P | PTE_W | PTE_U;
-  if ((prot & PROT_WRITE) == 0) pte_flags &= ~((uint64_t)PTE_W);
-  if ((prot & PROT_READ) == 0 && (prot & PROT_EXEC) == 0) pte_flags &= ~((uint64_t)PTE_W);
+  /* MAP_FIXED must not silently replace mappings and leak their frames. */
+  for (uint64_t p = base; p < base + aligned_len; p += 4096) {
+    if (validate_user_pointer((void *)p, 1) == 0) return MAP_FAILED;
+  }
 
-  int i = 0;
-  for (i = 0; i < (int)(aligned_len / 4096); i++) {
+  uint64_t pte_flags = PTE_P | PTE_U;
+  if (prot & PROT_WRITE) pte_flags |= PTE_W;
+  if ((prot & PROT_READ) == 0 && (prot & PROT_EXEC) == 0)
+    pte_flags &= ~((uint64_t)PTE_W);
+  uint64_t alloc_flags = pte_flags | PTE_W;
+
+  uint64_t i = 0;
+  for (i = 0; i < aligned_len / 4096; i++) {
     void *phys = pmm_alloc_block();
     if (!phys) {
       // Desfaz mapeamentos já feitos
-      for (int j = 0; j < i; j++) {
-        vmm_unmap_page((void *)(base + (uint64_t)j * 4096));
+      for (uint64_t j = 0; j < i; j++) {
+        vmm_unmap_page((void *)(base + j * 4096));
       }
       return MAP_FAILED;
     }
-    vmm_map_page(phys, (void *)(base + (uint64_t)i * 4096), pte_flags);
+    vmm_map_page(phys, (void *)(base + (uint64_t)i * 4096), alloc_flags);
+    if (validate_user_pointer((void *)(base + i * 4096), 1) < 0) {
+      pmm_free_block(phys);
+      break;
+    }
     memset((void *)(base + (uint64_t)i * 4096), 0, 4096);
+  }
+  if (i != aligned_len / 4096) {
+    for (uint64_t j = 0; j < i; j++)
+      vmm_unmap_page((void *)(base + j * 4096));
+    return MAP_FAILED;
+  }
+
+  /* The kernel initializes frames while writable, then exposes requested
+   * user permissions. This remains valid with CR0.WP enabled. */
+  for (uint64_t j = 0; j < aligned_len / PAGE_SIZE; j++) {
+    if (vmm_set_page_flags((void *)(base + j * PAGE_SIZE), pte_flags) < 0) {
+      for (uint64_t rollback = 0; rollback < aligned_len / PAGE_SIZE; rollback++)
+        vmm_unmap_page((void *)(base + rollback * PAGE_SIZE));
+      return MAP_FAILED;
+    }
   }
 
   // Atualiza o marcador de região mmap apenas para alocações dinâmicas
@@ -1235,7 +1490,7 @@ void syscall_handler(registers_t *regs) {
         uint8_t scancode;
         int pressed;
       } kev, *out = (void *)regs->rdi;
-      if (regs->rdi && validate_user_pointer(out, sizeof(kev)) == 0) {
+      if (regs->rdi && validate_user_write(out, sizeof(kev)) == 0) {
         int got = keyboard_get_event(&kev);
         if (got) {
           if (copy_to_user(out, &kev, sizeof(kev)) < 0) regs->rax = (uint64_t)-1;
@@ -1278,13 +1533,11 @@ void syscall_handler(registers_t *regs) {
     case 35: regs->rax = sys_mmap((void *)regs->rdi, regs->rsi, (int)regs->rdx,
                                  (int)regs->rcx, (int)regs->r8, regs->r9); break;
     case 36: regs->rax = sys_munmap((void *)regs->rdi, regs->rsi); break;
-    case 120: regs->rax = sys_gui_canvas_create(regs->rdi, regs->rsi, (const char *)regs->rdx); break;
-    case 121: regs->rax = sys_gui_node_create(regs->rdi, (const char *)regs->rsi); break;
-    case 122: regs->rax = sys_gui_node_add_child(regs->rdi, regs->rsi); break;
-    case 123: regs->rax = sys_gui_node_move(regs->rdi, regs->rsi, regs->rdx); break;
-    case 124: regs->rax = sys_gui_camera_zoom(regs->rdi); break;
-    case 125: regs->rax = sys_gui_image_create(regs->rdi, regs->rsi, regs->rdx, (uint32_t *)regs->rcx); break;
-    case 126: regs->rax = sys_gui_image_update(regs->rdi, (uint32_t *)regs->rsi, regs->rdx); break;
+    case 38: regs->rax = sys_rename((const char *)regs->rdi,
+                                    (const char *)regs->rsi); break;
+    case 39: regs->rax = task_set_foreground((int)regs->rdi); break;
+    case 40: regs->rax = task_create_job(); break;
+    case 41: regs->rax = task_set_foreground_job((int)regs->rdi); break;
   }
 }
 
@@ -1301,7 +1554,7 @@ struct liw_mouse_state {
 
 uint64_t sys_mouse_get(void *out) {
   if (!out) return (uint64_t)-1;
-  if (validate_user_pointer(out, sizeof(struct liw_mouse_state)) < 0) return (uint64_t)-1;
+  if (validate_user_write(out, sizeof(struct liw_mouse_state)) < 0) return (uint64_t)-1;
 
   struct liw_mouse_state st;
   st.x = get_mouse_x();

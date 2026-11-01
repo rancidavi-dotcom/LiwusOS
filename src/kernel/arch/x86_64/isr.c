@@ -60,21 +60,6 @@ serial_print(" rip=");
 
       if ((regs->cs & 0x3) == 0x3 && current_task && current_task->user_mode) {
         serial_print("user task killed after exception\n");
-        /* Dump user stack (return-address candidates) to locate the caller. */
-        {
-          extern void kfree(void *);
-          uint64_t flt_base = (regs->rsp & 0xFFFFF000ULL) - 0x3000;
-          uint64_t flt_end  = (regs->rsp & 0xFFFFF000ULL) + 0x2000;
-          uint64_t *p = (uint64_t *)(regs->rsp & ~0x7ULL);
-          if (p >= (uint64_t *)flt_base && p < (uint64_t *)flt_end) {
-            serial_print("  [stack] rsp area:");
-            for (int i = 0; i < 24 && (uint64_t *)((char*)p + i*8) < (uint64_t *)flt_end; i++) {
-              if (i % 4 == 0) serial_print("\n    ");
-              serial_print_hex(*((uint64_t *)((char*)p + i*8))); serial_print(" ");
-            }
-            serial_print("\n");
-          }
-        }
         sys_exit_process(128 + (int)regs->int_no);
       } else {
       extern void kernel_panic(const char *msg);
@@ -112,7 +97,7 @@ uint64_t irq_handler(uint64_t rsp) {
      * interrupções (teclado IRQ1, mouse IRQ12 e o próprio PIT). */
     outb(0x20, 0x20);
     g_in_irq = 0;
-    return rsp;  // Don't call schedule - text mode with single task
+    return schedule(rsp);
   } else if (irq == 1) {
     keyboard_handler();
   } else if (irq == 12) {

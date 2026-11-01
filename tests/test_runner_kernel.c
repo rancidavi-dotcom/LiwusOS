@@ -4,8 +4,10 @@
 #include "framework.h"
 #include "serial.h"
 #include "string.h"
+#include "vfs.h"
 
 /* ---- Test declarations from separate files ---- */
+int test_terminal_files(void);
 int test_sdfs_create_empty(void);
 int test_sdfs_create_duplicate(void);
 int test_sdfs_create_root_blocked(void);
@@ -60,15 +62,10 @@ int test_superblock_v2_fields(void);
 int test_fsck_clean(void);
 int test_v1_compat_read(void);
 
-/* ---- Networking tests ---- */
-int test_net_interface_ready(void);
-int test_net_gateway_ping(void);
-int test_net_dns_resolve(void);
-int test_net_http_fetch(void);
-
 /* ---- Scheduler tests ---- */
 int test_sched_priority(void);
 int test_sched_sleep(void);
+int test_ring3_processes(void);
 
 /* ---- Global flag so kernel.c knows tests finished ---- */
 volatile int test_runner_done = 0;
@@ -114,6 +111,10 @@ void test_runner_task(void) {
         test_runner_done = 1;
         return;
     }
+
+    vfs_mount("/", root);
+    vfs_mount("/house/localhost", root);
+    run_test(test_terminal_files, "terminal_files");
 
     serial_print("[runner] Running SDFS tests...\n\n");
 
@@ -179,15 +180,12 @@ void test_runner_task(void) {
     /* ---- Disk full test ---- */
     run_test(test_sdfs_diskfull, "sdfs_diskfull");
 
-    serial_print("\n[runner] Networking tests...\n");
-    run_test(test_net_interface_ready, "net_interface_ready");
-    run_test(test_net_gateway_ping,    "net_gateway_ping");
-    run_test(test_net_dns_resolve,      "net_dns_resolve");
-    run_test(test_net_http_fetch,       "net_http_fetch");
-
     serial_print("\n[runner] Scheduler tests...\n");
     run_test(test_sched_sleep,    "sched_sleep");
     run_test(test_sched_priority, "sched_priority");
+
+    serial_print("\n[runner] Ring-3 integration tests...\n");
+    run_test(test_ring3_processes, "ring3_processes");
 
     serial_print("\n");
     TEST_RESULT(test_pass, test_fail);

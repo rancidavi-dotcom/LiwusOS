@@ -8,24 +8,12 @@
 #include "pmm.h"
 #include "io.h"
 #include "fs/sdfs.h"
-#include "net.h"
-#include "netstack.h"
-#include "http.h"
-#include "tcp.h"
 #include "timer.h"
 #include "acpi.h"
 #include "keyboard.h"
 #include "mouse.h"
 
 extern char *itoa(int value, char *str, int base);
-
-static void vga_print_ip(uint32_t ip) {
-    char b[16];
-    itoa((int)(ip & 0xFF), b, 10); vga_puts(b); vga_puts(".");
-    itoa((int)((ip >> 8) & 0xFF), b, 10); vga_puts(b); vga_puts(".");
-    itoa((int)((ip >> 16) & 0xFF), b, 10); vga_puts(b); vga_puts(".");
-    itoa((int)((ip >> 24) & 0xFF), b, 10); vga_puts(b);
-}
 
 static void join_path(const char *base, const char *rel, char *out, size_t out_size) {
     if (rel[0] == '/') {
@@ -51,7 +39,8 @@ static void join_path(const char *base, const char *rel, char *out, size_t out_s
 static void vfs_to_sdfs_path(const char *vfs_path, char *out, size_t out_size) {
     const char *mount = "/house/localhost";
     size_t mount_len = strlen(mount);
-    if (strncmp(vfs_path, mount, mount_len) == 0) {
+    if (strncmp(vfs_path, mount, mount_len) == 0 &&
+        (vfs_path[mount_len] == '/' || vfs_path[mount_len] == '\0')) {
         const char *rel = vfs_path + mount_len;
         if (*rel == '/') {
             strncpy(out, rel, out_size - 1);
@@ -91,12 +80,6 @@ void cmd_help(int argc, char **argv) {
     vga_puts("  meminfo - Shows memory information\n");
     vga_puts("  ps      - Lists tasks (pid, priority, state, cpu)\n");
     vga_puts("  diskinfo- Shows disk space information\n");
-    vga_puts("  ip      - Shows current IP address\n");
-    vga_puts("  ping    - Send ICMP ECHO_REQUEST to network hosts\n");
-    vga_puts("  scan    - Scan the local network and list devices found\n");
-    vga_puts("  wget    - Download files from the web (HTTP)\n");
-    vga_puts("  host    - DNS lookup utility\n");
-    vga_puts("  httpd   - Serve the filesystem over HTTP (httpd [port])\n");
 }
 
 void cmd_clear(int argc, char **argv) {
@@ -105,6 +88,40 @@ void cmd_clear(int argc, char **argv) {
 }
 
 void cmd_echo(int argc, char **argv) {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], ">") != 0 && strcmp(argv[i], ">>") != 0) continue;
+        if (i + 2 != argc) {
+            vga_puts("echo: expected one output file\n");
+            return;
+        }
+        char path[256], disk_path[256];
+        join_path(current_task ? current_task->cwd : "/", argv[i + 1], path, sizeof(path));
+        vfs_to_sdfs_path(path, disk_path, sizeof(disk_path));
+        uint32_t old_size = 0;
+        uint8_t *old = NULL;
+        if (argv[i][1] == '>') old = sdfs_read_file(disk_path, &old_size);
+        size_t size = old_size + 1;
+        for (int j = 1; j < i; j++) size += strlen(argv[j]) + (j > 1);
+        uint8_t *buf = kmalloc(size);
+        if (!buf) {
+            if (old) kfree(old);
+            vga_puts("echo: Out of memory\n");
+            return;
+        }
+        size_t pos = old_size;
+        if (old) { memcpy(buf, old, old_size); kfree(old); }
+        for (int j = 1; j < i; j++) {
+            if (j > 1) buf[pos++] = ' ';
+            size_t len = strlen(argv[j]);
+            memcpy(buf + pos, argv[j], len);
+            pos += len;
+        }
+        buf[pos++] = '\n';
+        if (sdfs_write_file(disk_path, buf, pos) != pos)
+            vga_puts("echo: Failed to write file\n");
+        kfree(buf);
+        return;
+    }
     for (int i = 1; i < argc; i++) {
         vga_puts(argv[i]);
         serial_print(argv[i]);
@@ -238,6 +255,7 @@ void cmd_ls(int argc, char **argv) {
     if (!(dir->flags & FS_DIRECTORY)) {
         vga_puts(path);
         vga_puts("\n");
+        vfs_node_put(dir);
         return;
     }
     
@@ -249,6 +267,7 @@ void cmd_ls(int argc, char **argv) {
         i++;
     }
     vga_puts("\n");
+    vfs_node_put(dir);
 }
 
 static void resolve_path(const char *cwd, const char *path, char *out, size_t out_size) {
@@ -304,11 +323,13 @@ void cmd_cd(int argc, char **argv) {
         vga_puts("cd: ");
         vga_puts(path);
         vga_puts(": Not a directory\n");
+        vfs_node_put(dir);
         return;
     }
     
     strncpy(current_task->cwd, resolved, sizeof(current_task->cwd) - 1);
     current_task->cwd[sizeof(current_task->cwd) - 1] = '\0';
+    vfs_node_put(dir);
 }
 
 void cmd_cat(int argc, char **argv) {
@@ -339,23 +360,31 @@ void cmd_cat(int argc, char **argv) {
         vga_puts("cat: ");
         vga_puts(argv[1]);
         vga_puts(": Is a directory\n");
+        vfs_node_put(file);
         return;
     }
     
     uint32_t size = file->length;
-    if (size == 0) return;
+    if (size == 0) {
+        vfs_node_put(file);
+        return;
+    }
     
     void *buf = kmalloc(size + 1);
     if (!buf) {
         vga_puts("cat: Out of memory\n");
+        vfs_node_put(file);
         return;
     }
     
-    if (read_fs(file, 0, size, buf) > 0) {
-        ((char *)buf)[size] = '\0';
+    uint32_t bytes_read = read_fs(file, 0, size, buf);
+    if (bytes_read > 0) {
+        ((char *)buf)[bytes_read] = '\0';
         vga_puts((char *)buf);
+        serial_print((char *)buf);
     }
     kfree(buf);
+    vfs_node_put(file);
 }
 
 void cmd_mkdir(int argc, char **argv) {
@@ -377,6 +406,19 @@ void cmd_mkdir(int argc, char **argv) {
     char sdfs_path[256];
     vfs_to_sdfs_path(path, sdfs_path, sizeof(sdfs_path));
     
+    int is_dir = 0;
+    uint32_t size = 0;
+    if (sdfs_path_info(sdfs_path, &is_dir, &size) == 0) {
+        const char *message = is_dir ? ": Directory already exists\n" : ": File already exists\n";
+        vga_puts("mkdir: ");
+        vga_puts(argv[1]);
+        vga_puts(message);
+        serial_print("mkdir: ");
+        serial_print(argv[1]);
+        serial_print(message);
+        return;
+    }
+
     int ret = sdfs_create_dir(sdfs_path);
     if (ret != 0) {
         vga_puts("mkdir: Failed to create directory\n");
@@ -401,6 +443,7 @@ void cmd_touch(int argc, char **argv) {
     
     fs_node_t *file = vfs_open(path);
     if (file) {
+        vfs_node_put(file);
         return;
     }
     
@@ -408,6 +451,7 @@ void cmd_touch(int argc, char **argv) {
     if (!new_file) {
         vga_puts("touch: Failed to create file\n");
     }
+    vfs_node_put(new_file);
 }
 
 void cmd_rm(int argc, char **argv) {
@@ -487,6 +531,7 @@ void cmd_cp(int argc, char **argv) {
     
     if (src_file->flags & FS_DIRECTORY) {
         vga_puts("cp: Directories not supported\n");
+        vfs_node_put(src_file);
         return;
     }
     
@@ -494,6 +539,7 @@ void cmd_cp(int argc, char **argv) {
     void *buf = kmalloc(size);
     if (!buf) {
         vga_puts("cp: Out of memory\n");
+        vfs_node_put(src_file);
         return;
     }
     
@@ -501,11 +547,13 @@ void cmd_cp(int argc, char **argv) {
         fs_node_t *dst_file = vfs_create(dst, 0644);
         if (dst_file) {
             write_fs(dst_file, 0, size, buf);
+            vfs_node_put(dst_file);
         } else {
             vga_puts("cp: Failed to create destination\n");
         }
     }
     kfree(buf);
+    vfs_node_put(src_file);
 }
 
 void cmd_reboot(int argc, char **argv) {
@@ -649,489 +697,6 @@ void cmd_diskinfo(int argc, char **argv) {
     itoa(free_mb, buf, 10);
     vga_puts(buf);
     vga_puts(use_kb ? " KB\n" : " MB\n");
-}
-
-void cmd_ip(int argc, char **argv) {
-    (void)argc; (void)argv;
-    net_interface_t *netif = net_get_list();
-    if (!netif) {
-        vga_puts("No network interface registered.\n");
-        return;
-    }
-    while (netif) {
-        vga_puts(netif->name);
-        vga_puts("  ");
-        vga_puts(netif->type == NET_TYPE_ETHERNET ? "ethernet" : "wifi");
-        vga_puts("  mac ");
-        char b[16];
-        for (int i = 0; i < 6; i++) {
-            itoa(netif->mac[i], b, 16);
-            if (strlen(b) == 1) vga_puts("0");
-            vga_puts(b);
-            if (i < 5) vga_puts(":");
-        }
-        vga_puts("  ip ");
-        vga_print_ip(netstack_get_my_ip());
-        vga_puts("\n");
-        netif = netif->next;
-    }
-}
-
-void cmd_ping(int argc, char **argv) {
-    if (argc < 2) {
-        vga_puts("Usage: ping <host|ip> [count]\n");
-        return;
-    }
-    if (!net_get_list()) {
-        vga_puts("Rede indisponivel.\n");
-        return;
-    }
-
-    int count = 4;
-    if (argc >= 3) {
-        count = 0;
-        for (int i = 0; argv[2][i] >= '0' && argv[2][i] <= '9'; i++)
-            count = count * 10 + (argv[2][i] - '0');
-        if (count <= 0) count = 4;
-    }
-
-    uint32_t ip = net_resolve_host(argv[1]);
-    vga_puts("PING ");
-    vga_puts(argv[1]);
-    vga_puts(" (");
-    vga_print_ip(ip);
-    vga_puts(")\n");
-
-    int sent = 0, received = 0;
-    uint32_t total_ms = 0;
-    int elapsed_ticks;
-    for (int i = 0; i < count; i++) {
-        sent++;
-        elapsed_ticks = netstack_ping(ip, 200);
-        if (elapsed_ticks >= 0) {
-            uint32_t elapsed_ms = (uint32_t)elapsed_ticks * 10U;
-            received++;
-            total_ms += elapsed_ms;
-            vga_puts("64 bytes from ");
-            vga_print_ip(ip);
-            vga_puts(": icmp_seq=");
-            char b[16];
-            itoa(i + 1, b, 10); vga_puts(b);
-            vga_puts(" time=");
-            itoa((int)elapsed_ms, b, 10); vga_puts(b);
-            vga_puts(" ms\n");
-        } else {
-            vga_puts("Request timeout for icmp_seq=");
-            char b[16];
-            itoa(i + 1, b, 10); vga_puts(b);
-            vga_puts("\n");
-        }
-    }
-
-    vga_puts("--- ping statistics ---\n");
-    char b[16];
-    itoa(sent, b, 10); vga_puts(b);
-    vga_puts(" packets transmitted, ");
-    itoa(received, b, 10); vga_puts(b);
-    vga_puts(" received, ");
-    itoa(sent - received, b, 10); vga_puts(b);
-    vga_puts(" lost\n");
-    if (received > 0) {
-        vga_puts("avg time = ");
-        itoa((int)(total_ms / (uint32_t)received), b, 10); vga_puts(b);
-        vga_puts(" ms\n");
-    }
-}
-
-void cmd_scan(int argc, char **argv) {
-    (void)argc; (void)argv;
-    if (!net_get_list()) {
-        vga_puts("Rede indisponivel.\n");
-        return;
-    }
-
-    vga_puts("Scanning local network...\n");
-    int found = netstack_scan_net();
-
-    char b[16];
-    vga_puts("\nDevices found: ");
-    itoa(found, b, 10);
-    vga_puts(b);
-    vga_puts("\n\n");
-
-    vga_puts("  This host: ");
-    vga_print_ip(netstack_get_my_ip());
-    vga_puts(" / ");
-    vga_print_ip(netstack_get_netmask());
-    vga_puts("\n");
-    vga_puts("  Gateway  : ");
-    vga_print_ip(netstack_get_gateway());
-    vga_puts("\n\n");
-
-    uint32_t gw = netstack_get_gateway();
-    uint32_t self = netstack_get_my_ip();
-    for (int idx = 0; idx < netstack_arp_cache_count(); idx++) {
-        uint32_t ip;
-        uint8_t mac[6];
-        if (netstack_arp_cache_get(idx, &ip, mac) != 0) continue;
-        vga_puts("  ");
-        vga_print_ip(ip);
-        vga_puts("  ");
-        char h[8];
-        for (int k = 0; k < 6; k++) {
-            itoa(mac[k] >> 4, h, 16); vga_puts(h);
-            itoa(mac[k] & 0xF, h, 16); vga_puts(h);
-            if (k < 5) vga_puts(":");
-        }
-        if (ip == gw) vga_puts("   (gateway)");
-        if (ip == self) vga_puts("   (this host)");
-        vga_puts("\n");
-    }
-}
-
-void cmd_wget(int argc, char **argv) {
-    static char response[16384];
-    int got;
-
-    if (argc < 2) {
-        vga_puts("Usage: wget <url> [arquivo]\n");
-    } else if (!net_get_list()) {
-        vga_puts("Rede indisponivel.\n");
-    } else if (strstr(argv[1], "https://") == argv[1]) {
-        vga_puts("HTTPS ainda nao e suportado. Use URLs http:// por enquanto.\n");
-    } else {
-        vga_puts("Baixando ");
-        vga_puts(argv[1]);
-        vga_puts(" ...\n");
-
-        memset(response, 0, sizeof(response));
-        got = http_get_url(argv[1], response, sizeof(response) - 1);
-        if (got < 0) {
-            vga_puts("Falha no download.\n");
-        } else if (argc >= 3) {
-            char sdfs_path[256];
-            if (argv[2][0] == '/') {
-                strncpy(sdfs_path, argv[2], sizeof(sdfs_path) - 1);
-            } else {
-                vfs_to_sdfs_path(argv[2], sdfs_path, sizeof(sdfs_path));
-            }
-            sdfs_path[sizeof(sdfs_path) - 1] = '\0';
-            sdfs_create_file(sdfs_path);
-            sdfs_write_file(sdfs_path, (uint8_t *)response, (uint32_t)got);
-            vga_puts("Salvo em ");
-            vga_puts(argv[2]);
-            vga_puts(" (");
-            char b[16];
-            itoa(got, b, 10); vga_puts(b);
-            vga_puts(" bytes)\n");
-        } else {
-            vga_puts("Download concluido (");
-            char b[16];
-            itoa(got, b, 10); vga_puts(b);
-            vga_puts(" bytes), mostrando...\n");
-            vga_puts(response);
-            vga_puts("\n");
-        }
-    }
-}
-
-void cmd_host(int argc, char **argv) {
-    if (argc < 2) {
-        vga_puts("Usage: host <hostname>\n");
-        return;
-    }
-    uint32_t ip = net_resolve_host(argv[1]);
-    if (ip == 0) {
-        vga_puts("host: resolution failed\n");
-        return;
-    }
-    vga_puts(argv[1]);
-    vga_puts(" -> ");
-    vga_print_ip(ip);
-    vga_puts("\n");
-}
-
-/* ============================ httpd ================================ */
-static const char *httpd_content_type(const char *path) {
-    const char *dot = strrchr(path, '.');
-    if (!dot) return "application/octet-stream";
-    if (strcmp(dot, ".html") == 0 || strcmp(dot, ".htm") == 0) return "text/html";
-    if (strcmp(dot, ".txt") == 0) return "text/plain";
-    if (strcmp(dot, ".css") == 0) return "text/css";
-    if (strcmp(dot, ".js") == 0) return "text/javascript";
-    if (strcmp(dot, ".png") == 0) return "image/png";
-    if (strcmp(dot, ".jpg") == 0 || strcmp(dot, ".jpeg") == 0) return "image/jpeg";
-    if (strcmp(dot, ".gif") == 0) return "image/gif";
-    return "application/octet-stream";
-}
-
-static uint32_t httpd_append(char *buf, uint32_t max, uint32_t pos, const char *s) {
-    uint32_t sl = strlen(s);
-    if (pos + sl >= max) sl = max - 1 - pos;
-    memcpy(buf + pos, s, sl);
-    buf[pos + sl] = '\0';
-    return pos + sl;
-}
-
-static uint32_t httpd_append_num(char *buf, uint32_t max, uint32_t pos, int value) {
-    char nb[16];
-    itoa(value, nb, 10);
-    return httpd_append(buf, max, pos, nb);
-}
-
-static void httpd_escape(const char *in, char *out, uint32_t out_size) {
-    uint32_t o = 0;
-    while (*in && o + 8 < out_size) {
-        if (*in == '<') { memcpy(out + o, "&lt;", 4); o += 4; }
-        else if (*in == '>') { memcpy(out + o, "&gt;", 4); o += 4; }
-        else if (*in == '&') { memcpy(out + o, "&amp;", 5); o += 5; }
-        else if (*in == '"') { memcpy(out + o, "&quot;", 6); o += 6; }
-        else out[o++] = *in;
-        in++;
-    }
-    out[o] = '\0';
-}
-
-static void httpd_send_acked(tcp_socket_t *sock, const uint8_t *data,
-                             uint32_t len) {
-  uint32_t seq = tcp_send(sock, data, len);
-  uint32_t target = seq + len;
-  int attempts = 0;
-  while (sock->ack_received < target && attempts < 12) {
-    uint32_t start = timer_ticks;
-    while (sock->ack_received < target && (timer_ticks - start) < 25) {
-      switch_task();
-    }
-    if (sock->ack_received >= target) return;
-    attempts++;
-    tcp_resend(sock, seq, data, len);
-  }
-}
-
-static void httpd_send_text(tcp_socket_t *sock, const char *status, const char *body) {
-    char hdr[160];
-    char cl[16];
-    itoa(strlen(body), cl, 10);
-    strcpy(hdr, "HTTP/1.1 ");
-    strcat(hdr, status);
-    strcat(hdr, "\r\nContent-Type: text/html\r\nContent-Length: ");
-    strcat(hdr, cl);
-    strcat(hdr, "\r\nConnection: close\r\nServer: LiwusOS\r\n\r\n");
-    httpd_send_acked(sock, (const uint8_t *)hdr, strlen(hdr));
-    httpd_send_acked(sock, (const uint8_t *)body, strlen(body));
-}
-
-static void httpd_list_dir(tcp_socket_t *sock, const char *vpath, fs_node_t *node) {
-    uint32_t count = 0;
-    while (readdir_fs(node, count)) count++;
-
-    char *page = (char *)kmalloc(65536);
-    if (!page) {
-        httpd_send_text(sock, "500 Internal Server Error",
-                        "<html><body><h1>500 - sem memoria</h1></body></html>");
-        return;
-    }
-    uint32_t pos = httpd_append(page, 65536, 0,
-        "<html><head><title>LiwusOS</title></head><body><h1>Indice de ");
-    pos = httpd_append(page, 65536, pos, vpath);
-    pos = httpd_append(page, 65536, pos, "</h1><hr><ul>");
-
-    for (uint32_t i = 0; i < count; i++) {
-        struct dirent *ent = readdir_fs(node, i);
-        if (!ent) break;
-
-        char href[512];
-        if (strcmp(vpath, "/") == 0) {
-            strcpy(href, "/");
-        } else {
-            strncpy(href, vpath, sizeof(href) - 1);
-            href[sizeof(href) - 1] = '\0';
-        }
-        uint32_t hl = strlen(href);
-        if (hl > 0 && href[hl - 1] != '/') { href[hl] = '/'; href[hl + 1] = '\0'; }
-        strncat(href, ent->name, sizeof(href) - strlen(href) - 1);
-
-        char esc[160];
-        httpd_escape(ent->name, esc, sizeof(esc));
-
-        pos = httpd_append(page, 65536, pos, "<li><a href=\"");
-        pos = httpd_append(page, 65536, pos, href);
-        pos = httpd_append(page, 65536, pos, "\">");
-        pos = httpd_append(page, 65536, pos, esc);
-        pos = httpd_append(page, 65536, pos, "</a>");
-
-        if (strcmp(ent->name, ".") != 0 && strcmp(ent->name, "..") != 0) {
-            fs_node_t *child = finddir_fs(node, ent->name);
-            if (child && !(child->flags & FS_DIRECTORY)) {
-                pos = httpd_append(page, 65536, pos, " <i>(");
-                pos = httpd_append_num(page, 65536, pos, (int)child->length);
-                pos = httpd_append(page, 65536, pos, " bytes)</i>");
-            }
-        }
-        pos = httpd_append(page, 65536, pos, "</li>\n");
-    }
-    pos = httpd_append(page, 65536, pos, "</ul><hr><i>LiwusOS httpd</i></body></html>");
-    page[pos] = '\0';
-
-    httpd_send_text(sock, "200 OK", page);
-    kfree(page);
-}
-
-static void httpd_serve_file(tcp_socket_t *sock, const char *vpath, fs_node_t *f) {
-    const char *ct = httpd_content_type(vpath);
-    uint32_t size = f->length;
-
-    char hdr[256];
-    char cl[16];
-    itoa(size, cl, 10);
-    strcpy(hdr, "HTTP/1.1 200 OK\r\nContent-Type: ");
-    strcat(hdr, ct);
-    strcat(hdr, "\r\nContent-Length: ");
-    strcat(hdr, cl);
-    strcat(hdr, "\r\nConnection: close\r\nServer: LiwusOS\r\n\r\n");
-    httpd_send_acked(sock, (const uint8_t *)hdr, strlen(hdr));
-
-    uint8_t *chunk = (uint8_t *)kmalloc(1024);
-    if (!chunk) return;
-    uint32_t off = 0;
-    while (off < size) {
-        uint32_t n = read_fs(f, off, 1024, chunk);
-        if (n == 0) break;
-        httpd_send_acked(sock, chunk, n);
-        off += n;
-    }
-    kfree(chunk);
-}
-
-static bool httpd_is_running = false;
-static uint16_t httpd_port = 80;
-
-static void httpd_server_task(void) {
-    uint16_t port = httpd_port;
-
-    static char req[4096];
-    static char tmp[1024];
-    static char path[256];
-
-    tcp_socket_t *listener = tcp_listen(port);
-    if (!listener) {
-        serial_print("[httpd] falha ao criar listener\n");
-        return;
-    }
-
-    serial_print("[httpd] servindo filesystem em http://");
-    {
-        char bip[16];
-        uint32_t ip = netstack_get_my_ip();
-        itoa((int)(ip & 0xFF), bip, 10); serial_print(bip); serial_print(".");
-        itoa((int)((ip >> 8) & 0xFF), bip, 10); serial_print(bip); serial_print(".");
-        itoa((int)((ip >> 16) & 0xFF), bip, 10); serial_print(bip); serial_print(".");
-        itoa((int)((ip >> 24) & 0xFF), bip, 10); serial_print(bip);
-    }
-    char b[16];
-    itoa(port, b, 10);
-    serial_print(":");
-    serial_print(b);
-    serial_print("/\n");
-
-    for (;;) {
-        tcp_socket_t *sock = NULL;
-        uint32_t accept_start = timer_ticks;
-        while ((sock = tcp_accept(port)) == NULL) {
-            if ((timer_ticks - accept_start) > 4000) break;
-            switch_task();
-        }
-        if (!sock) continue; // timeout, nenhuma conexao nova
-
-        uint32_t len = 0;
-        uint32_t idle = timer_ticks;
-        while (len < sizeof(req) - 1) {
-            int n = tcp_receive(sock, (uint8_t *)tmp, sizeof(tmp));
-            if (n > 0) {
-                if (len + (uint32_t)n >= sizeof(req)) n = (int)(sizeof(req) - 1 - len);
-                memcpy(req + len, tmp, (uint32_t)n);
-                len += n;
-                req[len] = '\0';
-                if (strstr(req, "\r\n\r\n") || strstr(req, "\n\n")) break;
-                idle = timer_ticks;
-            } else if (n < 0) {
-                break;
-            } else if ((timer_ticks - idle) > 300) {
-                break;
-            }
-            switch_task();
-        }
-        req[len] = '\0';
-
-        path[0] = '\0';
-        if (len > 4 && strncmp(req, "GET ", 4) == 0) {
-            char *sp = strchr(req + 4, ' ');
-            if (sp && sp > req + 4) {
-                uint32_t plen = (uint32_t)(sp - (req + 4));
-                if (plen >= sizeof(path)) plen = sizeof(path) - 1;
-                memcpy(path, req + 4, plen);
-                path[plen] = '\0';
-                char *q = strchr(path, '?');
-                if (q) *q = '\0';
-            }
-        }
-        if (path[0] == '\0') strcpy(path, "/");
-
-        serial_print("[httpd] GET ");
-        serial_print(path);
-        serial_print("\n");
-
-        fs_node_t *f = vfs_open(path);
-        if (!f) {
-            httpd_send_text(sock, "404 Not Found",
-                "<html><body><h1>404 - nao achado</h1><p>LiwusOS httpd</p></body></html>");
-        } else if (f->flags & FS_DIRECTORY) {
-            httpd_list_dir(sock, path, f);
-        } else {
-            httpd_serve_file(sock, path, f);
-        }
-
-        tcp_close(sock);
-        uint32_t wait = timer_ticks + 10;
-        while (timer_ticks < wait) switch_task();
-    }
-}
-
-void cmd_httpd(int argc, char **argv) {
-    uint16_t port = 80;
-    if (argc >= 2) {
-        uint16_t p = 0;
-        const char *d = argv[1];
-        while (*d >= '0' && *d <= '9') { p = (uint16_t)(p * 10 + (*d - '0')); d++; }
-        if (p) port = p;
-    }
-
-    if (httpd_is_running) {
-        serial_print("[httpd] ja rodando em background na porta ");
-        vga_puts("[httpd] ja rodando na porta ");
-        char b[16];
-        itoa(httpd_port, b, 10);
-        serial_print(b);
-        vga_puts(b);
-        serial_print("\n");
-        vga_puts("\n");
-        return;
-    }
-
-    httpd_is_running = true;
-    httpd_port = port;
-    create_task_named(httpd_server_task, "httpd");
-
-    serial_print("[httpd] iniciado na porta ");
-    vga_puts("[httpd] iniciado (background) na porta ");
-    {
-        char b[16];
-        itoa(port, b, 10);
-        serial_print(b);
-        vga_puts(b);
-    }
-    serial_print(" em background\n");
-    vga_puts("\n");
 }
 
 void cmd_kblayout(int argc, char **argv) {

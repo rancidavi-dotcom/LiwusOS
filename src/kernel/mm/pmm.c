@@ -23,7 +23,7 @@ static inline bool bitmap_test(uint64_t bit) {
 
 void pmm_init(uint64_t start_addr, uint64_t size) {
     pmm_bitmap = (uint32_t*)(uint64_t)start_addr;
-    pmm_max_blocks = size / BLOCK_SIZE;
+    pmm_max_blocks = (size / BLOCK_SIZE) & ~31ULL;
     pmm_used_blocks = pmm_max_blocks;
 
     for (uint64_t i = 0; i < pmm_max_blocks / 32; i++) {
@@ -33,8 +33,11 @@ void pmm_init(uint64_t start_addr, uint64_t size) {
 
 void pmm_init_region(uint64_t base, uint64_t size) {
     spinlock_acquire(&pmm_lock);
-    uint64_t align = base / BLOCK_SIZE;
-    uint64_t blocks = size / BLOCK_SIZE;
+    uint64_t end = base + size;
+    if (end < base) end = UINT64_MAX;
+    uint64_t align = (base + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    uint64_t last = end / BLOCK_SIZE;
+    uint64_t blocks = last > align ? last - align : 0;
 
     for (; blocks > 0 && align < pmm_max_blocks; blocks--, align++) {
         if (bitmap_test(align)) {
@@ -47,8 +50,11 @@ void pmm_init_region(uint64_t base, uint64_t size) {
 
 void pmm_deinit_region(uint64_t base, uint64_t size) {
     spinlock_acquire(&pmm_lock);
-    uint64_t align = base / BLOCK_SIZE;
-    uint64_t blocks = size / BLOCK_SIZE;
+    uint64_t end = base + size;
+    if (end < base) end = UINT64_MAX;
+    uint64_t align = (base + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    uint64_t last = end / BLOCK_SIZE;
+    uint64_t blocks = last > align ? last - align : 0;
 
     for (; blocks > 0 && align < pmm_max_blocks; blocks--, align++) {
         if (!bitmap_test(align)) {
@@ -62,8 +68,11 @@ void pmm_deinit_region(uint64_t base, uint64_t size) {
 void pmm_reserve_region(uint64_t base, uint64_t size) {
     /* Include partially covered pages: an allocation may start at any
      * byte, while the PMM tracks complete 4 KiB frames. */
+    if (size == 0) return;
+    uint64_t end = base + size;
+    if (end < base) end = UINT64_MAX;
     uint64_t first = base / BLOCK_SIZE;
-    uint64_t last = (base + size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    uint64_t last = end / BLOCK_SIZE + ((end % BLOCK_SIZE) != 0);
 
     spinlock_acquire(&pmm_lock);
     for (uint64_t block = first; block < last && block < pmm_max_blocks;
@@ -74,6 +83,49 @@ void pmm_reserve_region(uint64_t base, uint64_t size) {
         }
     }
     spinlock_release(&pmm_lock);
+}
+
+/* Claim a contiguous run made only of pages that the firmware memory map
+ * marked available.  This keeps the physical bump heap out of MMIO holes and
+ * reserved firmware ranges. */
+int pmm_claim_contiguous_region(uint64_t hint, uint64_t desired_size,
+                                uint64_t minimum_size, uint64_t *base_out,
+                                uint64_t *size_out) {
+    if (!base_out || !size_out || desired_size == 0 || minimum_size == 0 ||
+        minimum_size > desired_size) return -1;
+    uint64_t first = (hint + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    uint64_t desired = (desired_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    uint64_t minimum = (minimum_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    uint64_t best_start = 0, best_len = 0;
+
+    spinlock_acquire(&pmm_lock);
+    for (uint64_t i = first; i < pmm_max_blocks;) {
+        while (i < pmm_max_blocks && bitmap_test(i)) i++;
+        uint64_t start = i;
+        while (i < pmm_max_blocks && !bitmap_test(i) && i - start < desired) i++;
+        uint64_t len = i - start;
+        if (len >= desired) {
+            best_start = start;
+            best_len = desired;
+            break;
+        }
+        if (len > best_len) {
+            best_start = start;
+            best_len = len;
+        }
+    }
+    if (best_len < minimum) {
+        spinlock_release(&pmm_lock);
+        return -1;
+    }
+    for (uint64_t i = 0; i < best_len; i++) {
+        bitmap_set(best_start + i);
+        pmm_used_blocks++;
+    }
+    spinlock_release(&pmm_lock);
+    *base_out = best_start * BLOCK_SIZE;
+    *size_out = best_len * BLOCK_SIZE;
+    return 0;
 }
 
 void* pmm_alloc_block() {
@@ -99,8 +151,10 @@ void* pmm_alloc_block() {
 void pmm_free_block(void* addr) {
     spinlock_acquire(&pmm_lock);
     uint64_t block = (uint64_t)addr / BLOCK_SIZE;
-    bitmap_unset(block);
-    pmm_used_blocks--;
+    if (block < pmm_max_blocks && bitmap_test(block)) {
+        bitmap_unset(block);
+        if (pmm_used_blocks) pmm_used_blocks--;
+    }
     spinlock_release(&pmm_lock);
 }
 

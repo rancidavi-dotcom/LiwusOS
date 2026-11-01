@@ -26,7 +26,7 @@ static uint32_t vga_fg_color = 0xFFFFFF; // White
 static uint32_t vga_bg_color = 0x000000; // Black
 
 // Font handling (PSF1)
-extern char _binary_src_drivers_font_psf_start;
+extern uint8_t _binary_src_drivers_font_psf_start[];
 extern char _binary_src_drivers_font_psf_end;
 static uint8_t* font_data = NULL;
 static int font_width = 8;
@@ -340,25 +340,23 @@ void vga_clear_to_eol(void) {
 }
 
 void vga_init(void) {
+    vga_output_hook = NULL;
     if (vga_fb_addr != 0) {
         is_framebuffer = true;
         
-        int win_w = 800;
-        int win_h = 560;
-        
         // Setup font
-        uint8_t* font_hdr = (uint8_t*)&_binary_src_drivers_font_psf_start;
+        uint8_t* font_hdr = _binary_src_drivers_font_psf_start;
         if (font_hdr[0] == 0x36 && font_hdr[1] == 0x04) {
             font_bpg = font_hdr[3];
             font_data = font_hdr + 4;
         }
         
-        max_cols = win_w / font_width;
-        max_rows = win_h / font_height;
+        max_cols = vga_fb_width / font_width;
+        max_rows = vga_fb_height / font_height;
     } else {
         max_cols = 80;
         max_rows = 25;
-        vmm_map_page((void*)0xB8000, (void*)0xB8000, 0x7);
+        vmm_map_page((void*)0xB8000, (void*)0xB8000, 0x3);
     }
     
     vga_row = 0;
@@ -458,6 +456,17 @@ void vga_putc(char c) {
 }
 
 void vga_puts(const char* str) {
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     if (vga_output_hook) {
         vga_output_hook(str);
         return;

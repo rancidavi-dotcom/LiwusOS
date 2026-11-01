@@ -21,8 +21,17 @@ typedef struct {
   uint32_t read_pos;
   uint32_t write_pos;
   uint32_t bytes_avail;
-  int refcount;
+  int references;
+  int readers;
+  int writers;
 } pipe_t;
+
+typedef struct {
+  fs_node_t *node;
+  uint32_t offset;
+  uint32_t size;
+  int references;
+} file_description_t;
 
 typedef struct {
   int type;
@@ -31,6 +40,7 @@ typedef struct {
   uint32_t offset;
   int owned_buffer;
   void *socket_ptr;
+  file_description_t *description;
 } kfile_t;
 
 typedef struct task {
@@ -45,6 +55,8 @@ typedef struct task {
   uint64_t stack_canary_addr;
   struct task *parent;
   struct task *next;
+  int job_id;
+  int spawn_job_id;
   page_directory_t *page_directory;
   void *fpu_ctx;
   uint64_t heap_start;
@@ -125,8 +137,18 @@ int fork_process(registers_t *regs);
 int sys_waitpid(int pid, int *status, int options);
 void sys_exit_process(int status);
 void sys_kill_by_pid(int pid);
+void task_release_io(task_t *task);
+void sys_fd_get(kfile_t *file);
+void sys_fd_put(kfile_t *file);
+uint64_t sys_io_live_file_descriptions(void);
+uint64_t sys_io_live_pipe_objects(void);
 
 extern int last_foreground_pid;
+int task_set_foreground(int pid);
+extern int foreground_job_id;
+int task_create_job(void);
+int task_set_foreground_job(int job_id);
+void task_kill_job(int job_id);
 
 // Per-CPU variables and TLS support
 typedef struct {

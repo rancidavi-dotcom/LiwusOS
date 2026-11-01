@@ -18,6 +18,8 @@
 #define USER_ADDR_MIN  0x1000ULL       /* guard null page */
 
 #define EFAULT  14
+#define E2BIG    7
+#define ENOEXEC  8
 #define EINVAL  22
 #define ENOMEM  12
 #define ENOENT   2
@@ -26,6 +28,7 @@
 #define ENOTDIR 20
 #define ENOSPC  28
 #define EPERM    1
+#define EPIPE   32
 
 /*
  * Check if a virtual address range lies entirely in user space and
@@ -33,6 +36,9 @@
  * Returns 0 on valid, -EFAULT on invalid.
  */
 int validate_user_pointer(const void *ptr, size_t size);
+
+/* Check a complete user destination range for present, user, writable pages. */
+int validate_user_write(const void *ptr, size_t size);
 
 /*
  * Copy `n` bytes from user-space address `user_src` to kernel buffer `dst`.
@@ -61,7 +67,10 @@ int strncpy_from_user(char *dst, const char *user_src, size_t maxlen);
  */
 static inline int is_user_addr(const void *ptr) {
     uint64_t addr = (uint64_t)ptr;
-    return (addr >= USER_ADDR_MIN && addr < USER_ADDR_MAX);
+    /* The kernel still uses a 1 GiB identity map. Keep user mappings out of
+     * the part that aliases RAM and the kernel image. */
+    return (addr >= USER_ADDR_MIN && addr < USER_ADDR_MAX &&
+            (addr < 0x01000000ULL || addr >= 0x40000000ULL));
 }
 
 #endif

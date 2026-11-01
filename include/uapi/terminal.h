@@ -35,13 +35,6 @@ void cmd_version(int argc, char **argv);
 void cmd_meminfo(int argc, char **argv);
 void cmd_ps(int argc, char **argv);
 void cmd_diskinfo(int argc, char **argv);
-void cmd_ip(int argc, char **argv);
-void cmd_ping(int argc, char **argv);
-void cmd_scan(int argc, char **argv);
-void cmd_wget(int argc, char **argv);
-void cmd_host(int argc, char **argv);
-void cmd_httpd(int argc, char **argv);
-void cmd_tcc(int argc, char **argv);
 void cmd_kblayout(int argc, char **argv);
 void cmd_msense(int argc, char **argv);
 

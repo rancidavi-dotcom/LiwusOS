@@ -2,14 +2,14 @@ name: LiwusOS Tests
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [ main, master, develop, lean-kernel ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, develop ]
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -18,28 +18,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            gcc nasm \
+            gcc binutils make \
             grub-pc-bin grub-common \
             xorriso mtools \
-            qemu-system-x86 \
-            make
+            qemu-system-x86
 
-      - name: Build kernel
-        run: make -j$(nproc) kernel.bin
+      - name: Build kernel and ISO
+        run: make -j"$(nproc)" all
 
-      - name: Build userspace test runner
-        run: make -j$(nproc) tests/test_runner.elf
+      - name: In-kernel tests
+        timeout-minutes: 8
+        run: make test
 
-      - name: Build ISO
-        run: make liwusos.iso
-
-      - name: Run SDFS tests
-        timeout-minutes: 2
-        run: make test-sdfs
-
-      - name: Run userspace tests
-        timeout-minutes: 2
-        run: make test-user
+      - name: Ring-3 integration tests
+        timeout-minutes: 8
+        run: make ring3-test
 
       - name: Upload serial log
         if: always()

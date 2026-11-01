@@ -64,8 +64,7 @@ int ata_probe(uint16_t bus, uint8_t drive) {
         status = inb(bus + ATA_REG_STATUS);
         if (status & 0x01) return -1;
         if (status & 0x08) {
-            uint16_t discard[256];
-            for (int i = 0; i < 256; i++) discard[i] = inw(bus);
+            for (int i = 0; i < 256; i++) (void)inw(bus);
             return 0;
         }
     }
@@ -220,7 +219,7 @@ static int ata_bmide_transfer(uint32_t lba, uint8_t count, uint16_t *buffer, int
     if (write)
         memcpy(ata_dma_buf, buffer, size);
 
-    ata_prdt[0].buf_addr = (uint32_t)ata_dma_buf;
+    ata_prdt[0].buf_addr = (uint32_t)(uintptr_t)ata_dma_buf;
     ata_prdt[0].byte_count = size - 1;
     ata_prdt[0].eot = 0x8000;
 
@@ -233,7 +232,7 @@ static int ata_bmide_transfer(uint32_t lba, uint8_t count, uint16_t *buffer, int
     outb(ATA_PRIMARY + 5, (uint8_t)(lba >> 16));
 
     outb(ata_bmide_base + BM_STATUS_REG, 0x04);
-    outl(ata_bmide_base + BM_PRDT_REG, (uint32_t)ata_prdt);
+    outl(ata_bmide_base + BM_PRDT_REG, (uint32_t)(uintptr_t)ata_prdt);
 
     outb(ATA_PRIMARY + 7, write ? ATA_CMD_WRITE_DMA : ATA_CMD_READ_DMA);
     for (int i = 0; i < 100; i++) inb(ATA_PRIMARY + ATA_REG_STATUS);

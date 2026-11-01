@@ -40,6 +40,7 @@ typedef struct fs_node {
     create_type_t create;
     truncate_type_t truncate;
     struct fs_node* ptr; /* Para diretórios */
+    uint32_t vfs_owned; /* Nonzero when this lookup allocated the node. */
 } fs_node_t;
 
 typedef struct vfs_mount {
@@ -54,6 +55,9 @@ void vfs_init();
 int vfs_mount(const char* path, fs_node_t* root);
 fs_node_t* vfs_open(const char* path);
 fs_node_t* vfs_create(const char* path, uint32_t flags);
+void vfs_node_put(fs_node_t *node);
+void vfs_node_take_ownership(fs_node_t *node);
+uint64_t vfs_live_owned_nodes(void);
 
 struct dirent *readdir_fs(fs_node_t *node, uint32_t index);
 fs_node_t *finddir_fs(fs_node_t *node, const char *name);

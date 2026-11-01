@@ -4,7 +4,6 @@
 #include "vfs.h"
 #include "ata.h"
 #include "ahci.h"
-#include "nvme.h"
 #include "kheap.h"
 #include "serial.h"
 #include "string.h"
@@ -41,8 +40,6 @@ static fs_node_t *sdfs_vfs_create(fs_node_t *dir_node, const char *name, uint32_
 static struct dirent sdfs_dirent;
 
 static uint8_t sdfs_ahci_port = 0xFF;
-static uint8_t sdfs_nvme_nsid = 0;
-static int sdfs_use_nvme = 0;
 static uint8_t *sdfs_ramdisk = NULL;
 
 void sdfs_enable_ramdisk(uint32_t mb) {
@@ -56,19 +53,8 @@ void sdfs_enable_ramdisk(uint32_t mb) {
     serial_print("SDFS: Ramdisk enabled!\n");
 }
 
-static void sdfs_check_nvme() {
-    if (sdfs_ramdisk) return;
-    if (!sdfs_use_nvme) {
-        if (nvme_find_first(&sdfs_nvme_nsid) == 0) {
-            sdfs_use_nvme = 1;
-            serial_print("SDFS: Using NVMe namespace\n");
-        }
-    }
-}
-
 static void sdfs_check_ahci() {
     if (sdfs_ramdisk) return;
-    if (sdfs_use_nvme) return;
     if (sdfs_ahci_port == 0xFF) {
         if (ahci_find_first(&sdfs_ahci_port) == 0) {
             serial_print("SDFS: Using AHCI port\n");
@@ -87,9 +73,6 @@ static int sdfs_read_block(uint32_t block, uint8_t *buffer) {
         return 0;
     }
     uint32_t lba = block * SDFS_SECTORS_PER_BLOCK;
-    if (sdfs_use_nvme) {
-        return nvme_read_sector(sdfs_nvme_nsid, lba, SDFS_SECTORS_PER_BLOCK, buffer) ? 0 : -1;
-    }
     if (sdfs_ahci_port != 0xFF) {
         return ahci_read_sector(sdfs_ahci_port, lba, SDFS_SECTORS_PER_BLOCK, buffer) ? 0 : -1;
     }
@@ -110,9 +93,6 @@ static int sdfs_write_block(uint32_t block, uint8_t *buffer) {
         return 0;
     }
     uint32_t lba = block * SDFS_SECTORS_PER_BLOCK;
-    if (sdfs_use_nvme) {
-        return nvme_write_sector(sdfs_nvme_nsid, lba, SDFS_SECTORS_PER_BLOCK, buffer) ? 0 : -1;
-    }
     if (sdfs_ahci_port != 0xFF) {
         return ahci_write_sector(sdfs_ahci_port, lba, SDFS_SECTORS_PER_BLOCK, buffer) ? 0 : -1;
     }
@@ -501,7 +481,6 @@ static int sdfs_dir_add_entry(uint32_t dir_block, sdfs_entry_t *e) {
         int entry_count = db->entry_count;
 
         int found_free = 0;
-        int free_idx = -1;
         uint32_t free_slot_remaining = 0;
         int idx;
         for (idx = 0; idx < entry_count; idx++) {
@@ -510,9 +489,8 @@ static int sdfs_dir_add_entry(uint32_t dir_block, sdfs_entry_t *e) {
             uint8_t name_len = pos[1];
             uint32_t slot_size = (type == SDFS_TYPE_FREE || type == SDFS_TYPE_DEL) ? 2 : (2 + name_len + 24);
             if (type == SDFS_TYPE_FREE || type == SDFS_TYPE_DEL) {
-                if (slot_size >= 2 + e->name_len + 24) {
+                if (slot_size >= 2u + (uint32_t)e->name_len + 24u) {
                     found_free = 1;
-                    free_idx = idx;
                     free_slot_remaining = remaining;
                     break;
                 }
@@ -721,50 +699,40 @@ int sdfs_fsck(void) {
  * ============================================================ */
 
 int sdfs_format(void) {
-    sdfs_check_nvme();
-    sdfs_check_ahci();
-    if (!sdfs_use_nvme && sdfs_ahci_port == 0xFF &&
-        ata_probe(ata_bus, ata_drive) != 0) {
-        serial_print("SDFS: format refused, no NVMe/AHCI/ATA disk selected\n");
-        return -1;
-    }
-
-    uint16_t mbr_buf[256];
-    if (sdfs_use_nvme) {
-        if (!nvme_read_sector(sdfs_nvme_nsid, 0, 1, (uint8_t*)mbr_buf)) {
-            serial_print("SDFS: format failed, cannot read sector 0 (NVMe)\n");
+    if (!sdfs_ramdisk) {
+        sdfs_check_ahci();
+        if (sdfs_ahci_port == 0xFF && ata_probe(ata_bus, ata_drive) != 0) {
+            serial_print("SDFS: format refused, no AHCI/ATA disk selected\n");
             return -1;
         }
-    } else if (sdfs_ahci_port != 0xFF) {
-        if (!ahci_read_sector(sdfs_ahci_port, 0, 1, (uint8_t*)mbr_buf)) {
-            serial_print("SDFS: format failed, cannot read sector 0 (AHCI)\n");
+
+        uint16_t mbr_buf[256];
+        if (sdfs_ahci_port != 0xFF) {
+            if (!ahci_read_sector(sdfs_ahci_port, 0, 1, (uint8_t*)mbr_buf)) {
+                serial_print("SDFS: format failed, cannot read sector 0 (AHCI)\n");
+                return -1;
+            }
+        } else if (ata_read_sector(ata_bus, ata_drive, 0, mbr_buf) != 0) {
+            serial_print("SDFS: format failed, cannot read sector 0\n");
             return -1;
         }
-    } else if (ata_read_sector(ata_bus, ata_drive, 0, mbr_buf) != 0) {
-        serial_print("SDFS: format failed, cannot read sector 0\n");
-        return -1;
-    }
-    uint8_t *mbr = (uint8_t *)mbr_buf;
-    uint32_t part_sectors = *(uint32_t *)(mbr + 458);
-    if (part_sectors == 0) part_sectors = 204800;
+        uint8_t *mbr = (uint8_t *)mbr_buf;
+        uint32_t part_sectors = *(uint32_t *)(mbr + 458);
+        if (part_sectors == 0) part_sectors = 204800;
 
-    uint32_t total_sectors = part_sectors;
-    if (sdfs_use_nvme) {
-        uint64_t nvme_sectors = nvme_identify(sdfs_nvme_nsid);
-        if (nvme_sectors > 0) {
-            total_sectors = (uint32_t)(nvme_sectors > 0xFFFFFFFF ? 0xFFFFFFFF : nvme_sectors);
+        uint32_t total_sectors = part_sectors;
+        if (sdfs_ahci_port != 0xFF) {
+            extern uint64_t ahci_identify(uint8_t portno);
+            uint64_t ahci_sectors = ahci_identify(sdfs_ahci_port);
+            if (ahci_sectors > 0) {
+                total_sectors = (uint32_t)(ahci_sectors > 0xFFFFFFFF ? 0xFFFFFFFF : ahci_sectors);
+            }
         }
-    } else if (sdfs_ahci_port != 0xFF) {
-        extern uint64_t ahci_identify(uint8_t portno);
-        uint64_t ahci_sectors = ahci_identify(sdfs_ahci_port);
-        if (ahci_sectors > 0) {
-            total_sectors = (uint32_t)(ahci_sectors > 0xFFFFFFFF ? 0xFFFFFFFF : ahci_sectors);
-        }
-    }
 
-    disk_total_blocks = total_sectors / SDFS_SECTORS_PER_BLOCK;
-    if (disk_total_blocks < 10) disk_total_blocks = 25600;
-    if (disk_total_blocks > SDFS_MAX_BLOCKS) disk_total_blocks = SDFS_MAX_BLOCKS;
+        disk_total_blocks = total_sectors / SDFS_SECTORS_PER_BLOCK;
+        if (disk_total_blocks < 10) disk_total_blocks = 25600;
+        if (disk_total_blocks > SDFS_MAX_BLOCKS) disk_total_blocks = SDFS_MAX_BLOCKS;
+    }
     serial_print("SDFS: format total_blocks=");
     char tbuf[16];
     itoa(disk_total_blocks, tbuf, 10);
@@ -845,11 +813,10 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
     ata_bus = bus;
     ata_drive = drive;
 
-    sdfs_check_nvme();
     sdfs_check_ahci();
-    if (!sdfs_use_nvme && sdfs_ahci_port == 0xFF) {
+    if (!sdfs_ramdisk && sdfs_ahci_port == 0xFF) {
         if (ata_probe(ata_bus, ata_drive) != 0) {
-            serial_print("SDFS: no NVMe/AHCI/ATA disk available\n");
+            serial_print("SDFS: no AHCI/ATA disk available\n");
             return NULL;
         }
     }
@@ -1144,9 +1111,13 @@ void *sdfs_read_file(const char *path, uint32_t *size_out) {
     uint32_t remaining = e.file_size;
     uint32_t cur_block = e.start_block;
     uint32_t offset = 0;
+    uint8_t *block_buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+    if (!block_buf) {
+        kfree(result);
+        return NULL;
+    }
 
     while (remaining > 0 && cur_block != 0) {
-        uint8_t block_buf[SDFS_BLOCK_SIZE];
         sdfs_read_block(cur_block, block_buf);
 
         uint32_t to_copy = remaining;
@@ -1158,6 +1129,7 @@ void *sdfs_read_file(const char *path, uint32_t *size_out) {
 
         cur_block = sdfs_get_next_block(cur_block);
     }
+    kfree(block_buf);
 
     return result;
 }
@@ -1379,10 +1351,11 @@ static uint32_t sdfs_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8
 
     uint32_t bytes_read = 0;
     uint32_t remaining = size;
+    uint8_t *block_buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+    if (!block_buf) return 0;
 
     while (remaining > 0 && cur_block != 0) {
-        uint8_t block_buf[SDFS_BLOCK_SIZE];
-        sdfs_read_block(cur_block, block_buf);
+        if (sdfs_read_block(cur_block, block_buf) != 0) break;
 
         uint32_t to_copy = 4092 - offset_in_block;
         if (to_copy > remaining) to_copy = remaining;
@@ -1395,6 +1368,7 @@ static uint32_t sdfs_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8
         cur_block = sdfs_get_next_block(cur_block);
     }
 
+    kfree(block_buf);
     return bytes_read;
 }
 
@@ -1421,9 +1395,10 @@ static uint32_t sdfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uint
 
     uint32_t bytes_written = 0;
     uint32_t remaining = size;
+    uint8_t *block_buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+    if (!block_buf) return 0;
 
     while (remaining > 0) {
-        uint8_t block_buf[SDFS_BLOCK_SIZE];
         sdfs_read_block(cur_block, block_buf);
 
         uint32_t to_write = 4092 - offset_in_block;
@@ -1445,6 +1420,8 @@ static uint32_t sdfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uint
             cur_block = next;
         }
     }
+
+    kfree(block_buf);
 
     if (offset + bytes_written > file_size) {
         node->length = offset + bytes_written;

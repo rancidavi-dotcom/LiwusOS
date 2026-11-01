@@ -49,7 +49,7 @@ mb2_end:
 _start:
   /* Save multiboot info pointer from GRUB (32-bit physical address) */
   mov %ebx, (mb2_info_phys_low)
-  mov $0, (mb2_info_phys_low + 4)    /* Zero upper 32 bits */
+  movl $0, (mb2_info_phys_low + 4)   /* Zero upper 32 bits */
 
   /* Set up stack */
   lea (boot_stack_top), %esp
@@ -194,7 +194,7 @@ mb2_info_phys_low:
   .quad 0
 
 /* ---- Boot stack ---- */
-.section .boot.bss
+.section .boot.bss, "aw", @nobits
 .align 16
 boot_stack_bottom:
   .skip 16384

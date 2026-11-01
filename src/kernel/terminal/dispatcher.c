@@ -3,66 +3,6 @@
 #include "vga.h"
 #include "serial.h"
 
-extern void lde_app_start(void);
-extern const char *get_launch_last_error(void);
-void cmd_lde(int argc, char **argv) {
-    (void)argc; (void)argv;
-    lde_app_start();
-    vga_puts("LDE app started. Last launch error: ");
-    vga_puts((char*)get_launch_last_error());
-    vga_puts("\n");
-}
-
-// Executa o Tiny C Compiler (userspace) a partir do initrd, repassando
-// os argumentos digitados no terminal (ex.: "tcc -v", "tcc prog.c").
-void cmd_tcc(int argc, char **argv) {
-    extern int launch_initrd_program_argv(const char *filename, char *const argv[]);
-    (void)argc;
-
-    // Passa argv[0]="tcc" seguido dos argumentos do utilizador.
-    char **prog_argv = argv;
-    if (prog_argv && prog_argv[0])
-        prog_argv[0] = "tcc";
-
-    int pid = launch_initrd_program_argv("tcc", prog_argv);
-
-    char buf[64];
-    int n = 0;
-    buf[n++] = '[';
-    buf[n++] = 'k';
-    buf[n++] = 'e';
-    buf[n++] = 'r';
-    buf[n++] = 'n';
-    buf[n++] = 'e';
-    buf[n++] = 'l';
-    buf[n++] = ']';
-    buf[n++] = ' ';
-    const char *label = "tcc";
-    while (*label) buf[n++] = *label++;
-    buf[n++] = ':';
-    buf[n++] = ' ';
-    char pidbuf[16];
-    if (pid < 0) {
-        buf[n++] = 'e';
-        buf[n++] = 'r';
-        buf[n++] = 'r';
-        buf[n++] = 'o';
-        buf[n++] = 'r';
-        buf[n++] = '\n';
-        buf[n] = '\0';
-    } else {
-        itoa(pid, pidbuf, 10);
-        const char *p = pidbuf;
-        while (*p) buf[n++] = *p++;
-        char end[] = " started\n";
-        const char *e = end;
-        while (*e) buf[n++] = *e++;
-        buf[n] = '\0';
-    }
-    vga_puts(buf);
-    serial_print(buf);
-}
-
 // Executa um programa compilado (ELF) a partir do filesystem SDFS, repassando
 // argumentos. Uso: run <programa> [args...]
 //
@@ -135,18 +75,9 @@ static const terminal_command_t commands[] = {
     {"meminfo", cmd_meminfo, "Shows memory information"},
     {"ps", cmd_ps, "Lista tarefas (pid, prioridade, estado, cpu)"},
     {"diskinfo", cmd_diskinfo, "Shows disk space information"},
-    {"ip", cmd_ip, "Shows current IP address"},
-    {"ping", cmd_ping, "Send ICMP ECHO_REQUEST to network hosts"},
-    {"scan", cmd_scan, "Scan the local network and list devices found"},
-    {"wget", cmd_wget, "Download files from the web (HTTP)"},
-    {"host", cmd_host, "DNS lookup utility"},
-    {"httpd", cmd_httpd, "Serve the filesystem over HTTP (ex: httpd [port])"},
-    {"tcc", cmd_tcc, "Tiny C Compiler - compila C dentro do OS"},
     {"run", cmd_run, "Run a compiled ELF program (ex: run hello)"},
     {"kblayout", cmd_kblayout, "Set keyboard layout (abnt2|us|us-intl)"},
     {"msense", cmd_msense, "Set mouse sensitivity (1-10) and acceleration (on|off)"},
-    {"/lde", cmd_lde, "Launch Liwus Desktop Engine"},
-    {"lde", cmd_lde, "Launch Liwus Desktop Engine"}
 };
 
 #define NUM_COMMANDS (sizeof(commands) / sizeof(terminal_command_t))

@@ -36,7 +36,9 @@ void terminal_task(void) {
                     write_serial(c);
                 }
             } else {
-                switch_task();
+                /* Dorme ate a proxima interrupcao (timer ou teclado). O
+                 * IRQ0 chama schedule() e alterna com as demais tarefas. */
+                asm volatile("hlt");
             }
         }
 
@@ -44,6 +46,7 @@ void terminal_task(void) {
 
         char *argv[TERMINAL_MAX_ARGS];
         int argc = terminal_parse_line(cmd_buffer, argv);
+
 
         if (argc > 0) {
             terminal_execute(argc, argv);
