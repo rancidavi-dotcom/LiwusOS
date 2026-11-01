@@ -84,7 +84,7 @@ entry32:
     # Enable Long Mode in EFER MSR (0xC0000080)
     mov $0xC0000080, %ecx
     rdmsr
-    or $(1 << 8), %eax
+    or $((1 << 8) | (1 << 11)), %eax
     wrmsr
 
     # Enable Paging (CR0.PG = 1)
