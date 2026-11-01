@@ -2,6 +2,10 @@
 
 Este documento fixa as decisões que orientam a compatibilidade Linux x86-64. O código ainda não implementa todas elas. Cada decisão deve ser refletida no gate correspondente do `ROADMAP.md`.
 
+## Fronteira de compatibilidade
+
+LiwusOS permanece um sistema operacional independente. A personality Linux fica isolada em `src/compat/linux/` e nos headers UAPI de compatibilidade; a ABI nativa e seu `int 0x80` continuam no dispatcher nativo. `task_t.abi` seleciona a interpretação do número e dos argumentos. O stub de entrada `SYSCALL`, TLS por thread e a VM são mecanismos arquiteturais genéricos do LiwusOS, reutilizados pela personality; eles não incorporam código nem subsistemas do kernel Linux. O kernel e os programas nativos continuam utilizáveis sem a personality Linux.
+
 ## Limites e princípios
 
 - Alvo inicial: ELF Linux x86-64 LP64, em userspace de 64 bits.
@@ -90,9 +94,9 @@ Os valores completos e layouts binários devem ser definidos em headers sob `inc
 
 O stub salva estado de usuário de modo que interrupções e preempção preservem a mesma estrutura de contexto do scheduler. A implementação não reutiliza RCX como quarto argumento Linux: SYSCALL grava RIP em RCX e RFLAGS em R11.
 
-**Implementado parcialmente:** STAR/LSTAR/SFMASK são configurados por CPU; `SYSCALL` troca GS com `swapgs`, salva RSP de usuário em `cpu_local_t`, muda para a kernel stack da tarefa e constrói `registers_t`. O dispatcher Linux inicial traduz `read`, `write`, `close`, `mmap`, `munmap`, `brk`, `getpid`, `exit` e `exit_group`. O retorno usa IRETQ, que restaura CS/SS/RIP/RSP/RFLAGS sem depender de SYSRET; a otimização SYSRET com validação de contexto ainda não foi adicionada. Os outros números Linux retornam `-ENOSYS`.
+**Implementado parcialmente:** STAR/LSTAR/SFMASK são configurados por CPU; `SYSCALL` troca GS com `swapgs`, salva RSP de usuário em `cpu_local_t`, muda para a kernel stack da tarefa e constrói `registers_t`. O dispatcher Linux inicial traduz `read`, `write`, `close`, `openat`, `stat`, `fstat`, `newfstatat`, `lseek`, `mmap`, `munmap`, `brk`, `getpid`, `exit` e `exit_group`, com tradução explícita da primeira forma x86-64 de `struct stat`. O retorno usa IRETQ, que restaura CS/SS/RIP/RSP/RFLAGS sem depender de SYSRET; a otimização SYSRET com validação de contexto ainda não foi adicionada. Os outros números Linux retornam `-ENOSYS`. A tradução inicial de `openat` aceita somente `AT_FDCWD`; acesso por `dirfd`, `O_CLOEXEC`, file-backed mmap e várias regras de flags ainda não são suportados.
 
-### Sequência obrigatória de entrada (antes do passo 35)
+### Sequência da entrada e invariantes de retorno
 
 - `SYSCALL` entra com RSP ainda apontando para a stack de usuário. O stub não pode usar a pilha antes de trocar para a kernel stack.
 - A primeira instrução é `swapgs`, que troca o GS de usuário pelo GS do kernel. O kernel mantém `IA32_KERNEL_GS_BASE` com a base do bloco por CPU; a troca é obrigatória na entrada e na saída, inclusive em NMI/#MC, que usam IST dedicado.
@@ -114,3 +118,13 @@ O stub salva estado de usuário de modo que interrupções e preempção preserv
 - Não implementa KPTI sem requisito de ameaça definido; a decisão inicial é adiá-lo e documentar o risco.
 - Não inclui suporte i386/`int 0x80`, AF_INET, Wayland, GPU ou Wine nos gates iniciais; esses itens dependem dos gates anteriores.
 - Não altera a ABI nativa para acomodar diferenças Linux.
+
+## Evidência do milestone atual
+
+- O ELF `tests/ring3/linux_syscall_probe.S` é um `ET_EXEC` estático, sem `PT_INTERP`, que usa a convenção Linux x86-64 sem caminhos ou chamadas especiais do Liwus. Ele valida `getpid`, `fstat`/`stat` layout, `openat`/`-ENOENT`, `-ENOSYS`, `mmap` com argumento 4 em R10, `munmap`, `ARCH_SET_FS`, leitura via `FS:0`, `ARCH_GET_FS`, `write` e `exit`.
+- `make smap-test` executa o probe e a suíte nativa/ring-3 no QEMU `-cpu max -smp 4 -m 4096`; o log precisa mostrar SMAP, APIC IDs 1–3, o probe Linux e `43/43 PASS`. O agendador executa as tarefas do teste no BSP; os outros processadores são validados na inicialização SMP, não por migração de tarefas entre CPUs.
+- É possível fornecer um ELF GNU/Linux estático externo sem incorporá-lo ao repositório: `make smap-test LINUX_STATIC_ELF=/caminho/para/programa`. O ELF é empacotado temporariamente como `linux_glibc_hello` na imagem de teste.
+- O teste adicional com a libc estática desta máquina foi tentado. O ELF estático sem `PT_INTERP` começou a executar, mas terminou com `#UD` em `vpxor` no `_dl_aux_init`; seu `GNU_PROPERTY` exige x86-64 v3/v4, AVX/XSAVE, que o kernel ainda não habilita nem salva/restaura. Portanto, o probe freestanding Linux passa, mas esse binário glibc não passa. O ELF GNU original com `PT_INTERP` também é corretamente recusado enquanto o loader dinâmico não existir.
+- FS-base por tarefa é carregada em `set_current_task`; a entrada/saída de interrupções preserva FS e alterna GS com `swapgs`; o teste valida FS-base entre syscalls e o `waitpid` provoca trocas com a tarefa kernel pai. Ainda não há teste de pthreads nem migração de tarefa entre APs.
+- Este resultado fecha apenas a fatia inicial da entrada Linux e TLS. Não constitui suporte completo Linux nem conclui os gates musl/glibc, threads, sinais, VM sob demanda ou dynamic linker.
+- O ensaio foi executado com SMAP ativo em QEMU de quatro CPUs; isso valida a inicialização SMP e as rotas testadas sob SMAP. A suíte ainda não migra tarefas de usuário entre APs, então preservação TLS sob migração multicore permanece sem evidência.

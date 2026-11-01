@@ -18,6 +18,7 @@
 #include "termios.h"
 #include "usercopy.h"
 #include "vma.h"
+#include "kstat.h"
 
 extern int elf_class(void *file_buffer, uint32_t file_size);
 extern uint64_t elf32_load_file(void *file_buffer, uint32_t file_size);
@@ -1006,27 +1007,6 @@ int sys_getpid(void) {
   if (!current_task) return 1;
   return current_task->id;
 }
-
-// Kernel-side stat struct that matches newlib's sys/stat.h on x86_64
-struct kernel_stat {
-  uint64_t st_dev;
-  uint64_t st_ino;
-  uint32_t st_mode;
-  uint64_t st_nlink;
-  uint32_t st_uid;
-  uint32_t st_gid;
-  uint64_t st_rdev;
-  uint64_t st_size;
-  int64_t  st_atime;
-  int64_t  st_atimensec;
-  int64_t  st_mtime;
-  int64_t  st_mtimensec;
-  int64_t  st_ctime;
-  int64_t  st_ctimensec;
-  int64_t  st_blksize;
-  int64_t  st_blocks;
-  int64_t  st_spare4[2];
-};
 
 // S_IFMT constants matching newlib
 #define K_S_IFMT   0170000

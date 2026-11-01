@@ -98,10 +98,7 @@ isr_common_stub:
 1:
   PUSH_ALL
 
-  mov $0x10, %ax          /* Kernel data segment */
-  mov %ax, %ds
-  mov %ax, %es
-  mov %ax, %fs
+  /* Keep FS_BASE intact: Linux tasks use it for TLS. Flat DS/ES bases are 0. */
   mov %rsp, %rdi         /* First arg: pointer to registers_t */
   call isr_handler
 
@@ -147,10 +144,7 @@ irq_common_stub:
 3:
   PUSH_ALL
 
-  mov $0x10, %ax          /* Kernel data segment */
-  mov %ax, %ds
-  mov %ax, %es
-  mov %ax, %fs
+  /* Keep FS_BASE intact across IRQs for per-thread TLS. */
   mov %rsp, %rdi          /* First arg: pointer to registers_t */
   call irq_handler
   mov %rax, %rsp          /* Schedule() returns new stack pointer */

@@ -30,6 +30,10 @@ KERNEL_BIN = kernel.bin
 TEST_KERNEL_BIN = kernel-test.bin
 ISO_IMAGE = liwusos.iso
 TEST_ISO_IMAGE = liwusos-test.iso
+LINUX_STATIC_TEST_DEP =
+ifneq ($(strip $(LINUX_STATIC_ELF)),)
+LINUX_STATIC_TEST_DEP = $(LINUX_STATIC_ELF)
+endif
 DISK_IMAGE = liwus_disk.img
 
 BOOT_SRCS = $(BOOT_DIR)/boot.s $(BOOT_DIR)/interrupt.s
@@ -119,8 +123,12 @@ smap-test: $(TEST_ISO_IMAGE)
 		/tmp/liwusos-smap-integration.serial
 	@grep -q 'RESULT: 43/43 PASS' /tmp/liwusos-smap-integration.serial
 	@grep -q 'RESULT: ALL PASS' /tmp/liwusos-smap-integration.serial
-	@grep -q 'Linux x86-64 SYSCALL write/mmap/munmap/getpid PASS' \
+	@grep -q 'Linux x86-64 SYSCALL getpid/fstat/openat/mmap/munmap/FS-TLS/write PASS' \
 		/tmp/liwusos-smap-integration.serial
+	@if test -n "$(LINUX_STATIC_ELF)"; then \
+		grep -q 'unmodified static GNU/Linux ELF PASS' \
+			/tmp/liwusos-smap-integration.serial; \
+	fi
 
 all: $(KERNEL_BIN) $(ISO_IMAGE)
 
@@ -296,7 +304,7 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 
 test-build: $(TEST_ISO_IMAGE)
 
-$(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF) $(RING3_PIE_ELF) $(RING3_LINUX_SYSCALL_ELF)
+$(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF) $(RING3_PIE_ELF) $(RING3_LINUX_SYSCALL_ELF) $(LINUX_STATIC_TEST_DEP)
 	@mkdir -p repo-test
 	: > repo-test/test_mode
 	@mkdir -p isodir-test/boot/grub
@@ -307,6 +315,8 @@ $(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE
 	cp -f $(RING3_C_APP_ELF) repo-test/c_example
 	cp -f $(RING3_PIE_ELF) repo-test/pie_probe
 	cp -f $(RING3_LINUX_SYSCALL_ELF) repo-test/linux_syscall_probe
+	rm -f repo-test/linux_glibc_hello
+	if test -n "$(LINUX_STATIC_ELF)"; then cp -f "$(LINUX_STATIC_ELF)" repo-test/linux_glibc_hello; fi
 	cp -f tests/ring3/invalid_elf repo-test/invalid_elf
 	tar -cf initrd-test.tar -C repo-test . --format=ustar
 	rm -f repo-test/ring3_suite

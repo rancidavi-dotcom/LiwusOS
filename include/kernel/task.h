@@ -58,6 +58,8 @@ typedef struct task {
   uint32_t kernel_stack_size;
   uint64_t stack_canary;
   uint64_t stack_canary_addr;
+  uint64_t fs_base;
+  uint64_t user_gs_base;
   struct task *parent;
   struct task *next;
   int job_id;
@@ -174,6 +176,12 @@ static inline void write_gs_qword(uint32_t offset, uint64_t val) {
     asm volatile("movq %0, %%gs:%c1" : : "r"(val), "i"(offset));
 }
 
+static inline void write_msr_qword(uint32_t msr, uint64_t val) {
+  uint32_t low = (uint32_t)val;
+  uint32_t high = (uint32_t)(val >> 32);
+  asm volatile("wrmsr" : : "a"(low), "d"(high), "c"(msr));
+}
+
 #define current_task ((task_t *)read_gs_qword(8))
 
 static inline int get_cpu_id(void) {
@@ -182,7 +190,11 @@ static inline int get_cpu_id(void) {
 
 static inline void set_current_task(task_t *task) {
     write_gs_qword(8, (uint64_t)task);
-  if (task) write_gs_qword(16, task->kernel_stack);
+  if (task) {
+    write_gs_qword(16, task->kernel_stack);
+    write_msr_qword(0xC0000100U, task->fs_base);       /* IA32_FS_BASE */
+    write_msr_qword(0xC0000102U, task->user_gs_base);  /* KERNEL_GS_BASE */
+  }
 }
 
 void init_cpu_local(int cpu_id);

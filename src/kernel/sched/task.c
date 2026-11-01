@@ -770,6 +770,9 @@ int fork_process(registers_t *regs) {
   new_task->heap_end = parent->heap_end;
   new_task->mmap_top = parent->mmap_top;
   new_task->user_mode = parent->user_mode;
+  new_task->abi = parent->abi;
+  new_task->fs_base = parent->fs_base;
+  new_task->user_gs_base = parent->user_gs_base;
   new_task->priority = parent->priority;
   new_task->time_slice = task_quantum(new_task);
   new_task->wake_tick = 0;

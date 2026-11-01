@@ -2,7 +2,7 @@
 
 Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verificáveis. A compatibilidade traduz a ABI na borda e reutiliza o mesmo motor de processos, memória virtual e VFS do sistema. Cada fase começa somente depois do gate anterior passar.
 
-> **Estado atual:** Gate 0 concluído (`6402de8`); passos 9a/9b (`6bbb7cf`, `7fd8184`) e 9c/10/11 concluídos nesta branch. Passos 12 e 13 implementados no escopo atual: cada diretório possui lista VMA ordenada integrada com ELF, stack, heap, mmap, munmap e fork; EFER.NXE, proteção de imagem do kernel e W^X em ELF/mmap. Passo 14 implementado: SMEP/SMAP são ligados por CPU quando disponíveis; cópias de usercopy usam STAC/CLAC e caminhos de ELF, `brk`, `mmap` e construção de stack foram ajustados para não escrever diretamente em páginas user. `make test`/`make ring3-test` passam 43/43; o cenário `-cpu max -smp 4 -m 4096` também passou com SMAP ativo, incluindo APs, remoção da identidade e 43/43. O alvo reproduzível é `make smap-test`. Isso revelou e corrigiu a falta de EFER.NXE no trampoline dos APs (`8211823`) e uma escrita de kernel bloqueada por SMAP em `brk`. O passo 17 oferece operações `_in(page_directory_t *)` para mapear, alterar permissões e remover páginas; `mmap`, `munmap` e `brk` as usam, mas a migração das demais operações ainda falta. A Fase 4 também começou: o stub `SYSCALL` x86-64, STAR/LSTAR/SFMASK, `swapgs`, seleção explícita de ABI por tarefa e um dispatcher isolado já cobrem `read`, `write`, `close`, `mmap`, `munmap`, `brk`, `getpid`, `exit` e `exit_group`; um ELF ring-3 confirma getpid/mmap/munmap/write com numeração Linux. Isso é uma fatia inicial, não fecha os passos 35/36. Ainda faltam demand paging, stacks de kernel guardadas e a migração completa para operações explícitas por mm para fechar o Gate 1.
+> **Estado atual:** Gate 0 concluído (`6402de8`); passos 9a/9b (`6bbb7cf`, `7fd8184`) e 9c/10/11 concluídos nesta branch. Passos 12 e 13 implementados no escopo atual: cada diretório possui lista VMA ordenada integrada com ELF, stack, heap, mmap, munmap e fork; EFER.NXE, proteção de imagem do kernel e W^X em ELF/mmap. Passo 14 implementado: SMEP/SMAP são ligados por CPU quando disponíveis; cópias de usercopy usam STAC/CLAC e caminhos de ELF, `brk`, `mmap` e construção de stack foram ajustados para não escrever diretamente em páginas user. `make test` e `make ring3-test` passam 43/43; `make smap-test` também passou em QEMU `-cpu max -smp 4 -m 4096`, com SMAP, APs, remoção da identidade e 43/43. O passo 17 oferece operações `_in(page_directory_t *)` para mapear, alterar permissões e remover páginas; `mmap`, `munmap` e `brk` as usam, mas a migração das demais operações ainda falta. A Fase 4 tem uma fatia inicial: stub `SYSCALL`, STAR/LSTAR/SFMASK, `swapgs`, seleção explícita de ABI e dispatcher isolado para `read`, `write`, `close`, `openat`, `stat`, `fstat`, `newfstatat`, `lseek`, `mmap`, `munmap`, `brk`, `getpid`, `exit` e `exit_group`. O probe Linux passa por `getpid`, `fstat`, `openat`/`-ENOENT`, `mmap`, `munmap`, `-ENOSYS`, `arch_prctl` FS e `write`. FS-base é salva por tarefa e restaurada na troca de contexto. O teste externo com glibc estática falhou em `#UD` ao executar AVX; o ELF dinâmico com `PT_INTERP` ainda não é carregado. Isso não fecha os passos 35/36 nem representa compatibilidade completa. O Gate 1 ainda requer demand paging, stacks de kernel guardadas e migração completa das operações para interfaces explícitas por `mm`.
 
 ## Fase 0 — Congelar e descrever a base
 
@@ -35,7 +35,7 @@ Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verific
 
 18. Separar `process_t` (mm, FDs, cwd, credenciais, grupos e ações de sinal) de `thread_t` (registradores, kernel stack, FS base e TID).
 19. Implementar clone com `CLONE_VM`, `CLONE_FS`, `CLONE_FILES`, `CLONE_SIGHAND`, `CLONE_THREAD` e `CLONE_SETTLS`, além de `exit` e `exit_group`.
-20. Implementar `arch_prctl(ARCH_SET_FS/ARCH_GET_FS)` e base FS por thread, com suporte a TLS.
+20. Implementar `arch_prctl(ARCH_SET_FS/ARCH_GET_FS)` e base FS por thread, com suporte a TLS. **Parcial:** `ARCH_SET_FS/ARCH_GET_FS` e armazenamento/restauração de FS-base por tarefa passam no probe; ainda não há threads Linux nem teste de migração entre CPUs.
 21. Implementar sinais pendentes/bloqueados, `sigaction`, `sigprocmask`, `sigreturn`, `sigaltstack` e entrega síncrona de SIGSEGV/SIGFPE.
 22. Implementar credenciais consistentes (`uid/euid/gid/egid`, `umask` e consultas), inicialmente com IDs zero.
 23. Implementar grupos e sessões, `wait4`, `WIFEXITED`, `WNOHANG` e SIGCHLD.
@@ -105,3 +105,14 @@ Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verific
 - Documentar ABI e memória antes das refatorações de VM e processo.
 - Compatibilidade Linux traduz ABI e semântica na borda; nunca cria um segundo caminho de fork, VM ou VFS.
 - As estimativas do laudo são planejamento, não compromissos de prazo.
+
+## Próximos incrementos após o milestone atual
+
+Esta sequência prioriza dependências técnicas; os itens não têm estimativa de prazo.
+
+1. Fechar Gate 1: stacks de kernel guardadas e por CPU/tarefa, concluir a migração da VM para APIs explícitas por `mm` e validar endereços físicos acima de 1 GiB, NX e regressões nativas.
+2. Fechar a separação `process_t`/`thread_t` e `clone`/`CLONE_SETTLS`; depois testar `ARCH_SET_FS/GET_FS` sob várias threads e migração controlada entre CPUs.
+3. Definir política de capacidades da CPU e implementar estado x87/SSE/AVX com save/restore e sinalização coerente ao userspace; repetir o ELF glibc estático com alvo ISA explicitamente suportado.
+4. Completar VM Linux que o loader necessita: demand paging, stack/auxv, `PT_TLS`, COW e mmap de arquivo; então validar ELF estático de terceiros sem modificação e registrar os artefatos/hash do teste.
+5. Implementar `PT_INTERP` e o carregamento do interpretador dinâmico; validar glibc dinâmica após a execução estática passar.
+6. Expandir syscalls guiado pelos binários-alvo e pelas dependências já disponíveis (sinais, `wait4`, futex, arquivos e tempo), mantendo o dispatcher/personality isolado e a suíte nativa como bloqueio de regressão.
