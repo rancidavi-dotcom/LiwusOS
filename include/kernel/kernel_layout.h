@@ -9,7 +9,8 @@
 #define KERNEL_PHYS_BASE      0x02000000ULL /* higher-half image load address */
 #define KERNEL_VIRT_BASE      0xffffffff80000000ULL
 #define DIRECT_MAP_BASE       0xffff800000000000ULL
-#define DIRECT_MAP_SIZE       0x40000000ULL /* step 9b currently maps 1 GiB */
+#define DIRECT_MAP_BOOT_SIZE 0x40000000ULL /* boot stub maps first 1 GiB */
+#define DIRECT_MAP_SIZE      0x8000000000ULL /* PML4[256]: up to 512 GiB */
 
 /* virt = phys + KERNEL_VIRT_OFFSET (0xffffffff7e000000) */
 #define KERNEL_VIRT_OFFSET (KERNEL_VIRT_BASE - KERNEL_PHYS_BASE)

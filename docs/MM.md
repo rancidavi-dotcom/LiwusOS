@@ -1,6 +1,6 @@
 # Modelo de memória do LiwusOS
 
-Este documento registra o mapa alvo e o estado implementado da Fase 1. O passo 9a liga o kernel em `0xffffffff80000000`; o passo 9b adiciona um direct map para os primeiros 1 GiB e migra PMM/kheap para usá-lo. A identidade temporária permanece até o passo 9c. O limite físico de 1 GiB também permanece até a implementação do passo 10.
+Este documento registra o mapa alvo e o estado implementado da Fase 1. O passo 9a liga o kernel em `0xffffffff80000000`; o passo 9b adiciona um direct map para os primeiros 1 GiB e migra PMM/kheap para usá-lo. A identidade temporária permanece até o passo 9c. A faixa de userspace já aceita endereços canônicos até `0x0000800000000000`, usa stack no topo e mmap em faixa alta. O passo 10 amplia o direct map e o PMM até 512 GiB; a identidade temporária ainda permanece até o 9c.
 
 ## Mapa virtual x86-64 alvo
 

@@ -119,6 +119,73 @@ void vmm_map_page(void *phys, void *virt, uint64_t flags) {
   }
 }
 
+int vmm_map_large_page(uint64_t phys, uint64_t virt, uint64_t flags) {
+  if ((phys & 0x1FFFFFULL) || (virt & 0x1FFFFFULL) ||
+      vaddr_pml4i(virt) != vaddr_pml4i(virt + 0x1FFFFFULL) ||
+      (flags & PTE_U)) return -1;
+
+  pml4_t *pml4 = current_directory->pml4_virt;
+  uint64_t pml4_i = vaddr_pml4i(virt);
+  uint64_t pdp_i = vaddr_pdpi(virt);
+  uint64_t pd_i = vaddr_pdi(virt);
+  uint64_t table_flags = PTE_P | PTE_W;
+
+  if (!(pml4->entries[pml4_i] & PTE_P)) {
+    pdp_t *new_pdp = (pdp_t *)alloc_pt_page();
+    if (!new_pdp) return -1;
+    pml4->entries[pml4_i] = virt_to_phys(new_pdp) | table_flags;
+  }
+  pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[pml4_i] & ~0xFFFULL);
+  if (pdp->entries[pdp_i] & PTE_PS) return -1;
+  if (!(pdp->entries[pdp_i] & PTE_P)) {
+    pd_t *new_pd = (pd_t *)alloc_pt_page();
+    if (!new_pd) return -1;
+    pdp->entries[pdp_i] = virt_to_phys(new_pd) | table_flags;
+  }
+  pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[pdp_i] & ~0xFFFULL);
+  if (pd->entries[pd_i] & PTE_P) return -1;
+  pd->entries[pd_i] = (phys & ~0x1FFFFFULL) |
+                      (flags & 0xFFFULL) | PTE_P | PTE_W | PTE_PS;
+  asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
+  return 0;
+}
+
+static int map_direct_page(uint64_t phys) {
+  uint64_t virt = DIRECT_MAP_BASE + phys;
+  vmm_map_page((void *)phys, (void *)virt, PTE_P | PTE_W);
+  pte_t *entry = walk_pt(current_directory, virt, 0);
+  return entry && (*entry & PTE_P) ? 0 : -1;
+}
+
+int vmm_map_direct_ram_region(uint64_t phys, uint64_t size) {
+  if (!size) return 0;
+  uint64_t end = phys + size;
+  if (end < phys || end > DIRECT_MAP_SIZE) return -1;
+  if (phys < DIRECT_MAP_BOOT_SIZE) phys = DIRECT_MAP_BOOT_SIZE;
+  phys = (phys + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+  end &= ~(uint64_t)(PAGE_SIZE - 1);
+  if (phys >= end) return 0;
+
+  uint64_t large_start = (phys + 0x1FFFFFULL) & ~0x1FFFFFULL;
+  if (large_start > end) large_start = end;
+  for (uint64_t page = phys; page < large_start; page += PAGE_SIZE) {
+    if (map_direct_page(page) < 0) return -1;
+  }
+
+  uint64_t large_end = end & ~0x1FFFFFULL;
+  for (uint64_t page = large_start; page < large_end; page += 0x200000ULL) {
+    if (vmm_map_large_page(page, DIRECT_MAP_BASE + page, PTE_P | PTE_W) < 0)
+      return -1;
+  }
+
+  uint64_t tail_start = large_end;
+  if (tail_start < large_start) tail_start = large_start;
+  for (uint64_t page = tail_start; page < end; page += PAGE_SIZE) {
+    if (map_direct_page(page) < 0) return -1;
+  }
+  return 0;
+}
+
 /* Change leaf permissions without replacing or freeing the mapped frame. */
 int vmm_set_page_flags(void *virt, uint64_t flags) {
   uint64_t v = (uint64_t)virt;

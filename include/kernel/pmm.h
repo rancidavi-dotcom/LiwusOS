@@ -5,6 +5,8 @@
 #include <stdbool.h>
 
 void pmm_init(uint64_t start_addr, uint64_t size);
+/* Restricts allocations during bootstrap while retaining the full bitmap. */
+void pmm_set_allocation_limit(uint64_t physical_limit);
 void pmm_init_region(uint64_t base, uint64_t size);
 void pmm_deinit_region(uint64_t base, uint64_t size);
 /* Marks a physical range in use.  Kernel, modules and the bump heap must

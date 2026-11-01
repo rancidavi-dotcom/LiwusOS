@@ -95,7 +95,7 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
   }
 
   uint64_t stack_size = 64 * 1024;
-  uint64_t stack_top = 0xC0000000;
+  uint64_t stack_top = USER_STACK_TOP;
   uint64_t stack_base = stack_top - stack_size;
   for (uint64_t vaddr = stack_base; vaddr < stack_top; vaddr += 4096) {
     void *phys = kmalloc_a(4096);
@@ -766,7 +766,7 @@ extern int sys_waitpid(int pid, int *status, int options);
 #define EXEC_STRING_MAX 256
 #define EXEC_STRINGS_BYTES 8192
 #define EXEC_STACK_SIZE (64 * 1024)
-#define EXEC_STACK_TOP 0xC0000000ULL
+#define EXEC_STACK_TOP USER_STACK_TOP
 
 static int exec_copy_string(char *dst, const char *user, uint32_t capacity,
                             uint32_t *copied) {
@@ -947,7 +947,7 @@ static int do_execve(registers_t *regs, const char *filename,
   page_directory_t *old_to_free = old_dir;
   current_task->heap_start = last_elf_heap_start;
   current_task->heap_end = last_elf_heap_start;
-  current_task->mmap_top = 0xBFFF0000ULL;
+  current_task->mmap_top = USER_MMAP_TOP;
   regs->rip = entry;
   regs->rsp = new_rsp;
   if (klass == ELFCLASS64) {

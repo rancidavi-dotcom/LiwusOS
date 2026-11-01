@@ -264,7 +264,7 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
   new_task->stack_top = (uint64_t)regs;
   new_task->heap_start = 0x40000000;
   new_task->heap_end = 0x40000000;
-  new_task->mmap_top = 0xBFFF0000;
+  new_task->mmap_top = USER_MMAP_TOP;
 
   serial_print("DBG_TASK: pid=");
   char nbuf[12];
@@ -330,7 +330,7 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
   uint64_t hstart = last_elf_heap_start ? last_elf_heap_start : 0x40000000;
   new_task->heap_start = hstart;
   new_task->heap_end = hstart;
-  new_task->mmap_top = 0xBFFF0000;
+  new_task->mmap_top = USER_MMAP_TOP;
 
   serial_print("DBG_TASK64: pid=");
   char nbuf[12];

@@ -198,6 +198,135 @@ static void pmm_init_multiboot_regions(uint32_t mbi_addr) {
   }
 }
 
+/* Extend the direct map over RAM reported by Multiboot2. Keep the bootstrap
+ * allocator under 1 GiB until the page tables for higher RAM are installed. */
+static int map_multiboot_direct_ram(uint32_t mbi_addr) {
+  struct {
+    uint32_t total_size;
+    uint32_t reserved;
+  } __attribute__((packed)) *info = (void *)(uint64_t)mbi_addr;
+
+  uint32_t offset = 8;
+  while (offset + 8 <= info->total_size) {
+    struct {
+      uint32_t type;
+      uint32_t size;
+    } __attribute__((packed)) *tag = (void *)((uint64_t)mbi_addr + offset);
+
+    if (tag->type == 6) {
+      struct {
+        uint32_t type, size;
+        uint32_t entry_size;
+        uint32_t entry_version;
+      } __attribute__((packed)) *mmap = (void *)tag;
+      if (mmap->entry_size < 24 || mmap->size < sizeof(*mmap)) return -1;
+      uint32_t entries = (mmap->size - sizeof(*mmap)) / mmap->entry_size;
+      for (uint32_t i = 0; i < entries; i++) {
+        struct {
+          uint64_t base_addr;
+          uint64_t length;
+          uint32_t type;
+          uint32_t reserved;
+        } __attribute__((packed)) *entry =
+            (void *)((uint64_t)tag + sizeof(*mmap) + i * mmap->entry_size);
+        if (entry->type != 1) continue;
+        uint64_t entry_end = entry->base_addr + entry->length;
+        if (entry_end < entry->base_addr) return -1;
+        if (entry_end <= DIRECT_MAP_BOOT_SIZE) continue;
+        if (vmm_map_direct_ram_region(entry->base_addr, entry->length) < 0)
+          return -1;
+      }
+    } else if (tag->type == 0) {
+      break;
+    }
+    if (tag->size < 8) return -1;
+    offset += (tag->size + 7) & ~7U;
+  }
+
+  /* The info block and modules may occupy bootloader-reserved pages rather
+   * than type-1 entries. Give them direct-map aliases for post-boot use. */
+  if (info->total_size && mbi_addr >= DIRECT_MAP_BOOT_SIZE &&
+      vmm_map_direct_ram_region(mbi_addr, info->total_size) < 0)
+    return -1;
+  for (uint32_t i = 0; i < mb2_mods_count; i++) {
+    struct {
+      uint32_t type, size;
+      uint32_t mod_start, mod_end, cmdline;
+    } __attribute__((packed)) *mod = (void *)(uint64_t)mb2_mods_addr[i];
+    if (mod->mod_end > mod->mod_start && mod->mod_start >= DIRECT_MAP_BOOT_SIZE &&
+        vmm_map_direct_ram_region(mod->mod_start,
+                                  mod->mod_end - mod->mod_start) < 0)
+      return -1;
+  }
+  return 0;
+}
+
+static int find_pmm_bitmap_region(uint32_t mbi_addr, uint64_t kernel_end,
+                                  uint64_t bitmap_size,
+                                  uint64_t *bitmap_start_out) {
+  struct {
+    uint32_t total_size;
+    uint32_t reserved;
+  } __attribute__((packed)) *info = (void *)(uint64_t)mbi_addr;
+  uint64_t mbi_end = (uint64_t)mbi_addr + info->total_size;
+  uint32_t offset = 8;
+
+  while (offset + 8 <= info->total_size) {
+    struct { uint32_t type, size; } __attribute__((packed)) *tag =
+        (void *)((uint64_t)mbi_addr + offset);
+    if (tag->type == 6) {
+      struct {
+        uint32_t type, size, entry_size, entry_version;
+      } __attribute__((packed)) *mmap = (void *)tag;
+      if (mmap->entry_size < 24 || mmap->size < sizeof(*mmap)) return -1;
+      uint32_t entries = (mmap->size - sizeof(*mmap)) / mmap->entry_size;
+      for (uint32_t i = 0; i < entries; i++) {
+        struct {
+          uint64_t base_addr, length;
+          uint32_t type, reserved;
+        } __attribute__((packed)) *entry =
+            (void *)((uint64_t)tag + sizeof(*mmap) + i * mmap->entry_size);
+        if (entry->type != 1) continue;
+        uint64_t region_end = entry->base_addr + entry->length;
+        if (region_end < entry->base_addr) continue;
+        if (region_end > DIRECT_MAP_BOOT_SIZE) region_end = DIRECT_MAP_BOOT_SIZE;
+        uint64_t candidate = entry->base_addr > kernel_end
+            ? entry->base_addr : kernel_end;
+        candidate = (candidate + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+
+        for (;;) {
+          if (candidate > UINT64_MAX - bitmap_size ||
+              candidate + bitmap_size > region_end) break;
+          uint64_t next = candidate;
+          if (candidate < mbi_end && candidate + bitmap_size > mbi_addr)
+            next = mbi_end;
+          for (uint32_t m = 0; m < mb2_mods_count; m++) {
+            struct {
+              uint32_t type, size;
+              uint32_t mod_start, mod_end, cmdline;
+            } __attribute__((packed)) *mod =
+                (void *)(uint64_t)mb2_mods_addr[m];
+            if (candidate < mod->mod_end &&
+                candidate + bitmap_size > mod->mod_start &&
+                mod->mod_end > next)
+              next = mod->mod_end;
+          }
+          if (next == candidate) {
+            *bitmap_start_out = candidate;
+            return 0;
+          }
+          candidate = (next + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+        }
+      }
+    } else if (tag->type == 0) {
+      break;
+    }
+    if (tag->size < 8) return -1;
+    offset += (tag->size + 7) & ~7U;
+  }
+  return -1;
+}
+
 void init_fpu() {
     uint64_t cr0;
     asm volatile("mov %%cr0, %0" : "=r"(cr0));
@@ -316,7 +445,8 @@ static void user_init_supervisor_task(void) {
 
 void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   (void)magic;
-  uint64_t reserved_start = virt_to_phys(end) + 0x1000;
+  uint64_t kernel_reserved_end = virt_to_phys(end) + 0x1000;
+  uint64_t bitmap_start = 0;
   uint64_t pmm_bitmap_bytes;
   uint64_t heap_start;
 
@@ -346,28 +476,20 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
     serial_print("\n");
   }
 
-  for (uint32_t i = 0; i < mb2_mods_count; i++) {
-    struct {
-      uint32_t type, size;
-      uint32_t mod_start;
-      uint32_t mod_end;
-      uint32_t cmdline;
-    } __attribute__((packed)) *mod = (void *)(uint64_t)mb2_mods_addr[i];
-    if ((uint64_t)mod->mod_end + 0x1000 > reserved_start) {
-      reserved_start = (uint64_t)mod->mod_end + 0x1000;
-    }
-  }
-
   if (memory_size == 0) {
     memory_size = 512 * 1024 * 1024;
   }
-  /* boot.s identity-maps only the first 1 GiB. Until higher physical memory
-   * gets a virtual mapping, the PMM and kernel heap must stay inside it. */
-  if (memory_size > 0x40000000ULL) memory_size = 0x40000000ULL;
+  /* The direct-map window at PML4[256] spans 512 GiB. PMM cannot manage RAM
+   * beyond that virtual window until a wider direct-map layout is selected. */
+  if (memory_size > DIRECT_MAP_SIZE) memory_size = DIRECT_MAP_SIZE;
 
   pmm_bitmap_bytes = ((memory_size / 4096) / 32) * sizeof(uint32_t);
   if (pmm_bitmap_bytes == 0) {
     pmm_bitmap_bytes = 4096;
+  }
+  if (find_pmm_bitmap_region(mbi_addr, kernel_reserved_end,
+                             pmm_bitmap_bytes, &bitmap_start) < 0) {
+    kernel_panic("no low RAM range available for the PMM bitmap");
   }
 
   init_gdt();
@@ -377,13 +499,29 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
     tss_flush();
   }
   init_fpu();
-  pmm_init(reserved_start, memory_size);
+  pmm_init(bitmap_start, memory_size);
   pmm_init_multiboot_regions(mbi_addr);
 
   /* pmm_init_multiboot_regions marks every available RAM range free. Put
    * back the complete boot image/module range before any PMM allocation. */
-  pmm_deinit_region(0, reserved_start);
-  pmm_reserve_region(reserved_start, pmm_bitmap_bytes);
+  pmm_reserve_region(0, kernel_reserved_end);
+  for (uint32_t i = 0; i < mb2_mods_count; i++) {
+    struct {
+      uint32_t type, size;
+      uint32_t mod_start, mod_end, cmdline;
+    } __attribute__((packed)) *mod = (void *)(uint64_t)mb2_mods_addr[i];
+    if (mod->mod_end > mod->mod_start)
+      pmm_reserve_region(mod->mod_start, mod->mod_end - mod->mod_start);
+  }
+  {
+    struct {
+      uint32_t total_size;
+      uint32_t reserved;
+    } __attribute__((packed)) *info = (void *)(uint64_t)mbi_addr;
+    pmm_reserve_region(mbi_addr, info->total_size);
+  }
+  pmm_reserve_region(bitmap_start, pmm_bitmap_bytes);
+  pmm_set_allocation_limit(DIRECT_MAP_BOOT_SIZE);
 
   /* Firmware framebuffer memory can otherwise be reported as available RAM
    * on some machines. Keep its backing frames out of the PMM before claiming
@@ -396,12 +534,17 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
                          (uint64_t)vga_fb_pitch * vga_fb_height);
   }
 
-  heap_start = reserved_start + pmm_bitmap_bytes + 0x1000;
+  heap_start = bitmap_start + pmm_bitmap_bytes + 0x1000;
   if (heap_start < 0x1000000) {
       heap_start = 0x1000000;
   }
   kheap_set_start(heap_start);
   init_vmm(memory_size);
+
+  if (map_multiboot_direct_ram(mbi_addr) < 0) {
+    kernel_panic("failed to extend the physical direct map");
+  }
+  pmm_set_allocation_limit(memory_size);
 
   {
     extern uint64_t vga_fb_addr;
@@ -434,8 +577,10 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
       uint32_t mod_start;
       uint32_t mod_end;
       uint32_t cmdline;
-    } __attribute__((packed)) *mod = (void *)(uint64_t)mb2_mods_addr[0];
-    init_initrd(mod->mod_start, mod->mod_end - mod->mod_start);
+    } __attribute__((packed)) *mod =
+        (void *)phys_to_virt(mb2_mods_addr[0]);
+    init_initrd((uintptr_t)phys_to_virt(mod->mod_start),
+                mod->mod_end - mod->mod_start);
     serial_print("Initrd loaded into memory\n");
   } else {
     serial_print("Initrd not provided by bootloader\n");

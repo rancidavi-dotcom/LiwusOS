@@ -61,8 +61,7 @@ typedef struct task {
   void *fpu_ctx;
   uint64_t heap_start;
   uint64_t heap_end;
-  // Topo (endereço mais alto) da região de mmap anônimo. Começa logo
-  // abaixo da stack do usuário (0xC0000000) e cresce para baixo.
+  // Topo da região de mmap. Começa na faixa alta de userspace e cresce para baixo.
   uint64_t mmap_top;
   uint64_t cpu_ticks;
   uint64_t switch_count;

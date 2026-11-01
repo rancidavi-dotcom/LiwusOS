@@ -8,15 +8,15 @@
  * LiwusOS User/Kernel boundary enforcement.
  *
  * The kernel image is linked in the higher half (0xffffffff80000000) and
- * loaded at 32 MiB. During step 9a a 1 GiB identity window is still kept for
- * the PMM, the kernel heap, page tables and the image's physical alias, so a
- * fixed address-range check is not sufficient on its own. User pages are
- * always mapped with PTE_U, while kernel pages are not. Validation therefore
- * checks that every covered page is mapped and has PTE_U set.
+ * loaded at 32 MiB. The direct map is in the upper canonical half. Until step
+ * 9c removes the low identity alias, reject the physical 16 MiB–1 GiB window
+ * from userspace. PTE_U checks remain authoritative for mapped pages.
  */
 
-#define USER_ADDR_MAX  0xC0000000ULL /* top of the user stack space */
-#define USER_ADDR_MIN  0x1000ULL       /* guard null page */
+#define USER_ADDR_MAX   0x0000800000000000ULL /* exclusive, canonical user ceiling */
+#define USER_ADDR_MIN   0x1000ULL             /* guard null page */
+#define USER_STACK_TOP  0x00007ffffffff000ULL
+#define USER_MMAP_TOP   0x00007f0000000000ULL
 
 #define EFAULT  14
 #define E2BIG    7
@@ -68,8 +68,7 @@ int strncpy_from_user(char *dst, const char *user_src, size_t maxlen);
  */
 static inline int is_user_addr(const void *ptr) {
     uint64_t addr = (uint64_t)ptr;
-    /* The kernel still uses a 1 GiB identity map. Keep user mappings out of
-     * the part that aliases RAM and the kernel image. */
+    /* Step 9c will remove this temporary low identity alias. */
     return (addr >= USER_ADDR_MIN && addr < USER_ADDR_MAX &&
             (addr < 0x01000000ULL || addr >= 0x40000000ULL));
 }

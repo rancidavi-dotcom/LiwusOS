@@ -7,6 +7,7 @@
 
 static uint32_t* pmm_bitmap = 0;
 static uint64_t  pmm_max_blocks = 0;
+static uint64_t  pmm_allocation_limit_blocks = 0;
 static uint64_t  pmm_used_blocks = 0;
 static spinlock_t pmm_lock = {0};
 
@@ -25,11 +26,18 @@ static inline bool bitmap_test(uint64_t bit) {
 void pmm_init(uint64_t start_addr, uint64_t size) {
     pmm_bitmap = (uint32_t *)phys_to_virt(start_addr);
     pmm_max_blocks = (size / BLOCK_SIZE) & ~31ULL;
+    pmm_allocation_limit_blocks = pmm_max_blocks;
     pmm_used_blocks = pmm_max_blocks;
 
     for (uint64_t i = 0; i < pmm_max_blocks / 32; i++) {
         pmm_bitmap[i] = 0xFFFFFFFF;
     }
+}
+
+void pmm_set_allocation_limit(uint64_t physical_limit) {
+    uint64_t limit_blocks = physical_limit / BLOCK_SIZE;
+    if (limit_blocks > pmm_max_blocks) limit_blocks = pmm_max_blocks;
+    pmm_allocation_limit_blocks = limit_blocks;
 }
 
 void pmm_init_region(uint64_t base, uint64_t size) {
@@ -100,10 +108,10 @@ int pmm_claim_contiguous_region(uint64_t hint, uint64_t desired_size,
     uint64_t best_start = 0, best_len = 0;
 
     spinlock_acquire(&pmm_lock);
-    for (uint64_t i = first; i < pmm_max_blocks;) {
-        while (i < pmm_max_blocks && bitmap_test(i)) i++;
+    for (uint64_t i = first; i < pmm_allocation_limit_blocks;) {
+        while (i < pmm_allocation_limit_blocks && bitmap_test(i)) i++;
         uint64_t start = i;
-        while (i < pmm_max_blocks && !bitmap_test(i) && i - start < desired) i++;
+        while (i < pmm_allocation_limit_blocks && !bitmap_test(i) && i - start < desired) i++;
         uint64_t len = i - start;
         if (len >= desired) {
             best_start = start;
@@ -131,12 +139,14 @@ int pmm_claim_contiguous_region(uint64_t hint, uint64_t desired_size,
 
 void* pmm_alloc_block() {
     spinlock_acquire(&pmm_lock);
-    for (uint64_t i = 0; i < pmm_max_blocks / 32; i++) {
+    uint64_t bitmap_words = (pmm_allocation_limit_blocks + 31) / 32;
+    for (uint64_t i = 0; i < bitmap_words; i++) {
         if (pmm_bitmap[i] != 0xFFFFFFFF) {
             for (uint32_t j = 0; j < 32; j++) {
                 uint32_t bit = 1 << j;
                 if (!(pmm_bitmap[i] & bit)) {
                     uint64_t block = i * 32 + j;
+                    if (block >= pmm_allocation_limit_blocks) break;
                     bitmap_set(block);
                     pmm_used_blocks++;
                     spinlock_release(&pmm_lock);
