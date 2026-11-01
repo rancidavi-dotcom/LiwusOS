@@ -164,6 +164,8 @@ typedef struct {
     task_t *current_task_ptr;
     uint64_t kernel_stack;
   uint64_t syscall_user_rsp;
+    uint64_t irq_stack_top;
+    uint64_t irq_stack_base;
 } __attribute__((packed)) cpu_local_t;
 
 static inline uint64_t read_gs_qword(uint32_t offset) {

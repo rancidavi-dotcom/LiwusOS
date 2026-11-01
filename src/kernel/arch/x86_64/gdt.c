@@ -7,6 +7,8 @@ extern void tss_flush();
 gdt_entry_t cpus_gdt[16][GDT_ENTRIES];
 gdt_ptr_t cpus_gdt_ptr[16];
 tss_entry_t cpus_tss[16];
+static uint8_t exception_stacks[16][2][16 * 1024]
+    __attribute__((aligned(4096)));
 
 gdt_ptr_t gdt_ptr;
 
@@ -67,6 +69,8 @@ static void write_gdt_tss(gdt_entry_t *gdt, tss_entry_t *tss, int32_t num, uint6
 
   memset(tss, 0, sizeof(tss_entry_t));
   tss->rsp0 = rsp0;
+  tss->ist1 = (uint64_t)&exception_stacks[(tss - cpus_tss)][0][16 * 1024];
+  tss->ist2 = (uint64_t)&exception_stacks[(tss - cpus_tss)][1][16 * 1024];
   tss->iomap_base = sizeof(tss_entry_t);
 
   gdt[num].limit_low = limit & 0xFFFF;

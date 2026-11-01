@@ -11,12 +11,18 @@ static uint64_t  pmm_allocation_limit_blocks = 0;
 static uint64_t  pmm_used_blocks = 0;
 static spinlock_t pmm_lock = {0};
 
+static int align_up_block(uint64_t value, uint64_t *block_out) {
+    if (value > UINT64_MAX - (BLOCK_SIZE - 1)) return -1;
+    *block_out = (value + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    return 0;
+}
+
 static inline void bitmap_set(uint64_t bit) {
-    pmm_bitmap[bit / 32] |= (1 << (bit % 32));
+    pmm_bitmap[bit / 32] |= (1U << (bit % 32));
 }
 
 static inline void bitmap_unset(uint64_t bit) {
-    pmm_bitmap[bit / 32] &= ~(1 << (bit % 32));
+    pmm_bitmap[bit / 32] &= ~(1U << (bit % 32));
 }
 
 static inline bool bitmap_test(uint64_t bit) {
@@ -41,10 +47,15 @@ void pmm_set_allocation_limit(uint64_t physical_limit) {
 }
 
 void pmm_init_region(uint64_t base, uint64_t size) {
+    if (!size) return;
     spinlock_acquire(&pmm_lock);
     uint64_t end = base + size;
     if (end < base) end = UINT64_MAX;
-    uint64_t align = (base + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    uint64_t align;
+    if (align_up_block(base, &align) < 0) {
+        spinlock_release(&pmm_lock);
+        return;
+    }
     uint64_t last = end / BLOCK_SIZE;
     uint64_t blocks = last > align ? last - align : 0;
 
@@ -58,10 +69,15 @@ void pmm_init_region(uint64_t base, uint64_t size) {
 }
 
 void pmm_deinit_region(uint64_t base, uint64_t size) {
+    if (!size) return;
     spinlock_acquire(&pmm_lock);
     uint64_t end = base + size;
     if (end < base) end = UINT64_MAX;
-    uint64_t align = (base + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    uint64_t align;
+    if (align_up_block(base, &align) < 0) {
+        spinlock_release(&pmm_lock);
+        return;
+    }
     uint64_t last = end / BLOCK_SIZE;
     uint64_t blocks = last > align ? last - align : 0;
 
@@ -102,9 +118,10 @@ int pmm_claim_contiguous_region(uint64_t hint, uint64_t desired_size,
                                 uint64_t *size_out) {
     if (!base_out || !size_out || desired_size == 0 || minimum_size == 0 ||
         minimum_size > desired_size) return -1;
-    uint64_t first = (hint + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    uint64_t desired = (desired_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    uint64_t minimum = (minimum_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    uint64_t first, desired, minimum;
+    if (align_up_block(hint, &first) < 0 ||
+        align_up_block(desired_size, &desired) < 0 ||
+        align_up_block(minimum_size, &minimum) < 0) return -1;
     uint64_t best_start = 0, best_len = 0;
 
     spinlock_acquire(&pmm_lock);
@@ -137,13 +154,15 @@ int pmm_claim_contiguous_region(uint64_t hint, uint64_t desired_size,
     return 0;
 }
 
-void* pmm_alloc_block() {
+static void *pmm_alloc_block_from(uint64_t first_block) {
     spinlock_acquire(&pmm_lock);
     uint64_t bitmap_words = (pmm_allocation_limit_blocks + 31) / 32;
-    for (uint64_t i = 0; i < bitmap_words; i++) {
+    for (uint64_t i = first_block / 32; i < bitmap_words; i++) {
         if (pmm_bitmap[i] != 0xFFFFFFFF) {
-            for (uint32_t j = 0; j < 32; j++) {
-                uint32_t bit = 1 << j;
+            uint32_t first_bit = i == first_block / 32
+                ? (uint32_t)(first_block % 32) : 0;
+            for (uint32_t j = first_bit; j < 32; j++) {
+                uint32_t bit = 1U << j;
                 if (!(pmm_bitmap[i] & bit)) {
                     uint64_t block = i * 32 + j;
                     if (block >= pmm_allocation_limit_blocks) break;
@@ -159,9 +178,21 @@ void* pmm_alloc_block() {
     return 0;
 }
 
+void* pmm_alloc_block(void) { return pmm_alloc_block_from(0); }
+
+void* pmm_alloc_block_above(uint64_t min_phys) {
+    uint64_t first;
+    if (align_up_block(min_phys, &first) < 0) return 0;
+    return pmm_alloc_block_from(first);
+}
+
 void pmm_free_block(void* addr) {
+    uint64_t virtual = (uint64_t)addr;
+    if (virtual < DIRECT_MAP_BASE ||
+        virtual >= DIRECT_MAP_BASE + DIRECT_MAP_SIZE ||
+        (virtual & (BLOCK_SIZE - 1))) return;
     spinlock_acquire(&pmm_lock);
-    uint64_t block = virt_to_phys(addr) / BLOCK_SIZE;
+    uint64_t block = (virtual - DIRECT_MAP_BASE) / BLOCK_SIZE;
     if (block < pmm_max_blocks && bitmap_test(block)) {
         bitmap_unset(block);
         if (pmm_used_blocks) pmm_used_blocks--;

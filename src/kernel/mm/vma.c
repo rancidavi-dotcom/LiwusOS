@@ -1,6 +1,17 @@
 #include "vma.h"
 #include "vmm.h"
 #include "kheap.h"
+#include "usercopy.h"
+
+static int contiguous_offset(uint64_t offset, uint64_t length,
+                             uint64_t next_offset) {
+  return length <= UINT64_MAX - offset && offset + length == next_offset;
+}
+
+static int valid_interval(uint64_t start, uint64_t end) {
+  return start >= USER_ADDR_MIN && start < end && end <= USER_ADDR_MAX &&
+         !(start & (PAGE_SIZE - 1)) && !(end & (PAGE_SIZE - 1));
+}
 
 static vma_t *vma_allocate(uint64_t start, uint64_t end, uint32_t prot,
                            uint32_t flags, uint64_t file_offset,
@@ -29,8 +40,7 @@ vma_t *vma_find(struct page_directory *mm, uint64_t address) {
 int vma_insert(struct page_directory *mm, uint64_t start, uint64_t end,
                uint32_t prot, uint32_t flags, uint64_t file_offset,
                void *backing) {
-  if (!mm || start >= end || (start & (PAGE_SIZE - 1)) ||
-      (end & (PAGE_SIZE - 1))) return -1;
+  if (!mm || !valid_interval(start, end)) return -1;
   vma_t **link = &mm->vmas;
   vma_t *prev = 0;
   while (*link && (*link)->start < start) {
@@ -42,12 +52,14 @@ int vma_insert(struct page_directory *mm, uint64_t start, uint64_t end,
 
   if (prev && prev->end == start && prev->prot == prot &&
       prev->flags == flags && prev->backing == backing &&
-      prev->file_offset + (prev->end - prev->start) == file_offset) {
+      contiguous_offset(prev->file_offset, prev->end - prev->start,
+                        file_offset)) {
     prev->end = end;
     if (prev->next && prev->next->start == end &&
         prev->next->prot == prot && prev->next->flags == flags &&
         prev->next->backing == backing &&
-        file_offset + (end - start) == prev->next->file_offset) {
+        contiguous_offset(file_offset, end - start,
+                          prev->next->file_offset)) {
       vma_t *merged = prev->next;
       prev->end = merged->end;
       prev->next = merged->next;
@@ -57,7 +69,7 @@ int vma_insert(struct page_directory *mm, uint64_t start, uint64_t end,
   }
   if (*link && end == (*link)->start && (*link)->prot == prot &&
       (*link)->flags == flags && (*link)->backing == backing &&
-      file_offset + (end - start) == (*link)->file_offset) {
+      contiguous_offset(file_offset, end - start, (*link)->file_offset)) {
     (*link)->start = start;
     (*link)->file_offset = file_offset;
     return 0;
@@ -71,8 +83,7 @@ int vma_insert(struct page_directory *mm, uint64_t start, uint64_t end,
 }
 
 int vma_remove(struct page_directory *mm, uint64_t start, uint64_t end) {
-  if (!mm || start >= end || (start & (PAGE_SIZE - 1)) ||
-      (end & (PAGE_SIZE - 1))) return -1;
+  if (!mm || !valid_interval(start, end)) return -1;
   vma_t *split_area = 0;
   vma_t *split_right = 0;
   for (vma_t *area = mm->vmas; area; area = area->next) {
@@ -120,21 +131,33 @@ int vma_remove(struct page_directory *mm, uint64_t start, uint64_t end) {
 }
 
 int vma_resize_heap(struct page_directory *mm, uint64_t start, uint64_t end) {
-  if (!mm || start >= end || (start & (PAGE_SIZE - 1)) ||
-      (end & (PAGE_SIZE - 1))) return -1;
-  for (vma_t *area = mm->vmas; area; area = area->next) {
-    if (!(area->flags & VMA_HEAP)) continue;
-    for (vma_t *other = mm->vmas; other; other = other->next) {
-      if (other == area) continue;
-      if (start < other->end && end > other->start) return -1;
+  if (!mm || !valid_interval(start, end)) return -1;
+  vma_t **heap_link = 0;
+  vma_t *heap = 0;
+  for (vma_t **link = &mm->vmas; *link; link = &(*link)->next) {
+    if ((*link)->flags & VMA_HEAP) {
+      if (heap) return -1;
+      heap = *link;
+      heap_link = link;
     }
-    area->start = start;
-    area->end = end;
-    return 0;
   }
-  return vma_insert(mm, start, end,
-                    VMA_PROT_READ | VMA_PROT_WRITE,
-                    VMA_PRIVATE | VMA_ANON | VMA_HEAP, 0, 0);
+  for (vma_t *area = mm->vmas; area; area = area->next) {
+    if (area == heap) continue;
+    if (start < area->end && end > area->start) return -1;
+  }
+  if (!heap)
+    return vma_insert(mm, start, end,
+                      VMA_PROT_READ | VMA_PROT_WRITE,
+                      VMA_PRIVATE | VMA_ANON | VMA_HEAP, 0, 0);
+
+  *heap_link = heap->next;
+  heap->start = start;
+  heap->end = end;
+  vma_t **insert = &mm->vmas;
+  while (*insert && (*insert)->start < start) insert = &(*insert)->next;
+  heap->next = *insert;
+  *insert = heap;
+  return 0;
 }
 
 int vma_clone(struct page_directory *src, struct page_directory *dst) {
@@ -163,7 +186,10 @@ void vma_destroy(struct page_directory *mm) {
 int vma_find_gap_topdown(struct page_directory *mm, uint64_t top,
                          uint64_t bottom, uint64_t length,
                          uint64_t *base_out) {
-  if (!mm || !base_out || !length || bottom >= top || length > top - bottom)
+  if (!mm || !base_out || !length || bottom < USER_ADDR_MIN ||
+      top > USER_ADDR_MAX || bottom >= top || length > top - bottom ||
+      (bottom & (PAGE_SIZE - 1)) || (top & (PAGE_SIZE - 1)) ||
+      (length & (PAGE_SIZE - 1)))
     return -1;
   uint64_t candidate = (top - length) & ~(uint64_t)(PAGE_SIZE - 1);
   while (candidate >= bottom) {

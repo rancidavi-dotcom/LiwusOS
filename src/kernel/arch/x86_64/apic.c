@@ -7,6 +7,7 @@
 #include "io.h"
 #include "kernel_layout.h"
 #include "string.h"
+#include "kstack.h"
 
 static volatile uint32_t *lapic_base = NULL;
 static uint64_t lapic_phys_base = 0;
@@ -196,8 +197,9 @@ void init_apic(void) {
 
     // Map LAPIC MMIO and enable Local APIC
     lapic_base = (volatile uint32_t *)phys_to_virt(lapic_phys_base);
-    vmm_map_page((void *)lapic_phys_base, phys_to_virt(lapic_phys_base),
-                 PTE_P | PTE_W | PTE_PCD | PTE_NX);
+    vmm_map_page_in(kernel_directory, (void *)lapic_phys_base,
+                    phys_to_virt(lapic_phys_base),
+                    PTE_P | PTE_W | PTE_PCD | PTE_NX);
     
     // Spurious Interrupt Vector Register (SIVR)
     // Bit 8 enables the LAPIC. Vector offset 0xFF maps spurious interrupts.
@@ -205,8 +207,9 @@ void init_apic(void) {
 
     // Map I/O APIC page
     if (ioapic_phys_base != 0) {
-        vmm_map_page((void *)ioapic_phys_base, phys_to_virt(ioapic_phys_base),
-                     PTE_P | PTE_W | PTE_PCD | PTE_NX);
+        vmm_map_page_in(kernel_directory, (void *)ioapic_phys_base,
+                        phys_to_virt(ioapic_phys_base),
+                        PTE_P | PTE_W | PTE_PCD | PTE_NX);
         serial_print("APIC: Mapped I/O APIC page.\n");
 
         // Route IRQs
@@ -264,8 +267,13 @@ void boot_aps(void) {
         serial_print("...\n");
 
         // Allocate a dedicated kernel stack for the AP core
-        uint64_t stack_size = 8192;
-        void *stack_base = kmalloc(stack_size);
+        size_t stack_size = 0;
+        void *stack_base = kernel_stack_alloc(KERNEL_STACK_MIN_SIZE,
+                                              &stack_size);
+        if (!stack_base) {
+            serial_print("APIC: could not allocate guarded AP stack\n");
+            continue;
+        }
         uint64_t stack_top = (uint64_t)stack_base + stack_size;
 
         ap_stack_val = stack_top;

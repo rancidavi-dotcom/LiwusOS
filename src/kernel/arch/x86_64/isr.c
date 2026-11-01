@@ -5,6 +5,7 @@
 #include "task.h"
 #include "string.h"
 #include "usercopy.h"
+#include "kstack.h"
 
 #define MAX_IRQ_HANDLERS 16
 static void (*irq_handlers[MAX_IRQ_HANDLERS])(void) = {0};
@@ -37,6 +38,10 @@ void isr_handler(registers_t *regs) {
     if (regs->int_no == 14) {
       uint64_t cr2;
       asm volatile("mov %%cr2, %0" : "=r"(cr2));
+      if ((regs->cs & 3) == 0 && kernel_stack_is_guard(cr2)) {
+        extern void kernel_panic(const char *msg);
+        kernel_panic("kernel stack guard page fault");
+      }
       serial_print(" cr2=");
       serial_print_hex(cr2);
     }
@@ -82,6 +87,15 @@ serial_print(" rip=");
 /* O Assembly 'irq_common_stub' faz 'push %esp' e 'call irq_handler', então
  * recebe um ponteiro */
 uint64_t irq_handler(uint64_t rsp) {
+  uint64_t handler_rsp;
+  asm volatile("mov %%rsp, %0" : "=r"(handler_rsp));
+  uint64_t irq_stack_base = read_gs_qword(40);
+  uint64_t irq_stack_top = read_gs_qword(32);
+  if (irq_stack_top &&
+      (handler_rsp < irq_stack_base || handler_rsp >= irq_stack_top)) {
+    extern void kernel_panic(const char *msg);
+    kernel_panic("IRQ handler escaped per-CPU IRQ stack");
+  }
   usercopy_clear_ac();
   registers_t *regs = (registers_t *)rsp;
 

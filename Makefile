@@ -71,13 +71,16 @@ TEST_SRCS = tests/test_runner_kernel.c \
             tests/test_sdfs_v2.c \
             tests/test_sched.c \
             tests/test_vma.c \
+            tests/test_pmm_high.c \
+            tests/test_kstack.c \
             tests/test_runner_ring3.c
 
 TEST_OBJS = $(patsubst %.c,$(TEST_OBJ_DIR)/%.o,$(TEST_SRCS))
+TEST_S_OBJS = $(TEST_OBJ_DIR)/tests/kstack_fault_probe.o
 # Kernel compilado com -DKERNEL_TEST (substitui o kernel.o normal)
 TEST_KERNEL_OBJS = $(filter-out $(OBJ_DIR)/src/kernel/core/kernel.o,$(KERNEL_OBJS)) \
                    $(TEST_OBJ_DIR)/src/kernel/core/kernel.o \
-                   $(TEST_OBJS)
+                   $(TEST_OBJS) $(TEST_S_OBJS)
 
 TEST_CFLAGS = $(CFLAGS) -DKERNEL_TEST
 RING3_USER_ELF = $(TEST_OBJ_DIR)/ring3/suite.elf
@@ -106,7 +109,7 @@ ring3-test: $(TEST_ISO_IMAGE)
 	@grep -q '\[RING3 RESULT\] ALL PASS' /tmp/liwusos-ring3-integration.serial
 	@grep -q 'RESULT: ALL PASS' /tmp/liwusos-ring3-integration.serial
 
-# Exercise guarded usercopy on CPUs with SMEP/SMAP and the >1 GiB direct map.
+# Exercise usercopy, stack guards, and high physical RAM on SMEP/SMAP CPUs.
 smap-test: $(TEST_ISO_IMAGE)
 	: > /tmp/liwusos-smap-integration.serial
 	timeout 90 $(QEMU) -machine q35 -cpu max -smp 4 -m 4096 \
@@ -121,7 +124,7 @@ smap-test: $(TEST_ISO_IMAGE)
 	@grep -q 'VMM: CR4.SMAP enabled' /tmp/liwusos-smap-integration.serial
 	@grep -q 'APIC: AP core (APIC ID 3) booted and initialized successfully!' \
 		/tmp/liwusos-smap-integration.serial
-	@grep -q 'RESULT: 43/43 PASS' /tmp/liwusos-smap-integration.serial
+	@grep -q 'RESULT: 45/45 PASS' /tmp/liwusos-smap-integration.serial
 	@grep -q 'RESULT: ALL PASS' /tmp/liwusos-smap-integration.serial
 	@grep -q 'Linux x86-64 SYSCALL getpid/fstat/openat/mmap/munmap/FS-TLS/write PASS' \
 		/tmp/liwusos-smap-integration.serial
@@ -164,6 +167,10 @@ $(TEST_OBJ_DIR)/src/kernel/core/kernel.o: src/kernel/core/kernel.c
 $(TEST_OBJ_DIR)/tests/%.o: tests/%.c tests/framework.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $< -o $@ $(TEST_CFLAGS)
+
+$(TEST_OBJ_DIR)/tests/%.o: tests/%.s
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ $(M64)
 
 $(TEST_OBJ_DIR)/ring3/suite.o: tests/ring3/suite.c
 	@mkdir -p $(dir $@)

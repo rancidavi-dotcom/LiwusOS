@@ -19,6 +19,7 @@
 #include "vfs.h"
 #include "syscall.h"
 #include "vmm.h"
+#include "kstack.h"
 #include "vga.h"
 #include "terminal.h"
 #include "kernel_layout.h"
@@ -547,13 +548,16 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   pmm_set_allocation_limit(memory_size);
   vmm_protect_kernel_image();
 
-  void *transition_stack = kmalloc(32 * 1024);
+  size_t transition_stack_size = 0;
+  void *transition_stack = kernel_stack_alloc(KERNEL_STACK_MAX_SIZE,
+                                               &transition_stack_size);
   if (!transition_stack) kernel_panic("cannot allocate high boot stack");
+  kernel_stack_adopt_boot(transition_stack, transition_stack_size);
   extern void call_on_stack(void *stack_top,
                             void (*entry)(void) __attribute__((noreturn)))
       __attribute__((noreturn));
   extern void kernel_main_continue(void) __attribute__((noreturn));
-  call_on_stack((uint8_t *)transition_stack + 32 * 1024,
+  call_on_stack((uint8_t *)transition_stack + transition_stack_size,
                 kernel_main_continue);
   kernel_panic("high-stack continuation returned");
 }

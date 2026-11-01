@@ -19,6 +19,8 @@ int pmm_claim_contiguous_region(uint64_t hint, uint64_t desired_size,
 /* Allocations are returned as pointers in the direct map. Page-table entries
  * and device descriptors must store virt_to_phys() of the returned pointer. */
 void* pmm_alloc_block();
+/* Test/driver allocation constrained to physical frames at or above `min`. */
+void* pmm_alloc_block_above(uint64_t min_phys);
 /* Frees a pointer returned by pmm_alloc_block() or another direct-map alias. */
 void pmm_free_block(void* addr);
 

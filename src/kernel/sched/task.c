@@ -12,6 +12,7 @@
 #include "elf.h"
 #include "timer.h"
 #include "usercopy.h"
+#include "kstack.h"
 
 cpu_local_t cpus_local[16];
 spinlock_t scheduler_lock = {0};
@@ -87,6 +88,12 @@ void init_cpu_local(int cpu_id) {
     asm volatile("wrmsr" : : "a"(low), "d"(high), "c"(0xC0000101));
     /* User GS starts at zero; SWAPGS moves the per-CPU base across the ring. */
     asm volatile("wrmsr" : : "a"(0), "d"(0), "c"(0xC0000102));
+    size_t irq_size = 0;
+    void *irq_base = kernel_stack_alloc(KERNEL_STACK_MIN_SIZE, &irq_size);
+    if (irq_base) {
+      local->irq_stack_base = (uint64_t)irq_base;
+      local->irq_stack_top = (uint64_t)irq_base + irq_size;
+    }
 }
 
 // Helper function to convert int to string if not in string.h
@@ -133,6 +140,12 @@ void init_tasking() {
   init_task->id = 0;
   init_task->state = TASK_RUNNING;
   init_task->page_directory = current_directory;
+  init_task->kernel_stack_base = (uint64_t)kernel_stack_boot_base();
+  init_task->kernel_stack_size = (uint32_t)kernel_stack_boot_size();
+  init_task->kernel_stack = init_task->kernel_stack_base +
+                            init_task->kernel_stack_size;
+  init_task->stack_canary = 0xDEADBEEFCAFEBABE;
+  *(uint64_t *)init_task->kernel_stack_base = init_task->stack_canary;
   init_task->user_mode = false;
   strcpy(init_task->cwd, "/");
   task_assign_name(init_task, "kernel", false);
@@ -154,7 +167,8 @@ int create_task_named(void (*entry_point)(), const char *name) {
 
 int create_task_named_prio(void (*entry_point)(), const char *name,
                             int priority) {
-  return create_task_named_stack(entry_point, name, priority, 65536);
+  return create_task_named_stack(entry_point, name, priority,
+                                 KERNEL_STACK_MAX_SIZE);
 }
 
 int create_task_named_stack(void (*entry_point)(), const char *name,
@@ -175,12 +189,14 @@ int create_task_named_stack(void (*entry_point)(), const char *name,
     new_task->time_slice = priority;
   }
 
-  if (stack_size < 8192) stack_size = 8192;
-  uint64_t stack_base = (uint64_t)kmalloc(stack_size);
-  uint64_t stack = stack_base + stack_size;
+  size_t actual_stack_size = 0;
+  uint64_t stack_base = (uint64_t)kernel_stack_alloc((size_t)stack_size,
+                                                      &actual_stack_size);
+  if (!stack_base) { kfree(new_task); return -1; }
+  uint64_t stack = stack_base + actual_stack_size;
   new_task->kernel_stack_base = stack_base;
   new_task->kernel_stack = stack;
-  new_task->kernel_stack_size = (uint32_t)stack_size;
+  new_task->kernel_stack_size = (uint32_t)actual_stack_size;
 
   /* Prepara a pilha para o iret */
   registers_t *  regs = (registers_t *)(uint64_t)(stack - sizeof(registers_t));
@@ -239,8 +255,9 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
   task_assign_name(new_task, name, true);
   task_sched_fields_init(new_task);
 
-  uint64_t stack_size = 8192;
-  uint64_t stack_base = (uint64_t)kmalloc(stack_size);
+  size_t stack_size = 0;
+  uint64_t stack_base = (uint64_t)kernel_stack_alloc(KERNEL_STACK_MIN_SIZE,
+                                                      &stack_size);
   if (!stack_base) { kfree(new_task); return -1; }
   stack = stack_base + stack_size;
   /* Alinhar kernel stack para 16 bytes (ABI x86_64) */
@@ -303,8 +320,9 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
   task_assign_name(new_task, name, true);
   task_sched_fields_init(new_task);
 
-  uint64_t stack_size = 8192;
-  uint64_t stack_base = (uint64_t)kmalloc(stack_size);
+  size_t stack_size = 0;
+  uint64_t stack_base = (uint64_t)kernel_stack_alloc(KERNEL_STACK_MIN_SIZE,
+                                                      &stack_size);
   if (!stack_base) { kfree(new_task); return -1; }
   stack = stack_base + stack_size;
   /* Alinhar kernel stack para 16 bytes (ABI x86_64) */
@@ -374,6 +392,11 @@ uint64_t schedule(uint64_t current_rsp) {
     if (current_rsp < stack_bottom || current_rsp > stack_top) {
       extern void kernel_panic(const char *msg);
       char buf[128];
+      serial_print("[kstack] rsp="); serial_print_hex(current_rsp);
+      serial_print(" bottom="); serial_print_hex(stack_bottom);
+      serial_print(" top="); serial_print_hex(stack_top);
+      serial_print(" size="); serial_print_hex(curr->kernel_stack_size);
+      serial_print("\n");
       panic_stack_msg(curr, "RSP out of bounds", buf, sizeof(buf));
       kernel_panic(buf);
     }
@@ -743,8 +766,9 @@ int fork_process(registers_t *regs) {
     return -ENOMEM;
   }
 
-  uint32_t kernel_stack_size = 4096;
-  uint64_t kernel_stack_base = (uint64_t)kmalloc(kernel_stack_size);
+  size_t kernel_stack_size = 0;
+  uint64_t kernel_stack_base = (uint64_t)kernel_stack_alloc(
+      KERNEL_STACK_MIN_SIZE, &kernel_stack_size);
   if (!kernel_stack_base) {
     vmm_free_directory(new_task->page_directory);
     kfree(new_task);
@@ -834,8 +858,9 @@ int sys_waitpid(int pid, int *status, int options) {
 
             scheduler_unlock_irqrestore(sched_flags);
 
-            if (t->kernel_stack_base && t->kernel_stack_size) {
-               kfree((void *)t->kernel_stack_base);
+            if (t->kernel_stack_base && t->kernel_stack_size && t->id != 0) {
+               kernel_stack_free((void *)t->kernel_stack_base,
+                                 t->kernel_stack_size);
             }
 
             // Reparent children to avoid Use-After-Free

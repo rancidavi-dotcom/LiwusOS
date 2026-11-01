@@ -2,7 +2,7 @@
 
 Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verificáveis. A compatibilidade traduz a ABI na borda e reutiliza o mesmo motor de processos, memória virtual e VFS do sistema. Cada fase começa somente depois do gate anterior passar.
 
-> **Estado atual:** Gate 0 concluído (`6402de8`); passos 9a/9b (`6bbb7cf`, `7fd8184`) e 9c/10/11 concluídos nesta branch. Passos 12 e 13 implementados no escopo atual: cada diretório possui lista VMA ordenada integrada com ELF, stack, heap, mmap, munmap e fork; EFER.NXE, proteção de imagem do kernel e W^X em ELF/mmap. Passo 14 implementado: SMEP/SMAP são ligados por CPU quando disponíveis; cópias de usercopy usam STAC/CLAC e caminhos de ELF, `brk`, `mmap` e construção de stack foram ajustados para não escrever diretamente em páginas user. `make test` e `make ring3-test` passam 43/43; `make smap-test` também passou em QEMU `-cpu max -smp 4 -m 4096`, com SMAP, APs, remoção da identidade e 43/43. O passo 17 oferece operações `_in(page_directory_t *)` para mapear, alterar permissões e remover páginas; `mmap`, `munmap` e `brk` as usam, mas a migração das demais operações ainda falta. A Fase 4 tem uma fatia inicial: stub `SYSCALL`, STAR/LSTAR/SFMASK, `swapgs`, seleção explícita de ABI e dispatcher isolado para `read`, `write`, `close`, `openat`, `stat`, `fstat`, `newfstatat`, `lseek`, `mmap`, `munmap`, `brk`, `getpid`, `exit` e `exit_group`. O probe Linux passa por `getpid`, `fstat`, `openat`/`-ENOENT`, `mmap`, `munmap`, `-ENOSYS`, `arch_prctl` FS e `write`. FS-base é salva por tarefa e restaurada na troca de contexto. O teste externo com glibc estática falhou em `#UD` ao executar AVX; o ELF dinâmico com `PT_INTERP` ainda não é carregado. Isso não fecha os passos 35/36 nem representa compatibilidade completa. O Gate 1 ainda requer demand paging, stacks de kernel guardadas e migração completa das operações para interfaces explícitas por `mm`.
+> **Estado desta revisão:** Gate 0 permanece como marco histórico (`6402de8`). Os passos 9a/9b (`6bbb7cf`, `7fd8184`), 9c–14 e 16 estão implementados; 12–13 incluem VMAs ordenadas, NXE e W^X. O passo 15 foi implementado com stacks de kernel guardadas, stacks distintas por tarefa, IRQ por CPU e IST para page fault/double fault. O passo 17 foi migrado nos caminhos de ELF/VM e nos mapeamentos de kernel/MMIO; wrappers legados ainda existem dentro da camada VMM para operações de boot. Evidência atual: build de produção com `-Werror`; testes kernel/ring-3 45/45; `make ring3-test` 45/45; `make smap-test` em QEMU `-cpu max -smp 4 -m 4096`, com SMAP, três APs iniciados, identidade removida e frame alocado/acessado/liberado acima de 1 GiB. PIE ET_DYN executa na base definida e o teste ring-3 comprova NX. Isso não exercita migração de tarefas entre CPUs: o scheduler de userspace segue no BSP. Um probe Linux estático freestanding valida apenas a fatia de syscalls documentada em `ABI_LINUX.md`; não é compatibilidade Linux completa. O ELF glibc estático local falhou em `#UD` por instrução AVX, e `PT_INTERP` ainda não é carregado.
 
 ## Fase 0 — Congelar e descrever a base
 
@@ -25,11 +25,11 @@ Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verific
 12. Introduzir uma lista de VMA por espaço de endereçamento com intervalo, proteção, flags e backing.
 13. Habilitar EFER.NXE e aplicar W^X nos mapeamentos de usuário e kernel.
 14. Habilitar SMEP e SMAP quando disponíveis; proteger acessos de usercopy com STAC/CLAC.
-15. Usar kernel stacks de 16–32 KiB com página de guarda e separar stacks de syscall e IRQ.
+15. **Implementado nesta revisão:** usar kernel stacks de 16–32 KiB com página de guarda, stack por tarefa para syscalls, stack IRQ por CPU e IST para page faults/double faults. O teste dispara #PF real na guarda e verifica remoção dos mapeamentos ao liberar.
 16. Registrar a decisão de adiar KPTI enquanto o modelo de ameaça não exigir isolamento de kernel por CR3.
-17. Fazer operações de página receberem explicitamente o `mm`/diretório alvo em vez de depender de `current_directory` global.
+17. **Implementado para os caminhos em uso:** operações de página recebem `page_directory_t *`; ELF, VM de processo, criação/liberação de stacks e mapeamentos de kernel usam diretório explícito. Wrappers sem `_in` permanecem como conveniência de boot sobre o diretório atual; não são usados pela compatibilidade Linux nem para modificar mm de outro processo.
 
-**Gate 1:** ET_DYN carregado e executado em `0x00005555_5555_4000`; máquina com 4 GiB consegue usar memória acima de 1 GiB; acesso NX gera page fault; suíte nativa e ring-3 preservadas.
+**Gate 1 — PASSOU nesta revisão:** ET_DYN carregado e executado em `0x00005555_5555_4000`; em QEMU com 4 GiB foi alocado, acessado e liberado um frame acima de 1 GiB; o teste ring-3 confirma NX; as suítes nativa e ring-3 preservaram 45/45. `make smap-test` repetiu a evidência com SMAP e quatro CPUs inicializadas. O log verificável fica em `/tmp/liwusos-smap-integration.serial`. Demand paging, COW e loader `PT_INTERP` são passos posteriores (27–34), não pré-requisitos deste gate. A cobertura não prova todos os endereços até 512 GiB, nem migração de tarefas entre CPUs ou shootdown TLB remoto; o scheduler de userspace continua no BSP.
 
 ## Fase 2 — Processos, threads e sincronização
 
@@ -110,7 +110,7 @@ Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verific
 
 Esta sequência prioriza dependências técnicas; os itens não têm estimativa de prazo.
 
-1. Fechar Gate 1: stacks de kernel guardadas e por CPU/tarefa, concluir a migração da VM para APIs explícitas por `mm` e validar endereços físicos acima de 1 GiB, NX e regressões nativas.
+1. Fase 1/Gate 1 foi fechada com as evidências acima. O próximo trabalho é a Fase 2: separar `process_t`/`thread_t`; preservar como requisito validar TLS com threads reais e migração controlada antes de habilitar scheduler de user em APs.
 2. Fechar a separação `process_t`/`thread_t` e `clone`/`CLONE_SETTLS`; depois testar `ARCH_SET_FS/GET_FS` sob várias threads e migração controlada entre CPUs.
 3. Definir política de capacidades da CPU e implementar estado x87/SSE/AVX com save/restore e sinalização coerente ao userspace; repetir o ELF glibc estático com alvo ISA explicitamente suportado.
 4. Completar VM Linux que o loader necessita: demand paging, stack/auxv, `PT_TLS`, COW e mmap de arquivo; então validar ELF estático de terceiros sem modificação e registrar os artefatos/hash do teste.

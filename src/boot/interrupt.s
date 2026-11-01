@@ -98,6 +98,24 @@ isr_common_stub:
 1:
   PUSH_ALL
 
+  /* User page faults arrive on IST1 so a kernel-stack overflow can be
+   * diagnosed safely. If the fault handler exits/schedules the user task,
+   * its continuation must live on that task's own stack, not the shared IST.
+   * registers_t is 22 qwords; copy it before entering C. Kernel faults remain
+   * on IST1 for panic/guard handling. */
+  cmpq $14, 120(%rsp)       /* registers_t.int_no */
+  jne 5f
+  testb $3, 144(%rsp)       /* registers_t.cs */
+  jz 5f
+  mov %rsp, %rsi
+  mov %gs:16, %rdi
+  sub $176, %rdi
+  mov %rdi, %rdx
+  mov $22, %rcx
+  rep movsq
+  mov %rdx, %rsp
+5:
+
   /* Keep FS_BASE intact: Linux tasks use it for TLS. Flat DS/ES bases are 0. */
   mov %rsp, %rdi         /* First arg: pointer to registers_t */
   call isr_handler
@@ -146,7 +164,17 @@ irq_common_stub:
 
   /* Keep FS_BASE intact across IRQs for per-thread TLS. */
   mov %rsp, %rdi          /* First arg: pointer to registers_t */
+  mov %gs:32, %rsp        /* Per-CPU guarded IRQ stack, separate from task stack */
+  test %rsp, %rsp
+  jz 6f
+  and $-16, %rsp
   call irq_handler
+  jmp 7f
+6:
+  /* Early boot fallback until init_cpu_local allocates the IRQ stack. */
+  mov %rdi, %rsp
+  call irq_handler
+7:
   mov %rax, %rsp          /* Schedule() returns new stack pointer */
 
   POP_ALL

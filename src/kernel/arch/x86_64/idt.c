@@ -121,6 +121,10 @@ void init_idt() {
   idt_set_gate(29, (uint64_t)isr29, 0x08, 0x8E);
   idt_set_gate(30, (uint64_t)isr30, 0x08, 0x8E);
   idt_set_gate(31, (uint64_t)isr31, 0x08, 0x8E);
+  /* Page fault and double fault use per-CPU TSS IST stacks so a kernel-stack
+   * overflow can be diagnosed without running the handler on that stack. */
+  idt_entries[14].ist = 1;
+  idt_entries[8].ist = 2;
 
   /* Registrar IRQs */
   idt_set_gate(32, (uint64_t)irq0, 0x08, 0x8E);

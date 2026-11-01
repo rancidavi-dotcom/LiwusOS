@@ -23,5 +23,6 @@ struct idt_ptr_struct {
 typedef struct idt_ptr_struct idt_ptr_t;
 
 void init_idt();
+extern idt_entry_t idt_entries[256];
 
 #endif

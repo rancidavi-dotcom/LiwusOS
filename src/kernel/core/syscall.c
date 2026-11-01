@@ -19,10 +19,8 @@
 #include "usercopy.h"
 #include "vma.h"
 #include "kstat.h"
+#include "elf_loader.h"
 
-extern int elf_class(void *file_buffer, uint32_t file_size);
-extern uint64_t elf32_load_file(void *file_buffer, uint32_t file_size);
-extern uint64_t elf64_load_file(void *file_buffer, uint32_t file_size);
 extern uint64_t last_elf_heap_start;
 extern int last_elf_load_error;
 
@@ -87,10 +85,10 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
 
   uint64_t entry;
   if (eclass == ELFCLASS32) {
-    entry = elf32_load_file(addr, size);
+    entry = elf32_load_file_in(current_directory, addr, size);
     sys_execve_is_64 = 0;
   } else {
-    entry = elf64_load_file(addr, size);
+    entry = elf64_load_file_in(current_directory, addr, size);
     sys_execve_is_64 = 1;
   }
   if (entry == 0) {
@@ -105,7 +103,11 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
     void *phys = kmalloc_a(4096);
     if (!phys) return (uint64_t)-1;
     memset(phys, 0, 4096);
-    vmm_map_page(phys, (void *)vaddr, PTE_P | PTE_W | PTE_U | PTE_NX);
+    if (vmm_map_page_in(current_directory, phys, (void *)vaddr,
+                        PTE_P | PTE_W | PTE_U | PTE_NX) < 0) {
+      pmm_free_block(phys);
+      return (uint64_t)-1;
+    }
   }
   if (vma_insert(current_directory, stack_base, stack_top,
                  VMA_PROT_READ | VMA_PROT_WRITE,
@@ -823,7 +825,7 @@ static int user_stack_push32(uint64_t *sp, uint32_t value) {
   return copy_to_user((void *)*sp, &value, sizeof(value));
 }
 
-static int exec_build_stack(int elf_class_value,
+static int exec_build_stack(page_directory_t *mm, int elf_class_value,
                             char *argv[EXEC_VECTOR_MAX], uint32_t argc,
                             char *envp[EXEC_VECTOR_MAX], uint32_t envc,
                             uint64_t *stack_out) {
@@ -832,13 +834,17 @@ static int exec_build_stack(int elf_class_value,
     void *phys = pmm_alloc_block();
     if (!phys) return -ENOMEM;
     memset(phys, 0, PAGE_SIZE);
-    vmm_map_page(phys, (void *)va, PTE_P | PTE_W | PTE_U | PTE_NX);
+    if (vmm_map_page_in(mm, phys, (void *)va,
+                        PTE_P | PTE_W | PTE_U | PTE_NX) < 0) {
+      pmm_free_block(phys);
+      return -ENOMEM;
+    }
     if (validate_user_pointer((void *)va, PAGE_SIZE) < 0) {
       pmm_free_block(phys);
       return -ENOMEM;
     }
   }
-  if (vma_insert(current_directory, stack_base, EXEC_STACK_TOP,
+  if (vma_insert(mm, stack_base, EXEC_STACK_TOP,
                  VMA_PROT_READ | VMA_PROT_WRITE,
                  VMA_PRIVATE | VMA_ANON | VMA_STACK, 0, 0) < 0)
     return -ENOMEM;
@@ -948,8 +954,8 @@ static int do_execve(registers_t *regs, const char *filename,
   switch_page_directory(new_dir);
   last_elf_heap_start = 0;
   uint64_t entry = klass == ELFCLASS64
-      ? elf64_load_file(file, file_size)
-      : elf32_load_file(file, file_size);
+      ? elf64_load_file_in(new_dir, file, file_size)
+      : elf32_load_file_in(new_dir, file, file_size);
   int load_error = entry ? 0 : last_elf_load_error;
   if (owned_file) kfree(file);
   if (!entry) {
@@ -963,7 +969,7 @@ static int do_execve(registers_t *regs, const char *filename,
   }
 
   uint64_t new_rsp = 0;
-  rc = exec_build_stack(klass, kargv, argc, kenvp, envc, &new_rsp);
+  rc = exec_build_stack(new_dir, klass, kargv, argc, kenvp, envc, &new_rsp);
   if (rc < 0) {
     serial_print("[execve] user stack setup failed rc="); serial_print_hex((uint64_t)(int64_t)rc); serial_print("\n");
     current_task->page_directory = old_dir;

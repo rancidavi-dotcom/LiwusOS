@@ -6,9 +6,44 @@
 #include "serial.h"
 #include "usercopy.h"
 #include "vma.h"
+#include "spinlock.h"
 
 page_directory_t *kernel_directory = 0;
 page_directory_t *current_directory = 0;
+static page_directory_t *directory_registry = 0;
+static spinlock_t directory_registry_lock = {0};
+static int vmm_unmap_page_keep_frame_in(page_directory_t *dir,
+                                        uint64_t virt);
+
+static uint64_t directory_lock_irqsave(void) {
+  uint64_t flags;
+  asm volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+  spinlock_acquire(&directory_registry_lock);
+  return flags;
+}
+
+static void directory_unlock_irqrestore(uint64_t flags) {
+  spinlock_release(&directory_registry_lock);
+  if (flags & (1ULL << 9)) asm volatile("sti" ::: "memory");
+}
+
+static void directory_register(page_directory_t *dir) {
+  if (!dir || dir == kernel_directory) return;
+  uint64_t irq_flags = directory_lock_irqsave();
+  dir->registry_next = directory_registry;
+  directory_registry = dir;
+  directory_unlock_irqrestore(irq_flags);
+}
+
+static void directory_unregister(page_directory_t *dir) {
+  if (!dir || dir == kernel_directory) return;
+  uint64_t irq_flags = directory_lock_irqsave();
+  page_directory_t **link = &directory_registry;
+  while (*link && *link != dir) link = &(*link)->registry_next;
+  if (*link == dir) *link = dir->registry_next;
+  dir->registry_next = 0;
+  directory_unlock_irqrestore(irq_flags);
+}
 
 static inline void vmm_wrmsr(uint32_t msr, uint64_t val) {
     uint32_t low = val & 0xFFFFFFFF;
@@ -146,31 +181,72 @@ static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
   return &pt->entries[pt_i];
 }
 
-void vmm_map_page(void *phys, void *virt, uint64_t flags) {
-  vmm_map_page_in(current_directory, phys, virt, flags);
+int vmm_page_present_in(page_directory_t *dir, uint64_t virt) {
+  if (!dir || !dir->pml4_virt) return 0;
+  pte_t *entry = walk_pt(dir, virt, 0);
+  return entry && (*entry & PTE_P);
 }
 
-void vmm_map_page_in(page_directory_t *dir, void *phys, void *virt,
-                     uint64_t flags) {
-  if (!dir || !dir->pml4_virt) return;
+int vmm_get_mapping_in(page_directory_t *dir, uint64_t virt,
+                       uint64_t *phys_out, uint64_t *flags_out) {
+  if (!dir || !dir->pml4_virt) return -1;
+  pte_t *entry = walk_pt(dir, virt, 0);
+  if (!entry || !(*entry & PTE_P)) return -1;
+  if (phys_out) *phys_out = *entry & PTE_ADDR_MASK;
+  if (flags_out) *flags_out = *entry & (0xFFFULL | PTE_NX);
+  return 0;
+}
+
+int vmm_map_page(void *phys, void *virt, uint64_t flags) {
+  return vmm_map_page_in(current_directory, phys, virt, flags);
+}
+
+int vmm_map_page_in(page_directory_t *dir, void *phys, void *virt,
+                    uint64_t flags) {
+  if (!dir || !dir->pml4_virt || !phys || !virt) return -1;
   uint64_t p = virt_to_phys(phys);
   uint64_t v = (uint64_t)virt;
   uint64_t f = flags;
   if (!vmm_nx_enabled) f &= ~PTE_NX;
-  if ((f & PTE_U) && !is_user_addr(virt)) return;
+  if ((f & PTE_U) && !is_user_addr(virt)) return -1;
 
   walk_pt_modified_pml4 = 0;
   pte_t *entry = walk_pt(dir, v, f);
-  if (entry) {
-    *entry = (p & PTE_ADDR_MASK) | (f & (0xFFFULL | PTE_NX)) | PTE_P;
-    if (dir == current_directory && walk_pt_modified_pml4) {
-      uint64_t cr3;
-      asm volatile("mov %%cr3, %0" : "=r"(cr3));
-      asm volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
-    } else if (dir == current_directory) {
-      asm volatile("invlpg (%0)" : : "r"(v) : "memory");
-    }
+  if (!entry) return -1;
+  if ((*entry & PTE_P) && ((*entry & PTE_ADDR_MASK) != (p & PTE_ADDR_MASK)))
+    return -1;
+  *entry = (p & PTE_ADDR_MASK) | (f & (0xFFFULL | PTE_NX)) | PTE_P;
+  if (dir == current_directory && walk_pt_modified_pml4) {
+    uint64_t cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(cr3));
+    asm volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
+  } else if (dir == current_directory) {
+    asm volatile("invlpg (%0)" : : "r"(v) : "memory");
   }
+  return 0;
+}
+
+int vmm_map_kernel_page(uint64_t phys, uint64_t virt, uint64_t flags) {
+  if (!kernel_directory || (flags & PTE_U) ||
+      (virt & (PAGE_SIZE - 1)) || (phys & (PAGE_SIZE - 1))) return -1;
+  int result = 0;
+  uint64_t irq_flags = directory_lock_irqsave();
+  if (vmm_map_page_in(kernel_directory, (void *)phys, (void *)virt,
+                      flags) < 0) result = -1;
+  for (page_directory_t *dir = directory_registry; !result && dir;
+       dir = dir->registry_next) {
+    if (vmm_map_page_in(dir, (void *)phys, (void *)virt, flags) < 0)
+      result = -1;
+  }
+  if (result < 0) {
+    /* A failed broadcast must not leave a partially installed alias. */
+    (void)vmm_unmap_page_keep_frame_in(kernel_directory, virt);
+    for (page_directory_t *dir = directory_registry; dir;
+         dir = dir->registry_next)
+      (void)vmm_unmap_page_keep_frame_in(dir, virt);
+  }
+  directory_unlock_irqrestore(irq_flags);
+  return result;
 }
 
 int vmm_map_large_page(uint64_t phys, uint64_t virt, uint64_t flags) {
@@ -302,32 +378,65 @@ int vmm_unmap_page(void *virt) {
   return vmm_unmap_page_in(current_directory, virt);
 }
 
-int vmm_unmap_page_in(page_directory_t *dir, void *virt) {
+static int vmm_unmap_leaf_in(page_directory_t *dir, uint64_t v,
+                             int require_user, int free_frame,
+                             uint64_t *phys_out) {
   if (!dir || !dir->pml4_virt) return -1;
-  uint64_t v = (uint64_t)virt;
   pml4_t *pml4 = dir->pml4_virt;
   uint64_t pml4_i = vaddr_pml4i(v);
   uint64_t pdp_i = vaddr_pdpi(v);
   uint64_t pd_i = vaddr_pdi(v);
   uint64_t pt_i = vaddr_pti(v);
 
-  if (!(pml4->entries[pml4_i] & PTE_P) || !(pml4->entries[pml4_i] & PTE_U)) return -1;
+  if (!(pml4->entries[pml4_i] & PTE_P) ||
+      (require_user && !(pml4->entries[pml4_i] & PTE_U))) return -1;
   pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[pml4_i] & PTE_ADDR_MASK);
-  if (!(pdp->entries[pdp_i] & PTE_P) || !(pdp->entries[pdp_i] & PTE_U)) return -1;
+  if (!(pdp->entries[pdp_i] & PTE_P) ||
+      (require_user && !(pdp->entries[pdp_i] & PTE_U))) return -1;
   pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[pdp_i] & PTE_ADDR_MASK);
-  if (!(pd->entries[pd_i] & PTE_P) || !(pd->entries[pd_i] & PTE_U)) return -1;
+  if (!(pd->entries[pd_i] & PTE_P) ||
+      (require_user && !(pd->entries[pd_i] & PTE_U))) return -1;
 
   // Não desmapear dentro de um mapping 2 MB (large page)
   if (pd->entries[pd_i] & PTE_PS) return -1;
 
   pt_t *pt = (pt_t *)phys_to_virt(pd->entries[pd_i] & PTE_ADDR_MASK);
-  if (!(pt->entries[pt_i] & PTE_P) || !(pt->entries[pt_i] & PTE_U)) return -1;
+  if (!(pt->entries[pt_i] & PTE_P) ||
+      (require_user && !(pt->entries[pt_i] & PTE_U))) return -1;
 
   if (dir == current_directory)
     asm volatile("invlpg (%0)" : : "r"(v) : "memory");
-  pmm_free_block(phys_to_virt(pt->entries[pt_i] & PTE_ADDR_MASK));
+  uint64_t phys = pt->entries[pt_i] & PTE_ADDR_MASK;
   pt->entries[pt_i] = 0;
+  if (phys_out) *phys_out = phys;
+  if (free_frame) pmm_free_block(phys_to_virt(phys));
   return 0;
+}
+
+int vmm_unmap_page_in(page_directory_t *dir, void *virt) {
+  return vmm_unmap_leaf_in(dir, (uint64_t)virt, 1, 1, 0);
+}
+
+static int vmm_unmap_page_keep_frame_in(page_directory_t *dir,
+                                        uint64_t virt) {
+  return vmm_unmap_leaf_in(dir, virt, 0, 0, 0);
+}
+
+int vmm_unmap_kernel_page(uint64_t virt, uint64_t *phys_out) {
+  if (!kernel_directory || (virt & (PAGE_SIZE - 1))) return -1;
+  uint64_t phys = 0;
+  int result = -1;
+  uint64_t irq_flags = directory_lock_irqsave();
+  if (vmm_unmap_leaf_in(kernel_directory, virt, 0, 0, &phys) == 0) {
+    result = 0;
+    for (page_directory_t *dir = directory_registry; dir;
+         dir = dir->registry_next) {
+      if (vmm_unmap_leaf_in(dir, virt, 0, 0, 0) < 0) result = -1;
+    }
+  }
+  directory_unlock_irqrestore(irq_flags);
+  if (result == 0 && phys_out) *phys_out = phys;
+  return result;
 }
 
 void vmm_map_framebuffer(uint64_t phys_addr, uint64_t size) {
@@ -366,6 +475,7 @@ void init_vmm(uint64_t memory_size) {
   asm volatile("mov %%cr3, %0" : "=r"(cr3));
   kernel_directory->pml4_phys = cr3;
   kernel_directory->pml4_virt = (pml4_t *)phys_to_virt(cr3);
+  kernel_directory->registry_next = 0;
   current_directory = kernel_directory;
 }
 
@@ -440,6 +550,7 @@ page_directory_t *vmm_create_directory() {
       }
     }
   }
+  directory_register(dir);
   return dir;
 }
 
@@ -506,6 +617,7 @@ page_directory_t *vmm_copy_directory(page_directory_t *src) {
 
 void vmm_free_directory(page_directory_t *dir) {
   if (!dir) return;
+  directory_unregister(dir);
   vma_destroy(dir);
   pml4_t *pml4 = dir->pml4_virt;
   if (!pml4) {

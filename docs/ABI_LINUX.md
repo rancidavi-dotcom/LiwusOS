@@ -45,6 +45,11 @@ LiwusOS permanece um sistema operacional independente. A personality Linux fica 
 
 `clone` cria processo ou thread conforme flags e compartilha recursos somente quando a flag correspondente é pedida. `exit` encerra uma thread; `exit_group` encerra todas as threads do processo. `fork` e `clone` chamam as mesmas primitivas de VM e recursos, sem dispatcher alternativo.
 
+**Estado atual:** o kernel ainda usa `task_t` como unidade combinada de processo
+e thread. O FS-base é guardado/restaurado por tarefa, mas não há `process_t`,
+`thread_t`, pthreads nem migração de tarefas de usuário entre CPUs. A divisão
+acima é a arquitetura alvo da Fase 2, não uma capacidade já entregue.
+
 ## Espaço de endereçamento e VMAs
 
 **Decisão:** cada `mm` possui uma coleção ordenada de VMAs não sobrepostas, inicialmente uma lista balanceada pode ser adiada até a cardinalidade exigir.
@@ -100,12 +105,13 @@ O stub salva estado de usuário de modo que interrupções e preempção preserv
 
 - `SYSCALL` entra com RSP ainda apontando para a stack de usuário. O stub não pode usar a pilha antes de trocar para a kernel stack.
 - A primeira instrução é `swapgs`, que troca o GS de usuário pelo GS do kernel. O kernel mantém `IA32_KERNEL_GS_BASE` com a base do bloco por CPU; a troca é obrigatória na entrada e na saída, inclusive em NMI/#MC, que usam IST dedicado.
-- O bloco por CPU (acessível via GS) contém `current_thread`, `kernel_stack_top`, `user_rsp_scratch` e `cpu_id`.
+- O bloco por CPU (acessível via GS) contém a tarefa corrente, topo de kernel stack, `user_rsp_scratch` e `cpu_id`. Em syscall, o stub usa a stack de kernel guardada da tarefa; `TSS.RSP0` é mantido coerente para entradas por interrupção.
 - Ordem mínima: `swapgs`; salvar o RSP de usuário no bloco por CPU; carregar RSP de `current_thread->kernel_stack_top`; construir o frame completo (RIP, RFLAGS, RCX, R11, argumentos e registradores callee-saved); chamar o dispatcher.
 - `TSS.RSP0` aponta para o topo da kernel stack da thread corrente antes de qualquer retorno a ring 3. Ele é atualizado na troca de contexto, não no caminho de entrada.
 - `IA32_FMASK` deve mascarar IF, TF, DF e AC, e o kernel assume DF limpo. NMI e #MC usam IST porque `SYSCALL` não os desabilita.
 - A stack de usuário não garante alinhamento de 16 bytes no ponto de entrada; o kernel não pode assumir alinhamento nem usar a red zone (compilação com `-mno-red-zone`).
 - Com SMAP ativo, cada entrada de exceção/interrupção limpa AC antes do handler. Somente as primitivas de usercopy usam STAC/CLAC, depois de validar o intervalo; carregadores e inicializadores de memória devem escrever pelo direct map antes de mapear frames ou chamar `copy_to_user`.
+- #PF usa IST1 e #DF usa IST2, com stacks próprias por CPU. Como essas stacks não pertencem à tarefa, um #PF originado em ring 3 tem o frame completo copiado para a kernel stack da tarefa antes do caminho de término/escalonamento. Stacks de IRQ também têm região própria por CPU; o handler C verifica que executa dentro dela.
 - Saída: se RIP e RFLAGS de retorno forem canônicos e seguros (sem TF, DF, AC ou NT), usar `SYSRET` com RCX e R11; caso contrário, montar `IRETQ`. `SYSRET` termina com `swapgs`, e a validação acontece antes de qualquer acesso com GS de usuário.
 - O retorno não pode executar `swapgs` duas vezes: interrupções aninhadas já rodam com GS de kernel e stack de kernel.
 - `int 0x80` permanece como entrada nativa do LiwusOS. Uma compatibilidade i386 Linux futura exigirá um seletor de ABI por tarefa antes de reutilizar o mesmo vetor.
@@ -122,9 +128,9 @@ O stub salva estado de usuário de modo que interrupções e preempção preserv
 ## Evidência do milestone atual
 
 - O ELF `tests/ring3/linux_syscall_probe.S` é um `ET_EXEC` estático, sem `PT_INTERP`, que usa a convenção Linux x86-64 sem caminhos ou chamadas especiais do Liwus. Ele valida `getpid`, `fstat`/`stat` layout, `openat`/`-ENOENT`, `-ENOSYS`, `mmap` com argumento 4 em R10, `munmap`, `ARCH_SET_FS`, leitura via `FS:0`, `ARCH_GET_FS`, `write` e `exit`.
-- `make smap-test` executa o probe e a suíte nativa/ring-3 no QEMU `-cpu max -smp 4 -m 4096`; o log precisa mostrar SMAP, APIC IDs 1–3, o probe Linux e `43/43 PASS`. O agendador executa as tarefas do teste no BSP; os outros processadores são validados na inicialização SMP, não por migração de tarefas entre CPUs.
+- `make smap-test` executa o probe e a suíte nativa/ring-3 no QEMU `-cpu max -smp 4 -m 4096`; a evidência atual mostra SMAP, APIC IDs 1–3, remoção da identidade, frame alocado/acessado/liberado acima de 1 GiB, page fault real na guarda e `45/45 PASS`. O agendador executa as tarefas do teste no BSP; os outros processadores são validados na inicialização SMP, não por migração de tarefas entre CPUs.
 - É possível fornecer um ELF GNU/Linux estático externo sem incorporá-lo ao repositório: `make smap-test LINUX_STATIC_ELF=/caminho/para/programa`. O ELF é empacotado temporariamente como `linux_glibc_hello` na imagem de teste.
 - O teste adicional com a libc estática desta máquina foi tentado. O ELF estático sem `PT_INTERP` começou a executar, mas terminou com `#UD` em `vpxor` no `_dl_aux_init`; seu `GNU_PROPERTY` exige x86-64 v3/v4, AVX/XSAVE, que o kernel ainda não habilita nem salva/restaura. Portanto, o probe freestanding Linux passa, mas esse binário glibc não passa. O ELF GNU original com `PT_INTERP` também é corretamente recusado enquanto o loader dinâmico não existir.
-- FS-base por tarefa é carregada em `set_current_task`; a entrada/saída de interrupções preserva FS e alterna GS com `swapgs`; o teste valida FS-base entre syscalls e o `waitpid` provoca trocas com a tarefa kernel pai. Ainda não há teste de pthreads nem migração de tarefa entre APs.
-- Este resultado fecha apenas a fatia inicial da entrada Linux e TLS. Não constitui suporte completo Linux nem conclui os gates musl/glibc, threads, sinais, VM sob demanda ou dynamic linker.
-- O ensaio foi executado com SMAP ativo em QEMU de quatro CPUs; isso valida a inicialização SMP e as rotas testadas sob SMAP. A suíte ainda não migra tarefas de usuário entre APs, então preservação TLS sob migração multicore permanece sem evidência.
+- FS-base por tarefa é carregada em `set_current_task`; a entrada/saída de interrupções preserva FS e alterna GS com `swapgs`; o teste valida `ARCH_SET_FS`/`ARCH_GET_FS` e leitura relativa a FS entre syscalls, com troca ao retornar à tarefa kernel pai. Ainda não há teste de pthreads nem migração de tarefa entre APs.
+- Esta evidência fecha apenas a fatia inicial da entrada Linux e TLS. Não constitui suporte completo Linux nem conclui os gates musl/glibc, threads, sinais, VM sob demanda ou dynamic linker.
+- O ensaio foi executado com SMAP ativo em QEMU de quatro CPUs; isso valida a inicialização SMP e as rotas testadas sob SMAP. A suíte ainda não migra tarefas de usuário entre APs, então preservação TLS sob migração multicore permanece sem evidência. Também não foi validado TLB shootdown remoto para tasks concorrentes em APs.

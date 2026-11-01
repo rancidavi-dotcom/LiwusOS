@@ -5,14 +5,18 @@ The Linux ABI is a separate compatibility layer described in `ABI_LINUX.md` and
 must not change anything described here. Any change to this document requires a
 matching kernel change and a test in `tests/`.
 
+Gate 0's syscall numbers and native UAPI contracts below remain frozen.
+Memory and protection notes are updated to describe the current kernel; they do
+not imply that the Linux personality implements the full Linux ABI.
+
 ## 1. Syscall entry
 
 - Instruction: `int $0x80` from ring 3 (IDT vector 128, DPL 3).
 - Number: `rax`.
 - Arguments: `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9` (C calling convention order).
 - Result: `rax`.
-- At most six arguments. There is no `syscall`/`sysret` path yet; that is part
-  of the Linux ABI layer (roadmap step 35).
+- At most six arguments. The native ABI uses `int 0x80`; the separate Linux
+  personality has an initial x86-64 `SYSCALL` entry (roadmap step 35).
 - 32-bit user tasks use the same register convention. This is **not** the i386
   Linux convention (`ebx`, `ecx`, `edx`, `esi`, `edi`, `ebp`).
 
@@ -81,46 +85,44 @@ as failure. Standardizing internal helper error returns is tracked as part of
 roadmap step 36 and must not silently change the native ABI without updating
 this document.
 
-## 4. Current address space layout
+## 4. Current address space and kernel layout
 
 | Range | Use |
 |---|---|
 | `0x0000000000000000` | null guard page, never mapped |
-| `0x0000000000001000`–`0x0000000000ffffff` | low identity-mapped RAM; accepted by `is_user_addr` but has no `PTE_U`, so usercopy rejects it |
-| `0x0000000001000000`–`0x0000000001009fff` | boot stub (`.boot`), VMA = LMA at 16 MiB: multiboot header, boot page tables and boot stack |
-| `0x0000000002000000`–`0x000000000202c000` | physical load address of the kernel image; reachable through the identity map |
-| `0xffffffff80000000`–`0xffffffff8002c000` | kernel image VMA (`.text`, `.rodata`, `.data`, `.bss`) |
-| `0x0000000000000000`–`0x000000003fffffff` | 1 GiB identity window retained temporarily for boot and legacy physical aliases |
-| `0xffff800000000000`–`0xffff80003fffffff` | direct-map alias of physical `0`–`1 GiB`; PMM allocations and `kheap` pointers use this range |
-| `0x0000000000400000`–`0x0000000000ffffff` | user segments loaded below 16 MiB (current test binaries) |
-| `0x0000000040000000`–`0x00000000bfffffff` | user image, heap (`brk`) and `mmap` |
-| `0x00000000c0000000` | top of the user stack (exclusive ceiling) |
+| `0x0000000000000000`–`0x0000000000000fff` | permanent null guard |
+| `0x0000000000100000`–`0x0000800000000000` | canonical userspace; concrete mappings are tracked by per-mm VMAs |
+| `0x0000000001000000` | boot stub `.boot`, VMA=LMA, entered by GRUB before the higher-half jump |
+| `0x0000000002000000` | physical load address of the kernel image |
+| `0xffffffff80000000` | kernel image VMA; text RX, rodata R/NX, data+bss RW/NX |
+| `0xffff800000000000` + physical | direct-map alias, configured up to 512 GiB |
+| `0xffffc00000000000` onward | guarded kernel stack slots |
+| `0x0000555555554000` | deterministic development base for PIE ET_DYN |
+| near `0x00007ffffffff000` | user stack region; exact initial top is loader-defined |
 
-- Physical memory is currently capped at 1 GiB (`kernel.c`).
-- The kernel image is linked at `0xffffffff80000000` and loaded at 32 MiB. The
-  boot stub installs a 128 MiB higher-half window with 2 MiB pages, so
-  `virt = phys + 0xffffffff7e000000` for image symbols. `virt_to_phys()`
-  converts image and direct-map pointers, and `phys_to_virt()` converts physical
-  addresses. PMM, `kheap` and page-table metadata use the direct map; CR3/PTEs
-  continue to store physical addresses.
-- `mmap` grows downwards from `0xBFFF0000`; `brk` grows upwards from the end of
-  the loaded image. Both are rejected if they would cross `0x40000000`.
-- `USER_ADDR_MAX` is `0xC0000000`; `is_user_addr` rejects the first page,
-  everything at or above that ceiling, and the 16 MiB–1 GiB identity window.
-  Being inside the allowed range is not enough: every page must also carry
-  `PTE_U`.
-- There is no demand paging: pages are allocated eagerly by `brk`/`mmap`, and a
-  page fault in user mode terminates the task.
-- Step 9b adds the separate direct map while preserving this identity window.
-  Removing the identity window remains step 9c.
+- Physical memory comes from the Multiboot2 map. The PMM allocates usable frames
+  through the direct map; the QEMU 4 GiB test allocated, accessed and freed a
+  frame above 1 GiB. It does not test every address up to the 512 GiB limit.
+- The kernel image VMA is `0xffffffff80000000` and its LMA is 32 MiB.
+  `virt_to_phys()` handles image/direct-map pointers; `phys_to_virt()` makes a
+  direct-map alias. CR3 and PTE entries always contain physical addresses.
+- User intervals are bounded by `USER_ADDR_MAX=0x0000800000000000`, validated
+  for canonicality, overflow, VMA overlap and per-page U/S permissions. The
+  former low identity alias has been removed after boot.
+- Page tables are eager. A user page fault terminates that task; demand paging
+  is roadmap step 27, outside the current memory gate.
+- ELF loading, process VM changes and kernel/MMIO mappings target an explicit
+  page directory. `_in` APIs are used for active paths; wrappers without `_in`
+  remain for boot convenience.
 
 ## 5. Processes and threads
 
-- One task equals one process equals one thread. There is no `clone`, no TLS
-  base and no signal delivery.
+- One task equals one process equals one thread. There is no `clone` or signal
+  delivery. Generic per-task FS-base storage exists for Linux personality use;
+  it does not add threads or change the native syscall ABI.
 - `fork` copies the entire address space (`vmm_copy_directory`), with no COW.
-- `fork` gives the child a 4 KiB kernel stack; kernel-created tasks default to
-  64 KiB.
+- Kernel task stacks use 16–32 KiB virtual slots with unmapped guards. IRQ
+  stacks are per CPU; page-fault and double-fault paths use per-CPU IST stacks.
 - Each process has 32 file descriptors. 0–2 are standard streams; the first
   free descriptor is searched from 3. `dup`/`fork` share a reference-counted
   `file_description_t`, so offsets are shared as in POSIX.
@@ -134,9 +136,10 @@ this document.
 - Supported: ELF32 and ELF64, `ET_EXEC`/`ET_DYN` headers, `PT_LOAD` segments.
 - Not supported: `PT_INTERP`, `PT_TLS`, `PT_GNU_STACK`, dynamic linking,
   relocations, shebang scripts.
-- A segment is rejected if it starts below 16 MiB and ends above it, if it
-  exceeds `USER_ADDR_MAX`, or if `p_memsz < p_filesz`.
-- The initial stack is 64 KiB ending at `0xC0000000`.
+- A segment is rejected if it is outside the user interval, overflows, overlaps
+  an existing VMA, has `p_memsz < p_filesz`, or requests a W+X page.
+- The initial stack is eagerly mapped as 64 KiB ending at
+  `USER_STACK_TOP=0x00007ffffffff000`.
 - 64-bit layout, ascending: `argc`, `argv[0..argc-1]`, `NULL`, `envp...`,
   `NULL`, `AT_NULL` (type `0`), value `0`. The stack pointer is 16-byte aligned.
 - 32-bit layout: same shape with 32-bit words and no `AT_NULL` pair.
@@ -183,21 +186,27 @@ layout.
 `include/uapi/termios.h`). Supported ioctls: `TCGETS`, `TCSETS`, `TCSETSW`,
 `TCSETSF`, `TIOCGWINSZ` (reports 80×25). Anything else returns `-1`.
 
-## 8. User/kernel boundary
+## 8. User/kernel boundary (current implementation)
 
 - A user address is valid only if every covered page is present and has
   `PTE_U`. The check walks the four page-table levels for each page.
 - User writes additionally require `PTE_W`.
 - A CPU exception taken in ring 3 terminates only the current user task.
 - `execve` requires `cs & 3 == 3`; kernel threads cannot call it.
-- There is no NX, SMEP or SMAP yet (Gate 1).
+- EFER.NXE is enabled when available; ELF and mmap permissions enforce W^X.
+- SMEP and SMAP are enabled when available. Usercopy brackets intentional
+  accesses with STAC/CLAC; QEMU validation passed with SMAP active.
+- Ring-3 #PF runs on IST1; its frame is moved to the task kernel stack before
+  the task is terminated and the scheduler runs.
 
 ## 9. Known gaps (tracked in `ROADMAP.md`)
 
 1. Inconsistent `-1` vs `-errno` returns (step 36).
-2. `syscall`/`sysret` entry missing; only `int 0x80` exists (step 35).
+2. Linux `SYSCALL` entry has an initial tested path; validated SYSRET return,
+   the broad Linux syscall surface and Linux-specific auxv remain incomplete
+   (steps 32–36).
 3. No auxv beyond `AT_NULL`, no vDSO (steps 32–34).
 4. No threads, TLS, signals or futex (steps 18–26).
 5. No demand paging, COW or file-backed `mmap` (steps 27–30).
-6. 1 GiB physical and 3 GiB virtual limits (steps 9–11).
+6. Linux threads, clone, and cross-CPU task migration (steps 18–20).
 7. 32 file descriptors and no `O_CLOEXEC` (step 37).

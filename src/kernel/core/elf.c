@@ -5,6 +5,8 @@
 #include "pmm.h"
 #include "usercopy.h"
 #include "vma.h"
+#include "elf_loader.h"
+#include "kernel_layout.h"
 
 uint64_t last_elf_heap_start = 0;
 int last_elf_load_error = -8; /* -ENOEXEC */
@@ -23,20 +25,39 @@ static int file_range_ok(uint32_t file_size, uint64_t offset, uint64_t size) {
   return offset <= file_size && size <= (uint64_t)file_size - offset;
 }
 
-static int zero_user_range(uint64_t start, uint64_t size) {
+static int write_mm(page_directory_t *mm, uint64_t destination,
+                    const void *source, size_t size) {
+  const uint8_t *src = (const uint8_t *)source;
+  while (size) {
+    uint64_t phys, flags;
+    if (vmm_get_mapping_in(mm, destination, &phys, &flags) < 0 ||
+        !(flags & PTE_U) || !(flags & PTE_W)) return -1;
+    size_t offset = (size_t)(destination & (PAGE_SIZE - 1));
+    size_t chunk = PAGE_SIZE - offset;
+    if (chunk > size) chunk = size;
+    memcpy((uint8_t *)phys_to_virt(phys) + offset, src, chunk);
+    destination += chunk;
+    src += chunk;
+    size -= chunk;
+  }
+  return 0;
+}
+
+static int zero_mm_range(page_directory_t *mm, uint64_t start, uint64_t size) {
   static const uint8_t zero_page[PAGE_SIZE] = {0};
   while (size) {
     size_t chunk = size > PAGE_SIZE ? PAGE_SIZE : (size_t)size;
-    if (copy_to_user((void *)start, zero_page, chunk) < 0) return -1;
+    if (write_mm(mm, start, zero_page, chunk) < 0) return -1;
     start += chunk;
     size -= chunk;
   }
   return 0;
 }
 
-uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
+uint64_t elf32_load_file_in(page_directory_t *mm, void *file_buffer,
+                            uint32_t file_size) {
   last_elf_load_error = -8;
-  if (!file_buffer || file_size < sizeof(Elf32_Ehdr)) return 0;
+  if (!mm || !file_buffer || file_size < sizeof(Elf32_Ehdr)) return 0;
   Elf32_Ehdr *hdr = (Elf32_Ehdr *)file_buffer;
 
   if (hdr->e_machine != EM_386 || hdr->e_phentsize != sizeof(Elf32_Phdr) ||
@@ -66,15 +87,14 @@ uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
       uint64_t end_page = (vaddr + memsz + 0xFFF) & ~0xFFFULL;
 
       for (uint64_t p = start_page; p < end_page; p += 4096) {
-        if (validate_user_pointer((void *)p, 1) < 0) {
+        if (!vmm_page_present_in(mm, p)) {
           void *phys = pmm_alloc_block();
           if (!phys) { last_elf_load_error = -12; return 0; }
           memset(phys, 0, 4096);
           /* Populate every segment while writable; final permissions are
            * applied after all PT_LOAD copies complete (CR0.WP is enabled). */
           uint64_t map_flags = PTE_P | PTE_U | PTE_W | PTE_NX;
-          vmm_map_page(phys, (void *)p, map_flags);
-          if (validate_user_pointer((void *)p, 1) < 0) {
+          if (vmm_map_page_in(mm, phys, (void *)p, map_flags) < 0) {
             pmm_free_block(phys);
             last_elf_load_error = -12;
             return 0;
@@ -82,14 +102,14 @@ uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
         }
       }
 
-      if (copy_to_user((void *)vaddr, (uint8_t *)file_buffer + offset,
-                       (size_t)filesz) < 0) {
+      if (write_mm(mm, vaddr, (uint8_t *)file_buffer + offset,
+                   (size_t)filesz) < 0) {
         last_elf_load_error = -12;
         return 0;
       }
 
-      if (memsz > filesz && zero_user_range(vaddr + filesz,
-                                             memsz - filesz) < 0) {
+      if (memsz > filesz && zero_mm_range(mm, vaddr + filesz,
+                                          memsz - filesz) < 0) {
         last_elf_load_error = -12;
         return 0;
       }
@@ -120,7 +140,7 @@ uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
       }
       uint64_t flags = PTE_P | PTE_U | (writable ? PTE_W : 0) |
                        (executable ? 0 : PTE_NX);
-      if (vmm_set_page_flags((void *)page, flags) < 0) {
+      if (vmm_set_page_flags_in(mm, (void *)page, flags) < 0) {
         last_elf_load_error = -12;
         return 0;
       }
@@ -135,7 +155,7 @@ uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
     if (phdr[i].p_flags & 4) prot |= VMA_PROT_READ;
     if (phdr[i].p_flags & 2) prot |= VMA_PROT_WRITE;
     if (phdr[i].p_flags & 1) prot |= VMA_PROT_EXEC;
-    if (vma_insert(current_directory, start, end, prot,
+    if (vma_insert(mm, start, end, prot,
                    VMA_PRIVATE | VMA_ANON | VMA_ELF, phdr[i].p_offset,
                    0) < 0) {
       last_elf_load_error = -12;
@@ -143,15 +163,23 @@ uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
     }
   }
 
-  if (!entry_executable || validate_user_pointer((void *)(uint64_t)hdr->e_entry, 1) < 0)
+  uint64_t entry_flags = 0;
+  if (!entry_executable ||
+      vmm_get_mapping_in(mm, hdr->e_entry, 0, &entry_flags) < 0 ||
+      !(entry_flags & PTE_U) || (entry_flags & PTE_NX))
     return 0;
   last_elf_load_error = 0;
   return hdr->e_entry;
 }
 
-uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
+uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
+  return elf32_load_file_in(current_directory, file_buffer, file_size);
+}
+
+uint64_t elf64_load_file_in(page_directory_t *mm, void *file_buffer,
+                            uint32_t file_size) {
   last_elf_load_error = -8;
-  if (!file_buffer || file_size < sizeof(Elf64_Ehdr)) return 0;
+  if (!mm || !file_buffer || file_size < sizeof(Elf64_Ehdr)) return 0;
   Elf64_Ehdr *hdr = (Elf64_Ehdr *)file_buffer;
 
   if ((hdr->e_type != ET_EXEC && hdr->e_type != ET_DYN) ||
@@ -205,13 +233,12 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
       if (end_page > max_end) max_end = end_page;
 
       for (uint64_t p = start_page; p < end_page; p += 4096) {
-        if (validate_user_pointer((void *)p, 1) < 0) {
+        if (!vmm_page_present_in(mm, p)) {
           void *phys = pmm_alloc_block();
           if (!phys) { last_elf_load_error = -12; return 0; }
           memset(phys, 0, 4096);
           uint64_t map_flags = PTE_P | PTE_U | PTE_W | PTE_NX;
-          vmm_map_page(phys, (void *)p, map_flags);
-          if (validate_user_pointer((void *)p, 1) < 0) {
+          if (vmm_map_page_in(mm, phys, (void *)p, map_flags) < 0) {
             pmm_free_block(phys);
             last_elf_load_error = -12;
             return 0;
@@ -219,14 +246,14 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
         }
       }
 
-      if (copy_to_user((void *)vaddr, (uint8_t *)file_buffer + offset,
-                       (size_t)filesz) < 0) {
+      if (write_mm(mm, vaddr, (uint8_t *)file_buffer + offset,
+                   (size_t)filesz) < 0) {
         last_elf_load_error = -12;
         return 0;
       }
 
-      if (memsz > filesz && zero_user_range(vaddr + filesz,
-                                             memsz - filesz) < 0) {
+      if (memsz > filesz && zero_mm_range(mm, vaddr + filesz,
+                                          memsz - filesz) < 0) {
         last_elf_load_error = -12;
         return 0;
       }
@@ -257,7 +284,7 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
       }
       uint64_t flags = PTE_P | PTE_U | (writable ? PTE_W : 0) |
                        (executable ? 0 : PTE_NX);
-      if (vmm_set_page_flags((void *)page, flags) < 0) {
+      if (vmm_set_page_flags_in(mm, (void *)page, flags) < 0) {
         last_elf_load_error = -12;
         return 0;
       }
@@ -275,7 +302,7 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
     if (phdr[i].p_flags & 4) prot |= VMA_PROT_READ;
     if (phdr[i].p_flags & 2) prot |= VMA_PROT_WRITE;
     if (phdr[i].p_flags & 1) prot |= VMA_PROT_EXEC;
-    if (vma_insert(current_directory, start, end, prot,
+    if (vma_insert(mm, start, end, prot,
                    VMA_PRIVATE | VMA_ANON | VMA_ELF, phdr[i].p_offset,
                    0) < 0) {
       last_elf_load_error = -12;
@@ -283,8 +310,15 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
     }
   }
 
-  if (!entry_executable || validate_user_pointer((void *)entry_addr, 1) < 0)
+  uint64_t entry_flags = 0;
+  if (!entry_executable ||
+      vmm_get_mapping_in(mm, entry_addr, 0, &entry_flags) < 0 ||
+      !(entry_flags & PTE_U) || (entry_flags & PTE_NX))
     return 0;
   last_elf_load_error = 0;
   return entry_addr;
+}
+
+uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
+  return elf64_load_file_in(current_directory, file_buffer, file_size);
 }

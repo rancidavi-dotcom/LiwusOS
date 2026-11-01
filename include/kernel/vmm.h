@@ -42,6 +42,7 @@ typedef struct page_directory {
   pml4_t *pml4_virt;
   uint64_t pml4_phys;
   struct vma *vmas;
+  struct page_directory *registry_next;
 } page_directory_t;
 
 static inline uint64_t vaddr_pml4i(uint64_t vaddr) { return (vaddr >> 39) & 0x1FF; }
@@ -52,9 +53,10 @@ static inline uint64_t vaddr_pti(uint64_t vaddr)   { return (vaddr >> 12) & 0x1F
 void init_vmm(uint64_t memory_size);
 /* `phys` may be a physical address cast to a pointer (MMIO/identity alias) or
  * a kernel pointer; direct-map and higher-half pointers are translated. */
-void vmm_map_page(void *phys, void *virt, uint64_t flags);
-void vmm_map_page_in(page_directory_t *dir, void *phys, void *virt,
-                     uint64_t flags);
+int vmm_map_page(void *phys, void *virt, uint64_t flags);
+int vmm_map_page_in(page_directory_t *dir, void *phys, void *virt,
+                    uint64_t flags);
+int vmm_map_kernel_page(uint64_t phys, uint64_t virt, uint64_t flags);
 int vmm_map_large_page(uint64_t phys, uint64_t virt, uint64_t flags);
 int vmm_map_large_page_in(page_directory_t *dir, uint64_t phys,
                           uint64_t virt, uint64_t flags);
@@ -68,6 +70,10 @@ int vmm_set_page_flags(void *virt, uint64_t flags);
 int vmm_set_page_flags_in(page_directory_t *dir, void *virt, uint64_t flags);
 int vmm_unmap_page(void *virt);
 int vmm_unmap_page_in(page_directory_t *dir, void *virt);
+int vmm_unmap_kernel_page(uint64_t virt, uint64_t *phys_out);
+int vmm_page_present_in(page_directory_t *dir, uint64_t virt);
+int vmm_get_mapping_in(page_directory_t *dir, uint64_t virt,
+                       uint64_t *phys_out, uint64_t *flags_out);
 void vmm_map_framebuffer(uint64_t phys_addr, uint64_t size);
 void switch_page_directory(page_directory_t *dir);
 page_directory_t *vmm_create_directory();

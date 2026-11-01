@@ -1,6 +1,6 @@
 # Modelo de memória do LiwusOS
 
-Este documento registra o mapa alvo e o estado implementado da Fase 1. Os passos 9a–9c ligam o kernel em `0xffffffff80000000`, usam um direct map separado e removem a identidade depois da transição do BSP para uma stack alta e da inicialização dos APs. O passo 10 amplia o direct map e o PMM até 512 GiB. O passo 11 libera endereços canônicos de userspace, posiciona a stack no topo e reserva uma faixa alta para mmap.
+Este documento registra o mapa alvo e o estado implementado da Fase 1. Os passos 9a–9c ligam o kernel em `0xffffffff80000000`, usam um direct map separado e removem a identidade depois da transição do BSP para uma stack alta e da inicialização dos APs. O passo 10 amplia o direct map e o PMM até 512 GiB. O passo 11 libera endereços canônicos de userspace, posiciona a stack no topo e reserva uma faixa alta para mmap. A validação QEMU desta revisão usou 4 GiB e provou uma alocação acima de 1 GiB; o limite de 512 GiB é de endereçamento configurado, não um teste físico integral.
 
 ## Mapa virtual x86-64 alvo
 
@@ -22,7 +22,7 @@ O mapa usa endereços canônicos de 48 bits (LA57 desativado). A metade baixa é
 
 O limite de user virtual é exclusivo: `USER_ADDR_MAX = 0x0000800000000000`. Todo início e fim deve ser canônico, sem overflow e fora das regiões reservadas. O teto de endereço virtual não implica que exista RAM física no mesmo endereço.
 
-> **Decisão (Fase 1, passo 9a):** a faixa `0x0000000000400000`–`0x0000000040000000` é espaço de usuário livre, e não uma reserva para o modelo antigo de heap/ELF. O loader atual ainda carrega imagens fixas e mantém `brk` simples nessa região porque o kernel ainda não tem VMAs. Nenhum código novo deve tratar essa faixa como legado.
+> **Decisão (Fase 1, passos 9a–11):** a faixa `0x0000000000400000`–`0x0000000040000000` é espaço de usuário livre, e não uma reserva para o modelo antigo de heap/ELF. O loader mantém suporte a imagens ET_EXEC fixas e `brk` delimitado por VMA; PIE ET_DYN executa na base de desenvolvimento `USER_PIE_BASE`. Nenhum código deve tratar a faixa como legado reservado.
 
 ## Mapa kernel da metade alta
 
@@ -35,7 +35,7 @@ O limite de user virtual é exclusivo: `USER_ADDR_MAX = 0x0000800000000000`. Tod
 
 O layout exato da imagem é definido pelo linker script. Text é read-only/executable; rodata read-only/NX; data/bss read-write/NX. Boot começa com mapeamento de identidade mínimo para transição e o remove depois de instalar o mapa definitivo. MMIO não usa cache WB e é mapeado com atributos de cache apropriados.
 
-**Estado após 9c–11 e passo 13:** `DIRECT_MAP_BASE` é `0xffff800000000000`; o mapa Multiboot2 estende os aliases a RAM utilizável até 512 GiB, com páginas grandes de 2 MiB e páginas de 4 KiB nas bordas. PMM limita-se às regiões disponíveis e retorna ponteiros direct-map; page tables guardam endereços físicos. A entrada de boot usa identidade temporária, removida depois que APs deixam o trampoline físico e o BSP muda para stack no direct map. MMIO usado pelo kernel (framebuffer, ACPI, APIC, PCI ECAM e AHCI) é acessado por aliases direct-map com atributos de cache explícitos. Userspace admite endereços canônicos abaixo de `USER_ADDR_MAX`; a antiga faixa de identidade não é mais reservada. ELF `ET_DYN` sem `PT_INTERP` carrega com bias determinístico `USER_PIE_BASE`; NXE e W^X estão ativos quando a CPU oferece NX.
+**Estado após 9c–11 e passo 13:** `DIRECT_MAP_BASE` é `0xffff800000000000`; o mapa Multiboot2 estende os aliases a RAM utilizável até 512 GiB, com páginas grandes de 2 MiB e páginas de 4 KiB nas bordas. PMM limita-se às regiões disponíveis e retorna ponteiros direct-map; page tables guardam endereços físicos. A entrada de boot usa identidade temporária, removida depois que APs deixam o trampoline físico e o BSP muda para stack no direct map. MMIO usado pelo kernel (framebuffer, ACPI, APIC, PCI ECAM e AHCI) é acessado por aliases direct-map com atributos de cache explícitos. Userspace admite endereços canônicos abaixo de `USER_ADDR_MAX`; a antiga faixa de identidade não é mais reservada. ELF `ET_DYN` sem `PT_INTERP` carrega com bias determinístico `USER_PIE_BASE`; NXE e W^X estão ativos quando a CPU oferece NX. Em QEMU com 4 GiB, o teste alocou, acessou e liberou um frame acima de 1 GiB.
 
 ## Mapa físico e PMM
 
@@ -48,13 +48,19 @@ O layout exato da imagem é definido pelo linker script. Text é read-only/execu
 
 ## Espaço de processo e VMA
 
-Cada processo possui um `mm` independente com page tables e VMAs ordenadas. **Implementado parcialmente:** o diretório de páginas contém uma lista ligada ordenada de VMA `[start,end)` com proteção, flags, offset e backing; ELF, stack, heap, `mmap`, `munmap` e clone em `fork` atualizam essa lista. As operações `vmm_map_page_in`, `vmm_map_large_page_in`, `vmm_set_page_flags_in` e `vmm_unmap_page_in` recebem o diretório alvo explicitamente; `mmap` e `munmap` já usam essas interfaces. Chamadas legadas ainda dependem do diretório ativo e a migração total está pendente. O backing de arquivo e a referência ao VFS ainda não são usados. Page tables ainda são materializadas eager, e page fault ainda não consulta VMAs para demand paging. O kernel mantém seu mapeamento em todos os CR3 de processo; páginas do kernel são supervisor-only. Páginas de usuário têm U/S e permissões coerentes com o mapeamento. A página nula e a página de guarda nunca têm PTE presente.
+Cada processo possui um `mm` independente com page tables e VMAs ordenadas. O diretório de páginas contém uma lista ligada ordenada de VMA `[start,end)` com proteção, flags, offset e backing; ELF, stack, heap, `mmap`, `munmap` e fork atualizam essa lista. As operações `_in(page_directory_t *)` mapeiam, alteram permissões, removem ou consultam páginas no diretório explícito; o loader também grava a imagem via frame físico do diretório alvo, sem exigir que ele seja o CR3 ativo. Os drivers passam `kernel_directory` explicitamente ao mapear MMIO. Wrappers sem `_in` ainda existem para compatibilidade interna de boot e atuam sobre `current_directory`. O backing de arquivo ainda não está ligado ao VFS. Page tables são materializadas eager, e page fault de user ainda termina a tarefa em vez de consultar VMA para demand paging. O kernel mantém seu mapeamento supervisor em todos os CR3 de processo. A página nula e as guardas de stack não têm PTE presente.
 
 Uma VMA representa `[start, end)`, proteção R/W/X, flags (anônima, arquivo, privada/compartilhada, stack, heap), backing e offset. Page tables representam somente páginas residentes. Page fault verifica VMA e materializa página sob demanda. `mmap`, `munmap`, `mprotect`, `brk`, fork COW e loader atualizam VMAs e page tables por uma API que recebe o `mm` explicitamente.
 
+## Stacks de kernel e de usuário
+
+- Stacks de tarefas de kernel usam slots em `0xffffc00000000000`, com 16–32 KiB contíguos no espaço virtual, frames físicos possivelmente dispersos, uma página de guarda inferior sem mapeamento e faixa não usada superior também sem PTE. O alocador propaga cada mapeamento supervisor para os diretórios existentes e para os criados depois.
+- Cada tarefa tem stack de kernel própria; syscall troca para o topo da stack da tarefa. Cada CPU tem uma stack de IRQ separada. #PF e #DF usam stacks IST por CPU; um #PF de ring 3 transfere seu frame para a stack da tarefa antes de encerrar o processo e escalonar.
+- `tests/test_kstack.c` verifica PTEs ausentes nas guardas, propagação para outro `mm`, falha real ao escrever na guarda, remoção dos PTEs ao liberar e separação da stack IRQ. `make smap-test` passou com 4 CPUs e SMAP.
+
 ## Stack, heap e mmap de usuário
 
-- Stack principal começa perto do topo de userspace (`0x00007fffffff0000` no layout inicial), cresce para baixo por demand paging e tem limite e guard page.
+- Stack principal começa perto do topo de userspace (`0x00007fffffff0000` no layout inicial), tem limite e guard page; ainda é materializada de forma eager, sem crescimento por demand paging.
 - Stack inicial Linux contém argc, argv, envp e auxv, termina com alinhamento ABI de 16 bytes e inclui AT_RANDOM.
 - Heap `brk` é VMA própria iniciada após o segmento de dados do ELF; cresce para cima até colidir com outra VMA ou limite configurado.
 - Região mmap é escolhida dinamicamente em área livre alta (normalmente `0x0000600000000000` a `0x00007f0000000000`), sem assumir uma única fronteira fixa.
@@ -66,5 +72,5 @@ Uma VMA representa `[start, end)`, proteção R/W/X, flags (anônima, arquivo, p
 - EFER.NXE habilita PTE.NX; páginas de dados são NX por padrão e segmentos de código não são graváveis por padrão.
 - W^X é imposto em mprotect e no loader após cópia dos segmentos.
 - SMEP/SMAP são habilitados somente após checagem CPUID e rotinas de entrada/usercopy corretas. STAC/CLAC delimitam acessos intencionais a userspace.
-- Troca de `mm` carrega CR3 e executa as invalidações necessárias. Shootdown SMP é necessário antes de habilitar uso geral de múltiplos CPUs.
+- Troca de `mm` carrega CR3 e as invalidações locais necessárias. A validação iniciou quatro CPUs, mas o scheduler de user permanece no BSP; não há TLB shootdown remoto para migração de tarefas nem suporte demonstrado a alteração concorrente de `mm` ativo em APs.
 - KPTI fica adiado inicialmente; documentar que o kernel compartilha tabelas supervisor no CR3 de usuário e revisar isso conforme o modelo de ameaça.

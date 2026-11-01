@@ -67,6 +67,8 @@ int test_sched_priority(void);
 int test_sched_sleep(void);
 int test_ring3_processes(void);
 int test_vma_intervals(void);
+int test_kernel_stack_guard(void);
+int test_pmm_high_memory(void);
 
 /* ---- Global flag so kernel.c knows tests finished ---- */
 volatile int test_runner_done = 0;
@@ -183,6 +185,8 @@ void test_runner_task(void) {
 
     serial_print("\n[runner] Scheduler tests...\n");
     run_test(test_vma_intervals, "vma_intervals");
+    run_test(test_kernel_stack_guard, "kernel_stack_guard");
+    run_test(test_pmm_high_memory, "pmm_high_memory");
     run_test(test_sched_sleep,    "sched_sleep");
     run_test(test_sched_priority, "sched_priority");
 
