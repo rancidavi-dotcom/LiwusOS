@@ -2,7 +2,7 @@
 
 Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verificáveis. A compatibilidade traduz a ABI na borda e reutiliza o mesmo motor de processos, memória virtual e VFS do sistema. Cada fase começa somente depois do gate anterior passar.
 
-> **Estado atual:** Gate 0 concluído em `6402de8`; passos 9a e 9b concluídos em `6bbb7cf` e `7fd8184`. Passos 9c e 10 concluídos; passo 11 parcial (endereços canônicos, stack alta e mmap alto; ET_DYN/PIE ainda falta). `make test` e `make ring3-test` passam 42/42; boot QEMU com 4 GiB e 4 CPUs remove a identidade e passa 42/42. Próximo: VMA por espaço de endereçamento (passo 12), NXE/W^X, usercopy e stacks protegidas.
+> **Estado atual:** Gate 0 concluído (`6402de8`); passos 9a/9b (`6bbb7cf`, `7fd8184`) e 9c/10/11 concluídos nesta branch. Passo 13 implementado: EFER.NXE, proteção RX/R/NX/RW/NX do kernel e W^X em ELF/mmap. `make test` passa 42/42 e inclui execução `ET_DYN` em `USER_PIE_BASE` e teste NX. SMEP é habilitado condicionalmente; SMAP ainda depende de fechar a fronteira de usercopy. Restam VMA, SMAP e stacks guardadas para o Gate 1.
 
 ## Fase 0 — Congelar e descrever a base
 

@@ -17,6 +17,7 @@
 #define USER_ADDR_MIN   0x1000ULL             /* guard null page */
 #define USER_STACK_TOP  0x00007ffffffff000ULL
 #define USER_MMAP_TOP   0x00007f0000000000ULL
+#define USER_PIE_BASE   0x0000555555554000ULL
 
 #define EFAULT  14
 #define E2BIG    7

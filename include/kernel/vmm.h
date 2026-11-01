@@ -17,6 +17,8 @@
 #define PTE_PS       (1ULL << 7)
 #define PTE_G        (1ULL << 8)
 #define PTE_NX       (1ULL << 63)
+#define PTE_ADDR_MASK 0x000ffffffffff000ULL
+#define PTE_LARGE_ADDR_MASK 0x000fffffffe00000ULL
 
 typedef uint64_t pte_t;
 
@@ -53,6 +55,8 @@ void vmm_map_page(void *phys, void *virt, uint64_t flags);
 int vmm_map_large_page(uint64_t phys, uint64_t virt, uint64_t flags);
 int vmm_map_direct_ram_region(uint64_t phys, uint64_t size);
 void vmm_remove_identity_map(void);
+void vmm_protect_kernel_image(void);
+int vmm_nx_available(void);
 int vmm_set_page_flags(void *virt, uint64_t flags);
 int vmm_unmap_page(void *virt);
 void vmm_map_framebuffer(uint64_t phys_addr, uint64_t size);

@@ -24,6 +24,7 @@ typedef unsigned long u64;
 
 #define PROT_READ  1
 #define PROT_WRITE 2
+#define PROT_EXEC  4
 #define MAP_PRIVATE   0x02
 #define MAP_ANONYMOUS 0x20
 #define MAP_FIXED     0x10
@@ -111,7 +112,26 @@ void _start(void) {
         fail("mmap write or munmap");
     pass("mmap, user write, and munmap");
 
-    long child = sc0(SYS_FORK);
+    long child;
+    unsigned char *nx_code = (unsigned char *)syscall6(
+        SYS_MMAP, 0, 4096, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if ((u64)nx_code == MAP_FAILED) fail("mmap for NX execution test");
+    nx_code[0] = 0xC3; /* ret */
+    child = sc0(SYS_FORK);
+    if (child < 0) fail("fork for NX execution test");
+    if (child == 0) {
+        ((void (*)(void))nx_code)();
+        sc1(SYS_EXIT, 88);
+        for (;;) __asm__ volatile("hlt");
+    }
+    if (!wait_for((int)child, 142))
+        fail("non-executable user mapping allowed instruction fetch");
+    if (sc2(SYS_MUNMAP, (long)nx_code, 4096) != 0)
+        fail("munmap NX execution test page");
+    pass("NX blocks execution from writable anonymous memory");
+
+    child = sc0(SYS_FORK);
     if (child < 0) fail("fork for memory isolation");
     if (child == 0) {
         isolation_value = 0xDEADBEEF;

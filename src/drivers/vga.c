@@ -359,7 +359,7 @@ void vga_init(void) {
         max_cols = 80;
         max_rows = 25;
         vmm_map_page((void *)0xB8000, phys_to_virt(0xB8000),
-                     PTE_P | PTE_W | PTE_PCD);
+                     PTE_P | PTE_W | PTE_PCD | PTE_NX);
     }
     
     vga_row = 0;

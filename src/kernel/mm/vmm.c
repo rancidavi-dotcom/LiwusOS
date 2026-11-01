@@ -33,6 +33,36 @@ void vmm_init_pat() {
 }
 
 static int walk_pt_modified_pml4 = 0;
+static int vmm_nx_enabled = 0;
+
+static void vmm_enable_cpu_protections(void) {
+  uint32_t eax, ebx, ecx, edx;
+  eax = 0x80000000U;
+  asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+  if (eax >= 0x80000001U) {
+    eax = 0x80000001U;
+    asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+    if (edx & (1U << 20)) {
+      uint32_t low, high;
+      asm volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(0xC0000080U));
+      low |= 1U << 11; /* EFER.NXE */
+      asm volatile("wrmsr" : : "a"(low), "d"(high), "c"(0xC0000080U));
+      vmm_nx_enabled = 1;
+      serial_print("VMM: EFER.NXE enabled\n");
+    }
+  }
+
+  eax = 7;
+  ecx = 0;
+  asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "+c"(ecx), "=d"(edx));
+  if (ebx & (1U << 7)) { /* CPUID.7.0:EBX.SMEP */
+    uint64_t cr4;
+    asm volatile("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= 1ULL << 20;
+    asm volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
+    serial_print("VMM: CR4.SMEP enabled\n");
+  }
+}
 
 static void *alloc_pt_page(void) {
   void *page = pmm_alloc_block();
@@ -57,7 +87,7 @@ static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
     walk_pt_modified_pml4 = 1;
   }
 
-  pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[pml4_i] & ~0xFFFULL);
+  pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[pml4_i] & PTE_ADDR_MASK);
   uint64_t pdp_i = vaddr_pdpi(vaddr);
 
   if (!(pdp->entries[pdp_i] & PTE_P)) {
@@ -69,18 +99,20 @@ static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
     pdp->entries[pdp_i] |= PTE_U;
   }
 
-  pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[pdp_i] & ~0xFFFULL);
+  pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[pdp_i] & PTE_ADDR_MASK);
   uint64_t pd_i = vaddr_pdi(vaddr);
 
   if (pd->entries[pd_i] & PTE_PS) {
     if (!flags) return 0;
-    uint64_t large_base = pd->entries[pd_i] & ~0x1FFFFFULL;
+    uint64_t large_base = pd->entries[pd_i] & PTE_LARGE_ADDR_MASK;
     uint64_t large_flags = pd->entries[pd_i] & 0x1FFULL;
     /* Preserve permissions on neighboring leaves after splitting. */
     pt_t *new_pt = (pt_t *)alloc_pt_page();
     if (!new_pt) return 0;
     for (int j = 0; j < 512; j++) {
-      new_pt->entries[j] = (large_base + j * 4096) | (large_flags & ~PTE_PS);
+      new_pt->entries[j] = (large_base + j * 4096) |
+                           (large_flags & ~PTE_PS) |
+                           (pd->entries[pd_i] & PTE_NX);
     }
     pd->entries[pd_i] = virt_to_phys(new_pt) | alloc_flags;
   }
@@ -94,7 +126,7 @@ static pte_t *walk_pt(page_directory_t *dir, uint64_t vaddr, uint64_t flags) {
     pd->entries[pd_i] |= PTE_U;
   }
 
-  pt_t *pt = (pt_t *)phys_to_virt(pd->entries[pd_i] & ~0xFFFULL);
+  pt_t *pt = (pt_t *)phys_to_virt(pd->entries[pd_i] & PTE_ADDR_MASK);
   uint64_t pt_i = vaddr_pti(vaddr);
   return &pt->entries[pt_i];
 }
@@ -103,12 +135,13 @@ void vmm_map_page(void *phys, void *virt, uint64_t flags) {
   uint64_t p = virt_to_phys(phys);
   uint64_t v = (uint64_t)virt;
   uint64_t f = flags;
+  if (!vmm_nx_enabled) f &= ~PTE_NX;
   if ((f & PTE_U) && !is_user_addr(virt)) return;
 
   walk_pt_modified_pml4 = 0;
   pte_t *entry = walk_pt(current_directory, v, f);
   if (entry) {
-    *entry = (p & ~0xFFFULL) | (f & 0xFFF) | PTE_P;
+    *entry = (p & PTE_ADDR_MASK) | (f & (0xFFFULL | PTE_NX)) | PTE_P;
     if (walk_pt_modified_pml4) {
       uint64_t cr3;
       asm volatile("mov %%cr3, %0" : "=r"(cr3));
@@ -120,6 +153,7 @@ void vmm_map_page(void *phys, void *virt, uint64_t flags) {
 }
 
 int vmm_map_large_page(uint64_t phys, uint64_t virt, uint64_t flags) {
+  if (!vmm_nx_enabled) flags &= ~PTE_NX;
   if ((phys & 0x1FFFFFULL) || (virt & 0x1FFFFFULL) ||
       vaddr_pml4i(virt) != vaddr_pml4i(virt + 0x1FFFFFULL) ||
       (flags & PTE_U)) return -1;
@@ -135,24 +169,24 @@ int vmm_map_large_page(uint64_t phys, uint64_t virt, uint64_t flags) {
     if (!new_pdp) return -1;
     pml4->entries[pml4_i] = virt_to_phys(new_pdp) | table_flags;
   }
-  pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[pml4_i] & ~0xFFFULL);
+  pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[pml4_i] & PTE_ADDR_MASK);
   if (pdp->entries[pdp_i] & PTE_PS) return -1;
   if (!(pdp->entries[pdp_i] & PTE_P)) {
     pd_t *new_pd = (pd_t *)alloc_pt_page();
     if (!new_pd) return -1;
     pdp->entries[pdp_i] = virt_to_phys(new_pd) | table_flags;
   }
-  pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[pdp_i] & ~0xFFFULL);
+  pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[pdp_i] & PTE_ADDR_MASK);
   if (pd->entries[pd_i] & PTE_P) return -1;
   pd->entries[pd_i] = (phys & ~0x1FFFFFULL) |
-                      (flags & 0xFFFULL) | PTE_P | PTE_W | PTE_PS;
+                      (flags & (0xFFFULL | PTE_NX)) | PTE_P | PTE_W | PTE_PS;
   asm volatile("invlpg (%0)" : : "r"(virt) : "memory");
   return 0;
 }
 
 static int map_direct_page(uint64_t phys) {
   uint64_t virt = DIRECT_MAP_BASE + phys;
-  vmm_map_page((void *)phys, (void *)virt, PTE_P | PTE_W);
+  vmm_map_page((void *)phys, (void *)virt, PTE_P | PTE_W | PTE_NX);
   pte_t *entry = walk_pt(current_directory, virt, 0);
   return entry && (*entry & PTE_P) ? 0 : -1;
 }
@@ -174,7 +208,8 @@ int vmm_map_direct_ram_region(uint64_t phys, uint64_t size) {
 
   uint64_t large_end = end & ~0x1FFFFFULL;
   for (uint64_t page = large_start; page < large_end; page += 0x200000ULL) {
-    if (vmm_map_large_page(page, DIRECT_MAP_BASE + page, PTE_P | PTE_W) < 0)
+    if (vmm_map_large_page(page, DIRECT_MAP_BASE + page,
+                           PTE_P | PTE_W | PTE_NX) < 0)
       return -1;
   }
 
@@ -186,12 +221,42 @@ int vmm_map_direct_ram_region(uint64_t phys, uint64_t size) {
   return 0;
 }
 
+int vmm_nx_available(void) { return vmm_nx_enabled; }
+
+static void vmm_mark_direct_map_nx(void) {
+  if (!vmm_nx_enabled) return;
+  pml4_t *pml4 = kernel_directory->pml4_virt;
+  uint64_t pml4e = pml4->entries[vaddr_pml4i(DIRECT_MAP_BASE)];
+  if (!(pml4e & PTE_P)) return;
+  pdp_t *pdp = (pdp_t *)phys_to_virt(pml4e & PTE_ADDR_MASK);
+  for (uint64_t i = 0; i < PAGE_TABLE_ENTRIES; i++) {
+    if (!(pdp->entries[i] & PTE_P)) continue;
+    if (pdp->entries[i] & PTE_PS) {
+      pdp->entries[i] |= PTE_NX;
+      continue;
+    }
+    pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[i] & PTE_ADDR_MASK);
+    for (uint64_t j = 0; j < PAGE_TABLE_ENTRIES; j++) {
+      if (!(pd->entries[j] & PTE_P)) continue;
+      if (pd->entries[j] & PTE_PS) {
+        pd->entries[j] |= PTE_NX;
+        continue;
+      }
+      pt_t *pt = (pt_t *)phys_to_virt(pd->entries[j] & PTE_ADDR_MASK);
+      for (uint64_t k = 0; k < PAGE_TABLE_ENTRIES; k++)
+        if (pt->entries[k] & PTE_P) pt->entries[k] |= PTE_NX;
+    }
+  }
+}
+
 /* Change leaf permissions without replacing or freeing the mapped frame. */
 int vmm_set_page_flags(void *virt, uint64_t flags) {
+  if (!vmm_nx_enabled) flags &= ~PTE_NX;
   uint64_t v = (uint64_t)virt;
   pte_t *entry = walk_pt(current_directory, v, 0);
   if (!entry || !(*entry & PTE_P)) return -1;
-  *entry = (*entry & ~0xFFFULL) | (flags & 0xFFFULL) | PTE_P;
+  *entry = (*entry & ~(0xFFFULL | PTE_NX)) |
+           (flags & (0xFFFULL | PTE_NX)) | PTE_P;
   asm volatile("invlpg (%0)" : : "r"(v) : "memory");
   return 0;
 }
@@ -207,18 +272,18 @@ int vmm_unmap_page(void *virt) {
   uint64_t pt_i = vaddr_pti(v);
 
   if (!(pml4->entries[pml4_i] & PTE_P) || !(pml4->entries[pml4_i] & PTE_U)) return -1;
-  pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[pml4_i] & ~0xFFFULL);
+  pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[pml4_i] & PTE_ADDR_MASK);
   if (!(pdp->entries[pdp_i] & PTE_P) || !(pdp->entries[pdp_i] & PTE_U)) return -1;
-  pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[pdp_i] & ~0xFFFULL);
+  pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[pdp_i] & PTE_ADDR_MASK);
   if (!(pd->entries[pd_i] & PTE_P) || !(pd->entries[pd_i] & PTE_U)) return -1;
 
   // Não desmapear dentro de um mapping 2 MB (large page)
   if (pd->entries[pd_i] & PTE_PS) return -1;
 
-  pt_t *pt = (pt_t *)phys_to_virt(pd->entries[pd_i] & ~0xFFFULL);
+  pt_t *pt = (pt_t *)phys_to_virt(pd->entries[pd_i] & PTE_ADDR_MASK);
   if (!(pt->entries[pt_i] & PTE_P) || !(pt->entries[pt_i] & PTE_U)) return -1;
 
-  pmm_free_block(phys_to_virt(pt->entries[pt_i] & ~0xFFFULL));
+  pmm_free_block(phys_to_virt(pt->entries[pt_i] & PTE_ADDR_MASK));
   pt->entries[pt_i] = 0;
   asm volatile("invlpg (%0)" : : "r"(v) : "memory");
   return 0;
@@ -233,7 +298,7 @@ void vmm_map_framebuffer(uint64_t phys_addr, uint64_t size) {
     /* Map with PTE_PWT to select PAT1 (WC - Write Combining) */
     vmm_map_page((void *)(map_start + i),
                  (void *)(DIRECT_MAP_BASE + map_start + i),
-                 PTE_P | PTE_W | PTE_PWT);
+                 PTE_P | PTE_W | PTE_PWT | PTE_NX);
   }
 }
 
@@ -252,6 +317,7 @@ void switch_page_directory(page_directory_t *dir) {
 
 void init_vmm(uint64_t memory_size) {
   (void)memory_size;
+  vmm_enable_cpu_protections();
   vmm_init_pat();
   kernel_directory = (page_directory_t *)kmalloc_a(sizeof(page_directory_t));
   memset(kernel_directory, 0, sizeof(page_directory_t));
@@ -260,6 +326,31 @@ void init_vmm(uint64_t memory_size) {
   kernel_directory->pml4_phys = cr3;
   kernel_directory->pml4_virt = (pml4_t *)phys_to_virt(cr3);
   current_directory = kernel_directory;
+}
+
+static void vmm_protect_kernel_range(uint64_t start, uint64_t end,
+                                     uint64_t flags) {
+  start &= ~(uint64_t)(PAGE_SIZE - 1);
+  end = (end + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+  for (uint64_t page = start; page < end; page += PAGE_SIZE) {
+    uint64_t phys = virt_to_phys((void *)page);
+    vmm_map_page((void *)phys, (void *)page, flags);
+  }
+}
+
+void vmm_protect_kernel_image(void) {
+  extern uint8_t __kernel_text_start[], __kernel_text_end[];
+  extern uint8_t __kernel_rodata_start[], __kernel_rodata_end[];
+  extern uint8_t __kernel_data_start[], end[];
+  if (!vmm_nx_enabled) return;
+  vmm_protect_kernel_range((uint64_t)__kernel_text_start,
+                           (uint64_t)__kernel_text_end, PTE_P);
+  vmm_protect_kernel_range((uint64_t)__kernel_rodata_start,
+                           (uint64_t)__kernel_rodata_end,
+                           PTE_P | PTE_NX);
+  vmm_protect_kernel_range((uint64_t)__kernel_data_start,
+                           (uint64_t)end, PTE_P | PTE_W | PTE_NX);
+  vmm_mark_direct_map_nx();
 }
 
 page_directory_t *vmm_create_directory() {
@@ -280,7 +371,7 @@ page_directory_t *vmm_create_directory() {
     if (!new_pdp) { vmm_free_directory(dir); return 0; }
     new_pml4->entries[i] = virt_to_phys(new_pdp) |
                            (kernel_pml4->entries[i] & 0xFFF & ~PTE_U);
-    pdp_t *old_pdp = (pdp_t *)phys_to_virt(kernel_pml4->entries[i] & ~0xFFFULL);
+    pdp_t *old_pdp = (pdp_t *)phys_to_virt(kernel_pml4->entries[i] & PTE_ADDR_MASK);
     for (int j = 0; j < 512; j++) {
       if (!(old_pdp->entries[j] & PTE_P)) continue;
       if (old_pdp->entries[j] & PTE_PS) {
@@ -291,7 +382,7 @@ page_directory_t *vmm_create_directory() {
       if (!new_pd) { vmm_free_directory(dir); return 0; }
       new_pdp->entries[j] = virt_to_phys(new_pd) |
                             (old_pdp->entries[j] & 0xFFF & ~PTE_U);
-      pd_t *old_pd = (pd_t *)phys_to_virt(old_pdp->entries[j] & ~0xFFFULL);
+      pd_t *old_pd = (pd_t *)phys_to_virt(old_pdp->entries[j] & PTE_ADDR_MASK);
       for (int k = 0; k < 512; k++) {
         if (!(old_pd->entries[k] & PTE_P)) continue;
         if (old_pd->entries[k] & PTE_PS) {
@@ -302,7 +393,7 @@ page_directory_t *vmm_create_directory() {
         if (!new_pt) { vmm_free_directory(dir); return 0; }
         new_pd->entries[k] = virt_to_phys(new_pt) |
                              (old_pd->entries[k] & 0xFFF & ~PTE_U);
-        pt_t *old_pt = (pt_t *)phys_to_virt(old_pd->entries[k] & ~0xFFFULL);
+        pt_t *old_pt = (pt_t *)phys_to_virt(old_pd->entries[k] & PTE_ADDR_MASK);
         memcpy(new_pt, old_pt, PAGE_SIZE);
         for (int l = 0; l < 512; l++) new_pt->entries[l] &= ~PTE_U;
       }
@@ -315,17 +406,17 @@ static int copy_user_leaves(page_directory_t *src, page_directory_t *dest) {
   pml4_t *sp = src->pml4_virt;
   for (int i = 0; i < 512; i++) {
     if (!(sp->entries[i] & PTE_P)) continue;
-    pdp_t *sdp = (pdp_t *)phys_to_virt(sp->entries[i] & ~0xFFFULL);
+    pdp_t *sdp = (pdp_t *)phys_to_virt(sp->entries[i] & PTE_ADDR_MASK);
     for (int j = 0; j < 512; j++) {
       if (!(sdp->entries[j] & PTE_P) || (sdp->entries[j] & PTE_PS)) continue;
-      pd_t *sd = (pd_t *)phys_to_virt(sdp->entries[j] & ~0xFFFULL);
+      pd_t *sd = (pd_t *)phys_to_virt(sdp->entries[j] & PTE_ADDR_MASK);
       for (int k = 0; k < 512; k++) {
         if (!(sd->entries[k] & PTE_P)) continue;
         uint64_t va = ((uint64_t)i << 39) | ((uint64_t)j << 30) |
                       ((uint64_t)k << 21);
         if (sd->entries[k] & PTE_PS) {
           if (!(sd->entries[k] & PTE_U)) continue;
-          uint64_t phys = sd->entries[k] & ~0x1FFFFFULL;
+          uint64_t phys = sd->entries[k] & PTE_LARGE_ADDR_MASK;
           uint64_t flags = sd->entries[k] & 0xFFFULL & ~PTE_PS;
           for (int l = 0; l < 512; l++) {
             void *page = pmm_alloc_block();
@@ -334,20 +425,22 @@ static int copy_user_leaves(page_directory_t *src, page_directory_t *dest) {
             pte_t *pte = walk_pt(dest, va + (uint64_t)l * PAGE_SIZE,
                                  PTE_P | PTE_U | PTE_W);
             if (!pte) { pmm_free_block(page); return -1; }
-            *pte = virt_to_phys(page) | flags;
+            *pte = virt_to_phys(page) | flags |
+                   (sd->entries[k] & PTE_NX);
           }
           continue;
         }
-        pt_t *st = (pt_t *)phys_to_virt(sd->entries[k] & ~0xFFFULL);
+        pt_t *st = (pt_t *)phys_to_virt(sd->entries[k] & PTE_ADDR_MASK);
         for (int l = 0; l < 512; l++) {
           if (!(st->entries[l] & PTE_P) || !(st->entries[l] & PTE_U)) continue;
           void *page = pmm_alloc_block();
           if (!page) return -1;
-          memcpy(page, phys_to_virt(st->entries[l] & ~0xFFFULL), PAGE_SIZE);
+          memcpy(page, phys_to_virt(st->entries[l] & PTE_ADDR_MASK), PAGE_SIZE);
           pte_t *pte = walk_pt(dest, va + (uint64_t)l * PAGE_SIZE,
                                PTE_P | PTE_U | PTE_W);
           if (!pte) { pmm_free_block(page); return -1; }
-          *pte = virt_to_phys(page) | (st->entries[l] & 0xFFFULL);
+          *pte = virt_to_phys(page) |
+                 (st->entries[l] & (0xFFFULL | PTE_NX));
         }
       }
     }
@@ -375,20 +468,20 @@ void vmm_free_directory(page_directory_t *dir) {
   }
   for (int i = 0; i < 512; i++) {
     if (pml4->entries[i] & PTE_P) {
-      pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[i] & ~0xFFFULL);
+      pdp_t *pdp = (pdp_t *)phys_to_virt(pml4->entries[i] & PTE_ADDR_MASK);
       for (int j = 0; j < 512; j++) {
         if (pdp->entries[j] & PTE_P) {
           if (pdp->entries[j] & PTE_PS) continue;
-          pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[j] & ~0xFFFULL);
+          pd_t *pd = (pd_t *)phys_to_virt(pdp->entries[j] & PTE_ADDR_MASK);
           for (int k = 0; k < 512; k++) {
             if (pd->entries[k] & PTE_P) {
               if (pd->entries[k] & PTE_PS) {
                 /* Large leaves are shared kernel identity mappings. */
               } else {
-                pt_t *pt = (pt_t *)phys_to_virt(pd->entries[k] & ~0xFFFULL);
+                pt_t *pt = (pt_t *)phys_to_virt(pd->entries[k] & PTE_ADDR_MASK);
                 for (int l = 0; l < 512; l++) {
                   if ((pt->entries[l] & (PTE_P | PTE_U)) == (PTE_P | PTE_U)) {
-                    pmm_free_block(phys_to_virt(pt->entries[l] & ~0xFFFULL));
+                    pmm_free_block(phys_to_virt(pt->entries[l] & PTE_ADDR_MASK));
                   }
                 }
                 pmm_free_block(pt);

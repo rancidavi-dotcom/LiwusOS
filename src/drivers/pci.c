@@ -27,7 +27,8 @@ static uint32_t ecam_read(uint16_t bus, uint16_t device, uint16_t function,
                           uint16_t offset) {
   uint64_t a = ecam_addr(bus, device, function, offset);
   uint64_t page = a & ~0xFFFULL;
-  vmm_map_page((void *)page, phys_to_virt(page), PTE_P | PTE_W | PTE_PCD);
+  vmm_map_page((void *)page, phys_to_virt(page),
+               PTE_P | PTE_W | PTE_PCD | PTE_NX);
   return *(volatile uint32_t *)phys_to_virt(a);
 }
 
@@ -35,7 +36,8 @@ static void ecam_write(uint16_t bus, uint16_t device, uint16_t function,
                        uint16_t offset, uint32_t val) {
   uint64_t a = ecam_addr(bus, device, function, offset);
   uint64_t page = a & ~0xFFFULL;
-  vmm_map_page((void *)page, phys_to_virt(page), PTE_P | PTE_W | PTE_PCD);
+  vmm_map_page((void *)page, phys_to_virt(page),
+               PTE_P | PTE_W | PTE_PCD | PTE_NX);
   *(volatile uint32_t *)phys_to_virt(a) = val;
 }
 

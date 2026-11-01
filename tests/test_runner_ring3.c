@@ -19,6 +19,14 @@ int test_ring3_processes(void) {
     if (waited != pid) FAIL("ring3_processes", "waitpid did not reap test process");
     if (status != 0) FAIL("ring3_processes", "user suite exited with failure");
 
+    pid = launch_initrd_program_argv("pie_probe", NULL);
+    if (pid < 0) FAIL("ring3_processes", "could not load ET_DYN PIE probe");
+    status = -1;
+    waited = sys_waitpid(pid, &status, 0);
+    if (waited != pid || status != 0)
+        FAIL("ring3_processes", "ET_DYN PIE did not run at high user base");
+    serial_print("[RING3 RESULT] ET_DYN PIE executed at USER_PIE_BASE\n");
+
     if (vfs_live_owned_nodes() != nodes_before)
         FAIL("ring3_processes", "VFS lookup nodes leaked across user I/O tests");
     if (sys_io_live_file_descriptions() != files_before)

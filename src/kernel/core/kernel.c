@@ -545,6 +545,7 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
     kernel_panic("failed to extend the physical direct map");
   }
   pmm_set_allocation_limit(memory_size);
+  vmm_protect_kernel_image();
 
   void *transition_stack = kmalloc(32 * 1024);
   if (!transition_stack) kernel_panic("cannot allocate high boot stack");

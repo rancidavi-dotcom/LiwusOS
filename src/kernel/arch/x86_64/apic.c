@@ -193,7 +193,7 @@ void init_apic(void) {
     // Map LAPIC MMIO and enable Local APIC
     lapic_base = (volatile uint32_t *)phys_to_virt(lapic_phys_base);
     vmm_map_page((void *)lapic_phys_base, phys_to_virt(lapic_phys_base),
-                 PTE_P | PTE_W | PTE_PCD);
+                 PTE_P | PTE_W | PTE_PCD | PTE_NX);
     
     // Spurious Interrupt Vector Register (SIVR)
     // Bit 8 enables the LAPIC. Vector offset 0xFF maps spurious interrupts.
@@ -202,7 +202,7 @@ void init_apic(void) {
     // Map I/O APIC page
     if (ioapic_phys_base != 0) {
         vmm_map_page((void *)ioapic_phys_base, phys_to_virt(ioapic_phys_base),
-                     PTE_P | PTE_W | PTE_PCD);
+                     PTE_P | PTE_W | PTE_PCD | PTE_NX);
         serial_print("APIC: Mapped I/O APIC page.\n");
 
         // Route IRQs

@@ -31,18 +31,23 @@ SECTIONS
   . = KERNEL_VIRT_BASE;
 
   .text ALIGN(4K) : AT(ADDR(.text) - KERNEL_VIRT_OFFSET) {
+    __kernel_text_start = .;
     *(.text)
     *(.text.*)
+    __kernel_text_end = .;
   }
 
   .rodata ALIGN(4K) : AT(ADDR(.rodata) - KERNEL_VIRT_OFFSET) {
+    __kernel_rodata_start = .;
     *(.rodata)
     *(.rodata.*)
     *(.eh_frame)
     *(.eh_frame_hdr)
+    __kernel_rodata_end = .;
   }
 
   .data ALIGN(4K) : AT(ADDR(.data) - KERNEL_VIRT_OFFSET) {
+    __kernel_data_start = .;
     *(.data)
     *(.data.*)
   }

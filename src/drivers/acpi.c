@@ -44,7 +44,8 @@ static void acpi_map(uint64_t phys, uint32_t len) {
   uint64_t start = phys & ~0xFFFULL;
   uint64_t end = (phys + len + 0xFFF) & ~0xFFFULL;
   for (uint64_t a = start; a < end; a += 0x1000)
-    vmm_map_page((void *)a, phys_to_virt(a), PTE_P | PTE_W | PTE_PCD);
+    vmm_map_page((void *)a, phys_to_virt(a),
+                 PTE_P | PTE_W | PTE_PCD | PTE_NX);
 }
 
 static bool checksum_ok(acpi_sdt_header_t *h) {

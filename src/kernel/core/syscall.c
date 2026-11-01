@@ -99,7 +99,7 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
   uint64_t stack_base = stack_top - stack_size;
   for (uint64_t vaddr = stack_base; vaddr < stack_top; vaddr += 4096) {
     void *phys = kmalloc_a(4096);
-    vmm_map_page(phys, (void *)vaddr, 0x07);
+    vmm_map_page(phys, (void *)vaddr, PTE_P | PTE_W | PTE_U | PTE_NX);
     memset((void *)vaddr, 0, 4096);
   }
 
@@ -812,7 +812,7 @@ static int exec_build_stack(int elf_class_value,
   for (uint64_t va = stack_base; va < EXEC_STACK_TOP; va += PAGE_SIZE) {
     void *phys = pmm_alloc_block();
     if (!phys) return -ENOMEM;
-    vmm_map_page(phys, (void *)va, PTE_P | PTE_W | PTE_U);
+    vmm_map_page(phys, (void *)va, PTE_P | PTE_W | PTE_U | PTE_NX);
     if (validate_user_pointer((void *)va, PAGE_SIZE) < 0) {
       pmm_free_block(phys);
       return -ENOMEM;
@@ -1408,8 +1408,9 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
     if (validate_user_pointer((void *)p, 1) == 0) return MAP_FAILED;
   }
 
-  uint64_t pte_flags = PTE_P | PTE_U;
+  uint64_t pte_flags = PTE_P | PTE_U | PTE_NX;
   if (prot & PROT_WRITE) pte_flags |= PTE_W;
+  if (prot & PROT_EXEC) pte_flags &= ~((uint64_t)PTE_NX);
   if ((prot & PROT_READ) == 0 && (prot & PROT_EXEC) == 0)
     pte_flags &= ~((uint64_t)PTE_W);
   uint64_t alloc_flags = pte_flags | PTE_W;

@@ -59,7 +59,7 @@ uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
           if (!phys) { last_elf_load_error = -12; return 0; }
           /* Populate every segment while writable; final permissions are
            * applied after all PT_LOAD copies complete (CR0.WP is enabled). */
-          uint64_t map_flags = PTE_P | PTE_U | PTE_W;
+          uint64_t map_flags = PTE_P | PTE_U | PTE_W | PTE_NX;
           vmm_map_page(phys, (void *)p, map_flags);
           if (validate_user_pointer((void *)p, 1) < 0) {
             pmm_free_block(phys);
@@ -86,17 +86,22 @@ uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
     uint64_t end = ((uint64_t)phdr[i].p_vaddr + phdr[i].p_memsz + 0xFFFULL) & ~0xFFFULL;
     for (uint64_t page = start; page < end; page += PAGE_SIZE) {
       int writable = 0;
+      int executable = 0;
       for (int j = 0; j < hdr->e_phnum; j++) {
-        if (phdr[j].p_type != PT_LOAD || !(phdr[j].p_flags & 2) ||
-            phdr[j].p_memsz == 0) continue;
+        if (phdr[j].p_type != PT_LOAD || phdr[j].p_memsz == 0) continue;
         uint64_t other_start = (uint64_t)phdr[j].p_vaddr & ~0xFFFULL;
         uint64_t other_end = ((uint64_t)phdr[j].p_vaddr + phdr[j].p_memsz + 0xFFFULL) & ~0xFFFULL;
         if (page < other_end && page + PAGE_SIZE > other_start) {
-          writable = 1;
-          break;
+          if (phdr[j].p_flags & 2) writable = 1;
+          if (phdr[j].p_flags & 1) executable = 1;
         }
       }
-      uint64_t flags = PTE_P | PTE_U | (writable ? PTE_W : 0);
+      if (writable && executable) {
+        last_elf_load_error = -8;
+        return 0;
+      }
+      uint64_t flags = PTE_P | PTE_U | (writable ? PTE_W : 0) |
+                       (executable ? 0 : PTE_NX);
       if (vmm_set_page_flags((void *)page, flags) < 0) {
         last_elf_load_error = -12;
         return 0;
@@ -115,18 +120,38 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
   if (!file_buffer || file_size < sizeof(Elf64_Ehdr)) return 0;
   Elf64_Ehdr *hdr = (Elf64_Ehdr *)file_buffer;
 
-  if (hdr->e_machine != EM_X86_64 || hdr->e_phentsize != sizeof(Elf64_Phdr) ||
+  if ((hdr->e_type != ET_EXEC && hdr->e_type != ET_DYN) ||
+      hdr->e_machine != EM_X86_64 ||
+      hdr->e_phentsize != sizeof(Elf64_Phdr) ||
       !file_range_ok(file_size, hdr->e_phoff,
                      (uint64_t)hdr->e_phnum * hdr->e_phentsize)) return 0;
 
   Elf64_Phdr *phdr = (Elf64_Phdr *)((uint64_t)file_buffer + hdr->e_phoff);
 
+  uint64_t load_bias = 0;
+  if (hdr->e_type == ET_DYN) {
+    uint64_t min_vaddr = UINT64_MAX;
+    for (int i = 0; i < hdr->e_phnum; i++) {
+      if (phdr[i].p_type != PT_LOAD || phdr[i].p_memsz == 0) continue;
+      uint64_t page = phdr[i].p_vaddr & ~0xFFFULL;
+      if (page < min_vaddr) min_vaddr = page;
+    }
+    if (min_vaddr == UINT64_MAX || min_vaddr > USER_PIE_BASE) return 0;
+    load_bias = USER_PIE_BASE - min_vaddr;
+  }
+  if (hdr->e_entry > UINT64_MAX - load_bias) return 0;
+  uint64_t entry_addr = hdr->e_entry + load_bias;
+
   uint64_t max_end = 0;
   int entry_executable = 0;
 
+  for (int i = 0; i < hdr->e_phnum; i++)
+    if (phdr[i].p_type == PT_INTERP) return 0; /* dynamic linker is a later gate */
+
   for (int i = 0; i < hdr->e_phnum; i++) {
     if (phdr[i].p_type == PT_LOAD) {
-      uint64_t vaddr = phdr[i].p_vaddr;
+      if (phdr[i].p_vaddr > UINT64_MAX - load_bias) return 0;
+      uint64_t vaddr = phdr[i].p_vaddr + load_bias;
       uint64_t memsz = phdr[i].p_memsz;
       uint64_t filesz = phdr[i].p_filesz;
       uint64_t offset = phdr[i].p_offset;
@@ -136,8 +161,8 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
       if (memsz < filesz || vaddr + memsz < vaddr ||
           !file_range_ok(file_size, offset, filesz) ||
           vaddr < USER_ADDR_MIN || vaddr + memsz > USER_ADDR_MAX) return 0;
-      if ((phdr[i].p_flags & 1) && hdr->e_entry >= vaddr &&
-          hdr->e_entry < vaddr + memsz) entry_executable = 1;
+      if ((phdr[i].p_flags & 1) && entry_addr >= vaddr &&
+          entry_addr < vaddr + memsz) entry_executable = 1;
 
       uint64_t start_page = vaddr & ~0xFFFULL;
       if (vaddr + memsz > UINT64_MAX - 0xFFF) return 0;
@@ -149,7 +174,7 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
         if (validate_user_pointer((void *)p, 1) < 0) {
           void *phys = pmm_alloc_block();
           if (!phys) { last_elf_load_error = -12; return 0; }
-          uint64_t map_flags = PTE_P | PTE_U | PTE_W;
+          uint64_t map_flags = PTE_P | PTE_U | PTE_W | PTE_NX;
           vmm_map_page(phys, (void *)p, map_flags);
           if (validate_user_pointer((void *)p, 1) < 0) {
             pmm_free_block(phys);
@@ -170,21 +195,28 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
 
   for (int i = 0; i < hdr->e_phnum; i++) {
     if (phdr[i].p_type != PT_LOAD || phdr[i].p_memsz == 0) continue;
-    uint64_t start = (uint64_t)phdr[i].p_vaddr & ~0xFFFULL;
-    uint64_t end = ((uint64_t)phdr[i].p_vaddr + phdr[i].p_memsz + 0xFFFULL) & ~0xFFFULL;
+    uint64_t seg_start = (uint64_t)phdr[i].p_vaddr + load_bias;
+    uint64_t start = seg_start & ~0xFFFULL;
+    uint64_t end = (seg_start + phdr[i].p_memsz + 0xFFFULL) & ~0xFFFULL;
     for (uint64_t page = start; page < end; page += PAGE_SIZE) {
       int writable = 0;
+      int executable = 0;
       for (int j = 0; j < hdr->e_phnum; j++) {
-        if (phdr[j].p_type != PT_LOAD || !(phdr[j].p_flags & 2) ||
-            phdr[j].p_memsz == 0) continue;
-        uint64_t other_start = (uint64_t)phdr[j].p_vaddr & ~0xFFFULL;
-        uint64_t other_end = ((uint64_t)phdr[j].p_vaddr + phdr[j].p_memsz + 0xFFFULL) & ~0xFFFULL;
+        if (phdr[j].p_type != PT_LOAD || phdr[j].p_memsz == 0) continue;
+        uint64_t other_vaddr = (uint64_t)phdr[j].p_vaddr + load_bias;
+        uint64_t other_start = other_vaddr & ~0xFFFULL;
+        uint64_t other_end = (other_vaddr + phdr[j].p_memsz + 0xFFFULL) & ~0xFFFULL;
         if (page < other_end && page + PAGE_SIZE > other_start) {
-          writable = 1;
-          break;
+          if (phdr[j].p_flags & 2) writable = 1;
+          if (phdr[j].p_flags & 1) executable = 1;
         }
       }
-      uint64_t flags = PTE_P | PTE_U | (writable ? PTE_W : 0);
+      if (writable && executable) {
+        last_elf_load_error = -8;
+        return 0;
+      }
+      uint64_t flags = PTE_P | PTE_U | (writable ? PTE_W : 0) |
+                       (executable ? 0 : PTE_NX);
       if (vmm_set_page_flags((void *)page, flags) < 0) {
         last_elf_load_error = -12;
         return 0;
@@ -194,8 +226,8 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
 
   last_elf_heap_start = max_end;
 
-  if (!entry_executable || validate_user_pointer((void *)hdr->e_entry, 1) < 0)
+  if (!entry_executable || validate_user_pointer((void *)entry_addr, 1) < 0)
     return 0;
   last_elf_load_error = 0;
-  return hdr->e_entry;
+  return entry_addr;
 }
