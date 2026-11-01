@@ -1398,10 +1398,8 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
   } else {
     // Região mmap cresce para baixo a partir de mmap_top
     base = current_task->mmap_top - aligned_len;
-    if (base < 0x40000000) return MAP_FAILED; // colidiu com o heap
+    if (base < USER_ADDR_MIN) return MAP_FAILED;
   }
-  if (base < 0x40000000ULL && base + aligned_len > 0x01000000ULL)
-    return MAP_FAILED; /* do not replace the kernel's identity-mapped RAM */
   if (base + aligned_len < base || base + aligned_len > USER_ADDR_MAX)
     return MAP_FAILED;
 

@@ -68,9 +68,7 @@ int strncpy_from_user(char *dst, const char *user_src, size_t maxlen);
  */
 static inline int is_user_addr(const void *ptr) {
     uint64_t addr = (uint64_t)ptr;
-    /* Step 9c will remove this temporary low identity alias. */
-    return (addr >= USER_ADDR_MIN && addr < USER_ADDR_MAX &&
-            (addr < 0x01000000ULL || addr >= 0x40000000ULL));
+    return addr >= USER_ADDR_MIN && addr < USER_ADDR_MAX;
 }
 
 #endif

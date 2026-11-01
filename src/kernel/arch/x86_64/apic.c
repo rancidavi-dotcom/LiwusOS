@@ -5,6 +5,7 @@
 #include "task.h"
 #include "serial.h"
 #include "io.h"
+#include "kernel_layout.h"
 #include "string.h"
 
 static volatile uint32_t *lapic_base = NULL;
@@ -73,14 +74,14 @@ static uint8_t irq_overrides[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13
 
 void ioapic_write(uint32_t reg, uint32_t value) {
     if (ioapic_phys_base == 0) return;
-    volatile uint32_t *ioapic = (volatile uint32_t *)ioapic_phys_base;
+    volatile uint32_t *ioapic = (volatile uint32_t *)phys_to_virt(ioapic_phys_base);
     ioapic[0] = reg & 0xFF;
     ioapic[4] = value;
 }
 
 uint32_t ioapic_read(uint32_t reg) {
     if (ioapic_phys_base == 0) return 0;
-    volatile uint32_t *ioapic = (volatile uint32_t *)ioapic_phys_base;
+    volatile uint32_t *ioapic = (volatile uint32_t *)phys_to_virt(ioapic_phys_base);
     ioapic[0] = reg & 0xFF;
     return ioapic[4];
 }
@@ -190,8 +191,9 @@ void init_apic(void) {
     disable_pic();
 
     // Map LAPIC MMIO and enable Local APIC
-    lapic_base = (volatile uint32_t *)lapic_phys_base;
-    vmm_map_page((void *)lapic_phys_base, (void *)lapic_phys_base, PTE_P | PTE_W | PTE_PCD);
+    lapic_base = (volatile uint32_t *)phys_to_virt(lapic_phys_base);
+    vmm_map_page((void *)lapic_phys_base, phys_to_virt(lapic_phys_base),
+                 PTE_P | PTE_W | PTE_PCD);
     
     // Spurious Interrupt Vector Register (SIVR)
     // Bit 8 enables the LAPIC. Vector offset 0xFF maps spurious interrupts.
@@ -199,7 +201,8 @@ void init_apic(void) {
 
     // Map I/O APIC page
     if (ioapic_phys_base != 0) {
-        vmm_map_page((void *)ioapic_phys_base, (void *)ioapic_phys_base, PTE_P | PTE_W | PTE_PCD);
+        vmm_map_page((void *)ioapic_phys_base, phys_to_virt(ioapic_phys_base),
+                     PTE_P | PTE_W | PTE_PCD);
         serial_print("APIC: Mapped I/O APIC page.\n");
 
         // Route IRQs

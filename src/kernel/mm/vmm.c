@@ -231,8 +231,18 @@ void vmm_map_framebuffer(uint64_t phys_addr, uint64_t size) {
   uint64_t map_size = (offset + size + 0xFFFULL) & ~0xFFFULL;
   for (uint64_t i = 0; i < map_size; i += 4096) {
     /* Map with PTE_PWT to select PAT1 (WC - Write Combining) */
-    vmm_map_page((void*)(map_start + i), (void*)(map_start + i), PTE_P | PTE_W | PTE_PWT);
+    vmm_map_page((void *)(map_start + i),
+                 (void *)(DIRECT_MAP_BASE + map_start + i),
+                 PTE_P | PTE_W | PTE_PWT);
   }
+}
+
+void vmm_remove_identity_map(void) {
+  if (!kernel_directory || !kernel_directory->pml4_virt) return;
+  kernel_directory->pml4_virt->entries[0] = 0;
+  uint64_t cr3;
+  asm volatile("mov %%cr3, %0" : "=r"(cr3));
+  asm volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
 }
 
 void switch_page_directory(page_directory_t *dir) {

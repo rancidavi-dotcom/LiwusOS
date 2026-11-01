@@ -3,6 +3,7 @@
 #include "serial.h"
 #include "string.h"
 #include "vmm.h"
+#include "kernel_layout.h"
 #include <stdbool.h>
 
 uint64_t vga_fb_addr = 0;
@@ -17,7 +18,7 @@ void (*vga_output_hook)(const char *str) = NULL;
 static bool is_framebuffer = false;
 
 // Fallback text mode buffer
-static uint16_t* const text_buffer = (uint16_t*) 0xB8000;
+static uint16_t *text_buffer;
 
 static size_t vga_row = 0;
 static size_t vga_column = 0;
@@ -77,7 +78,7 @@ static inline uint16_t vga_entry(unsigned char uc, uint8_t color) {
 void vga_put_pixel(uint32_t x, uint32_t y, uint32_t color) {
     if (!is_framebuffer) return;
     if (x >= vga_fb_width || y >= vga_fb_height) return;
-    uint32_t* fb = (uint32_t*)((uint64_t)vga_fb_addr);
+    uint32_t* fb = (uint32_t*)phys_to_virt(vga_fb_addr);
     fb[y * (vga_fb_pitch / 4) + x] = color;
 }
 
@@ -341,6 +342,7 @@ void vga_clear_to_eol(void) {
 
 void vga_init(void) {
     vga_output_hook = NULL;
+    text_buffer = (uint16_t *)phys_to_virt(0xB8000);
     if (vga_fb_addr != 0) {
         is_framebuffer = true;
         
@@ -356,7 +358,8 @@ void vga_init(void) {
     } else {
         max_cols = 80;
         max_rows = 25;
-        vmm_map_page((void*)0xB8000, (void*)0xB8000, 0x3);
+        vmm_map_page((void *)0xB8000, phys_to_virt(0xB8000),
+                     PTE_P | PTE_W | PTE_PCD);
     }
     
     vga_row = 0;
@@ -388,7 +391,7 @@ void vga_scroll() {
         uint32_t row_words = vga_fb_width * font_height;
         uint32_t total_scroll_words = vga_fb_width * ((max_rows - 1) * font_height);
         
-        uint32_t* fb = (uint32_t*)((uint64_t)vga_fb_addr);
+        uint32_t* fb = (uint32_t*)phys_to_virt(vga_fb_addr);
         memmove(fb, fb + row_words, total_scroll_words * 4);
         
         vga_draw_rect(0, (max_rows - 1) * font_height, vga_fb_width, font_height, vga_bg_color);

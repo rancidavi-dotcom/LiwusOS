@@ -76,7 +76,7 @@ void kernel_panic(const char *msg) {
 bool is_live_mode = true;
 uint64_t memory_size = 0;
 uint32_t mb2_mods_count = 0;
-uint32_t mb2_mods_addr[16]; /* up to 16 modules */
+uint64_t mb2_mods_addr[16]; /* physical addresses of up to 16 Multiboot2 tags */
 
 extern uint64_t end[];
 
@@ -546,6 +546,19 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   }
   pmm_set_allocation_limit(memory_size);
 
+  void *transition_stack = kmalloc(32 * 1024);
+  if (!transition_stack) kernel_panic("cannot allocate high boot stack");
+  extern void call_on_stack(void *stack_top,
+                            void (*entry)(void) __attribute__((noreturn)))
+      __attribute__((noreturn));
+  extern void kernel_main_continue(void) __attribute__((noreturn));
+  call_on_stack((uint8_t *)transition_stack + 32 * 1024,
+                kernel_main_continue);
+  kernel_panic("high-stack continuation returned");
+}
+
+void kernel_main_continue(void) __attribute__((noreturn));
+void kernel_main_continue(void) {
   {
     extern uint64_t vga_fb_addr;
     extern uint32_t vga_fb_height, vga_fb_pitch;
@@ -570,6 +583,11 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   ahci_init();
   ata_bmide_init();
   boot_stage("disk-hw ok");
+
+  /* APs have left the low trampoline and all firmware/MMIO pointers have
+   * direct-map aliases. The BSP now runs on a direct-map kernel stack. */
+  vmm_remove_identity_map();
+  serial_print("[mm] temporary identity map removed\n");
 
   if (mb2_mods_count > 0) {
     struct {

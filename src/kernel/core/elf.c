@@ -45,8 +45,7 @@ uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
 
       if (memsz < filesz || vaddr + memsz < vaddr ||
           !file_range_ok(file_size, offset, filesz) ||
-          vaddr < USER_ADDR_MIN || vaddr + memsz > USER_ADDR_MAX ||
-          (vaddr < 0x40000000ULL && vaddr + memsz > 0x01000000ULL)) return 0;
+          vaddr < USER_ADDR_MIN || vaddr + memsz > USER_ADDR_MAX) return 0;
       if ((phdr[i].p_flags & 1) && hdr->e_entry >= vaddr &&
           hdr->e_entry < vaddr + memsz) entry_executable = 1;
 
@@ -136,8 +135,7 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
 
       if (memsz < filesz || vaddr + memsz < vaddr ||
           !file_range_ok(file_size, offset, filesz) ||
-          vaddr < USER_ADDR_MIN || vaddr + memsz > USER_ADDR_MAX ||
-          (vaddr < 0x40000000ULL && vaddr + memsz > 0x01000000ULL)) return 0;
+          vaddr < USER_ADDR_MIN || vaddr + memsz > USER_ADDR_MAX) return 0;
       if ((phdr[i].p_flags & 1) && hdr->e_entry >= vaddr &&
           hdr->e_entry < vaddr + memsz) entry_executable = 1;
 

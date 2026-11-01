@@ -5,6 +5,7 @@
 #include "string.h"
 #include "vmm.h"
 #include "acpi.h"
+#include "kernel_layout.h"
 
 static pci_device_t *devices[32];
 static int pci_count = 0;
@@ -26,16 +27,16 @@ static uint32_t ecam_read(uint16_t bus, uint16_t device, uint16_t function,
                           uint16_t offset) {
   uint64_t a = ecam_addr(bus, device, function, offset);
   uint64_t page = a & ~0xFFFULL;
-  vmm_map_page((void *)page, (void *)page, PTE_P | PTE_W | PTE_PCD);
-  return *(volatile uint32_t *)(uintptr_t)a;
+  vmm_map_page((void *)page, phys_to_virt(page), PTE_P | PTE_W | PTE_PCD);
+  return *(volatile uint32_t *)phys_to_virt(a);
 }
 
 static void ecam_write(uint16_t bus, uint16_t device, uint16_t function,
                        uint16_t offset, uint32_t val) {
   uint64_t a = ecam_addr(bus, device, function, offset);
   uint64_t page = a & ~0xFFFULL;
-  vmm_map_page((void *)page, (void *)page, PTE_P | PTE_W | PTE_PCD);
-  *(volatile uint32_t *)(uintptr_t)a = val;
+  vmm_map_page((void *)page, phys_to_virt(page), PTE_P | PTE_W | PTE_PCD);
+  *(volatile uint32_t *)phys_to_virt(a) = val;
 }
 
 void pci_enable_ecam(uint64_t base, uint8_t start_bus, uint8_t end_bus) {

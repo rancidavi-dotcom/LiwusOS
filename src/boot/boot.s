@@ -222,6 +222,17 @@ idt_flush:
   lidt (%rax)
   ret
 
+.global call_on_stack
+call_on_stack:
+  mov %rdi, %rsp
+  and $-16, %rsp
+  xor %rbp, %rbp
+  call *%rsi
+1:
+  cli
+  hlt
+  jmp 1b
+
 /* ---- 64-bit GDT (temporary, replaced by init_gdt later) ---- */
 .section .boot.data
 .align 16

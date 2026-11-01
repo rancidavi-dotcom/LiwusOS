@@ -52,6 +52,7 @@ void init_vmm(uint64_t memory_size);
 void vmm_map_page(void *phys, void *virt, uint64_t flags);
 int vmm_map_large_page(uint64_t phys, uint64_t virt, uint64_t flags);
 int vmm_map_direct_ram_region(uint64_t phys, uint64_t size);
+void vmm_remove_identity_map(void);
 int vmm_set_page_flags(void *virt, uint64_t flags);
 int vmm_unmap_page(void *virt);
 void vmm_map_framebuffer(uint64_t phys_addr, uint64_t size);

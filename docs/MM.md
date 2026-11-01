@@ -1,6 +1,6 @@
 # Modelo de memória do LiwusOS
 
-Este documento registra o mapa alvo e o estado implementado da Fase 1. O passo 9a liga o kernel em `0xffffffff80000000`; o passo 9b adiciona um direct map para os primeiros 1 GiB e migra PMM/kheap para usá-lo. A identidade temporária permanece até o passo 9c. A faixa de userspace já aceita endereços canônicos até `0x0000800000000000`, usa stack no topo e mmap em faixa alta. O passo 10 amplia o direct map e o PMM até 512 GiB; a identidade temporária ainda permanece até o 9c.
+Este documento registra o mapa alvo e o estado implementado da Fase 1. Os passos 9a–9c ligam o kernel em `0xffffffff80000000`, usam um direct map separado e removem a identidade depois da transição do BSP para uma stack alta e da inicialização dos APs. O passo 10 amplia o direct map e o PMM até 512 GiB. O passo 11 libera endereços canônicos de userspace, posiciona a stack no topo e reserva uma faixa alta para mmap.
 
 ## Mapa virtual x86-64 alvo
 
@@ -22,7 +22,7 @@ O mapa usa endereços canônicos de 48 bits (LA57 desativado). A metade baixa é
 
 O limite de user virtual é exclusivo: `USER_ADDR_MAX = 0x0000800000000000`. Todo início e fim deve ser canônico, sem overflow e fora das regiões reservadas. O teto de endereço virtual não implica que exista RAM física no mesmo endereço.
 
-> **Decisão (Fase 1, passo 9a):** a faixa `0x0000000000400000`–`0x0000000040000000` é espaço de usuário livre, e não uma reserva para o modelo antigo de heap/ELF. O kernel enxuto ainda carrega imagens fixas e o `brk` nessa região porque o loader atual não tem VMAs; a mudança efetiva para alocação por VMA ocorre no Gate 1. Nenhum código novo deve tratar essa faixa como legado.
+> **Decisão (Fase 1, passo 9a):** a faixa `0x0000000000400000`–`0x0000000040000000` é espaço de usuário livre, e não uma reserva para o modelo antigo de heap/ELF. O loader atual ainda carrega imagens fixas e mantém `brk` simples nessa região porque o kernel ainda não tem VMAs. Nenhum código novo deve tratar essa faixa como legado.
 
 ## Mapa kernel da metade alta
 
@@ -35,7 +35,7 @@ O limite de user virtual é exclusivo: `USER_ADDR_MAX = 0x0000800000000000`. Tod
 
 O layout exato da imagem é definido pelo linker script. Text é read-only/executable; rodata read-only/NX; data/bss read-write/NX. Boot começa com mapeamento de identidade mínimo para transição e o remove depois de instalar o mapa definitivo. MMIO não usa cache WB e é mapeado com atributos de cache apropriados.
 
-**Estado após 9b:** `DIRECT_MAP_BASE` é `0xffff800000000000` e a janela virtual dos primeiros 1 GiB está mapeada com páginas de 2 MiB instaladas pelo stub de boot. `phys_to_virt()` e `virt_to_phys()` convertem endereços; PMM retorna ponteiros direct-map e page tables continuam armazenando endereços físicos. A identidade de 1 GiB ainda está ativa para compatibilidade de boot/aliases antigos. O PMM só aloca regiões RAM que o Multiboot2 marca como disponíveis; a janela de 1 GiB também cobre buracos físicos e não deve ser usada para acessar MMIO. A política de cache/atributos do mapa temporário será tornada regional antes de remover a identidade. RAM acima de 1 GiB não é mapeada nem gerenciada ainda.
+**Estado após 9c–11:** `DIRECT_MAP_BASE` é `0xffff800000000000`; o mapa Multiboot2 estende os aliases a RAM utilizável até 512 GiB, com páginas grandes de 2 MiB e páginas de 4 KiB nas bordas. PMM limita-se às regiões disponíveis e retorna ponteiros direct-map; page tables guardam endereços físicos. A entrada de boot usa identidade temporária, removida depois que APs deixam o trampoline físico e o BSP muda para stack no direct map. MMIO usado pelo kernel (framebuffer, ACPI, APIC, PCI ECAM e AHCI) é acessado por aliases direct-map com atributos de cache explícitos. Userspace admite endereços canônicos abaixo de `USER_ADDR_MAX`; a antiga faixa de identidade não é mais reservada. O loader ainda não carrega ET_DYN/PIE.
 
 ## Mapa físico e PMM
 
@@ -44,7 +44,7 @@ O layout exato da imagem é definido pelo linker script. Text é read-only/execu
 - Bitmap/estruturas do PMM ficam em RAM reservada e são acessadas pelo direct map. A implementação futura pode particionar bitmaps para evitar exigir um único intervalo contíguo.
 - Endereços físicos acima de 4 GiB são aceitos se a CPU e as page tables os suportarem; o bootloader e os tipos Multiboot2 precisam preservar os 64 bits.
 - Frame físico zero e memória de firmware não são alocados. Overflow de `base + length` é rejeitado/limitado com segurança.
-- O mapa alvo cobre RAM física instalada e necessária, não transforma MMIO em RAM cacheável. A janela transitória de 9b ainda mapeia os primeiros 1 GiB de forma ampla; PMM não aloca os buracos e MMIO continua acessado por mappings explícitos.
+- O mapa cobre RAM física instalada e necessária sem tornar MMIO alocável pelo PMM. O direct map de RAM inclui buracos dentro das regiões mapeadas por páginas grandes; MMIO recebe aliases explícitos e não cacheáveis.
 
 ## Espaço de processo e VMA
 

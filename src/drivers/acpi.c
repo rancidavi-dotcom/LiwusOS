@@ -3,6 +3,7 @@
 #include "serial.h"
 #include "string.h"
 #include "io.h"
+#include "kernel_layout.h"
 
 /* ---- Offsets da FADT ---- */
 #define FADT_DSDT          0x28
@@ -43,7 +44,7 @@ static void acpi_map(uint64_t phys, uint32_t len) {
   uint64_t start = phys & ~0xFFFULL;
   uint64_t end = (phys + len + 0xFFF) & ~0xFFFULL;
   for (uint64_t a = start; a < end; a += 0x1000)
-    vmm_map_page((void *)a, (void *)a, PTE_P | PTE_W | PTE_PCD);
+    vmm_map_page((void *)a, phys_to_virt(a), PTE_P | PTE_W | PTE_PCD);
 }
 
 static bool checksum_ok(acpi_sdt_header_t *h) {
@@ -64,22 +65,24 @@ static rsdp_t *find_rsdp_legacy(void) {
   uint64_t ebda = ((uint64_t)ebda_seg) << 4;
   if (ebda > 0x400 && ebda < 0xA0000) {
     for (uint64_t a = ebda; a < ebda + 1024; a += 16) {
-      if (memcmp((void *)a, "RSD PTR ", 8) == 0) {
+      uint8_t *rsdp_bytes = (uint8_t *)phys_to_virt(a);
+      if (memcmp(rsdp_bytes, "RSD PTR ", 8) == 0) {
         uint8_t sum = 0;
         for (int i = 0; i < 20; i++)
-          sum += ((uint8_t *)a)[i];
+          sum += rsdp_bytes[i];
         if (sum == 0)
-          return (rsdp_t *)a;
+          return (rsdp_t *)rsdp_bytes;
       }
     }
   }
   for (uint64_t a = 0xE0000; a < 0x100000; a += 16) {
-    if (memcmp((void *)a, "RSD PTR ", 8) == 0) {
+    uint8_t *rsdp_bytes = (uint8_t *)phys_to_virt(a);
+    if (memcmp(rsdp_bytes, "RSD PTR ", 8) == 0) {
       uint8_t sum = 0;
       for (int i = 0; i < 20; i++)
-        sum += ((uint8_t *)a)[i];
+        sum += rsdp_bytes[i];
       if (sum == 0)
-        return (rsdp_t *)a;
+        return (rsdp_t *)rsdp_bytes;
     }
   }
   return NULL;
@@ -100,7 +103,7 @@ int acpi_init(void) {
   root_is_xsdt = false;
 
   if (rsdp_phys) {
-    rsdp = (rsdp_t *)rsdp_phys;
+    rsdp = (rsdp_t *)phys_to_virt(rsdp_phys);
   } else {
     rsdp = find_rsdp_legacy();
   }
@@ -117,7 +120,7 @@ int acpi_init(void) {
 
   bool is_v2 = false;
   if (rsdp->revision >= 2) {
-    acpi_map((uint64_t)rsdp, sizeof(rsdp2_t));
+    acpi_map(virt_to_phys(rsdp), sizeof(rsdp2_t));
     rsdp2_t *r2 = (rsdp2_t *)rsdp;
     if (r2->length >= 36) {
       uint8_t sum = 0;
@@ -131,11 +134,11 @@ int acpi_init(void) {
   acpi_sdt_header_t *root;
   if (is_v2) {
     rsdp2_t *r2 = (rsdp2_t *)rsdp;
-    root = (acpi_sdt_header_t *)(uint64_t)r2->xsdt_address;
+    root = (acpi_sdt_header_t *)phys_to_virt(r2->xsdt_address);
     root_is_xsdt = true;
     serial_print("ACPI: usando XSDT\n");
   } else {
-    root = (acpi_sdt_header_t *)(uint64_t)rsdp->rsdt_address;
+    root = (acpi_sdt_header_t *)phys_to_virt(rsdp->rsdt_address);
     root_is_xsdt = false;
     serial_print("ACPI: usando RSDT\n");
   }
@@ -145,14 +148,14 @@ int acpi_init(void) {
     return -1;
   }
 
-  acpi_map((uint64_t)root, sizeof(acpi_sdt_header_t));
+  acpi_map(virt_to_phys(root), sizeof(acpi_sdt_header_t));
   if (!checksum_ok(root)) {
     serial_print("ACPI: checksum da tabela raiz invalido.\n");
     root_sdt = NULL;
     return -1;
   }
 
-  acpi_map((uint64_t)root, root->length);
+  acpi_map(virt_to_phys(root), root->length);
   root_sdt = root;
   acpi_ok = true;
   serial_print("ACPI: tabela raiz OK, ");
@@ -195,7 +198,7 @@ acpi_sdt_header_t *acpi_find_table(const char *signature) {
     if (!phys)
       continue;
     acpi_map(phys, sizeof(acpi_sdt_header_t));
-    acpi_sdt_header_t *h = (acpi_sdt_header_t *)(uintptr_t)phys;
+    acpi_sdt_header_t *h = (acpi_sdt_header_t *)phys_to_virt(phys);
     if (memcmp(h->signature, signature, 4) != 0)
       continue;
     acpi_map(phys, h->length);
@@ -219,7 +222,7 @@ static void parse_s5slp(acpi_sdt_header_t *fadt, uint8_t *typa, uint8_t *typb) {
   if (!dsdt_phys)
     return;
   acpi_map(dsdt_phys, sizeof(acpi_sdt_header_t));
-  acpi_sdt_header_t *dsdt = (acpi_sdt_header_t *)(uintptr_t)dsdt_phys;
+  acpi_sdt_header_t *dsdt = (acpi_sdt_header_t *)phys_to_virt(dsdt_phys);
   if (memcmp(dsdt->signature, "DSDT", 4) != 0)
     return;
   acpi_map(dsdt_phys, dsdt->length);
@@ -338,7 +341,7 @@ bool acpi_reboot(void) {
   }
   if (space == 0) { /* System Memory */
     acpi_map(addr, 1);
-    *(volatile uint8_t *)(uintptr_t)addr = val;
+    *(volatile uint8_t *)phys_to_virt(addr) = val;
     return true;
   }
   return false;

@@ -5,6 +5,7 @@
 #include "serial.h"
 #include "string.h"
 #include "vga.h"
+#include "vmm.h"
 
 static hba_mem_t *abar;
 static int ahci_initialized = 0;
@@ -150,10 +151,12 @@ void ahci_init() {
     extern void vmm_map_page(void *phys, void *virt, uint64_t flags);
     // Map enough pages for GHC + all 32 ports
     for (int i = 0; i < 8; i++) {
-        vmm_map_page((void*)(phys_abar + i * 4096), (void*)(phys_abar + i * 4096), 3);
+        vmm_map_page((void *)(phys_abar + i * 4096),
+                     phys_to_virt(phys_abar + i * 4096),
+                     PTE_P | PTE_W | PTE_PCD);
     }
 
-    abar = (hba_mem_t *)phys_abar;
+    abar = (hba_mem_t *)phys_to_virt(phys_abar);
     
     // Enable AHCI mode (GHC.AE)
     abar->ghc |= (1 << 31);
