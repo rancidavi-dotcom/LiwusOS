@@ -17,6 +17,7 @@
 #include "vfs.h"
 #include "termios.h"
 #include "usercopy.h"
+#include "vma.h"
 
 extern int elf_class(void *file_buffer, uint32_t file_size);
 extern uint64_t elf32_load_file(void *file_buffer, uint32_t file_size);
@@ -102,6 +103,10 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
     vmm_map_page(phys, (void *)vaddr, PTE_P | PTE_W | PTE_U | PTE_NX);
     memset((void *)vaddr, 0, 4096);
   }
+  if (vma_insert(current_directory, stack_base, stack_top,
+                 VMA_PROT_READ | VMA_PROT_WRITE,
+                 VMA_PRIVATE | VMA_ANON | VMA_STACK, 0, 0) < 0)
+    return (uint64_t)-1;
 
   uint8_t *stack_bytes = (uint8_t *)stack_top;
 
@@ -819,6 +824,10 @@ static int exec_build_stack(int elf_class_value,
     }
     memset((void *)va, 0, PAGE_SIZE);
   }
+  if (vma_insert(current_directory, stack_base, EXEC_STACK_TOP,
+                 VMA_PROT_READ | VMA_PROT_WRITE,
+                 VMA_PRIVATE | VMA_ANON | VMA_STACK, 0, 0) < 0)
+    return -ENOMEM;
 
   uint64_t argv_addr[EXEC_VECTOR_MAX], env_addr[EXEC_VECTOR_MAX];
   uint8_t *bytes = (uint8_t *)EXEC_STACK_TOP;
@@ -1380,6 +1389,8 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
   (void)offset;
   if (!current_task) return MAP_FAILED;
   if (!(flags & MAP_ANONYMOUS)) return MAP_FAILED; // suportado apenas anônimo
+  if ((prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
+    return MAP_FAILED;
 
   /* Se o usuário passou um hint explícito (MAP_FIXED ou addr != NULL),
    * garante que ele está dentro do espaço de endereço de usuário. */
@@ -1396,9 +1407,9 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
   if ((flags & MAP_FIXED) && addr) {
     base = (uint64_t)addr & ~(uint64_t)4095;
   } else {
-    // Região mmap cresce para baixo a partir de mmap_top
-    base = current_task->mmap_top - aligned_len;
-    if (base < USER_ADDR_MIN) return MAP_FAILED;
+    if (vma_find_gap_topdown(current_directory, current_task->mmap_top,
+                             USER_ADDR_MIN, aligned_len, &base) < 0)
+      return MAP_FAILED;
   }
   if (base + aligned_len < base || base + aligned_len > USER_ADDR_MAX)
     return MAP_FAILED;
@@ -1438,12 +1449,26 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
     return MAP_FAILED;
   }
 
+  uint32_t vma_prot = 0;
+  if (prot & PROT_READ) vma_prot |= VMA_PROT_READ;
+  if (prot & PROT_WRITE) vma_prot |= VMA_PROT_WRITE;
+  if (prot & PROT_EXEC) vma_prot |= VMA_PROT_EXEC;
+  uint32_t vma_flags = (flags & MAP_SHARED) ? VMA_SHARED : VMA_PRIVATE;
+  vma_flags |= VMA_ANON;
+  if (vma_insert(current_directory, base, base + aligned_len, vma_prot,
+                 vma_flags, 0, 0) < 0) {
+    for (uint64_t j = 0; j < aligned_len / PAGE_SIZE; j++)
+      vmm_unmap_page((void *)(base + j * PAGE_SIZE));
+    return MAP_FAILED;
+  }
+
   /* The kernel initializes frames while writable, then exposes requested
    * user permissions. This remains valid with CR0.WP enabled. */
   for (uint64_t j = 0; j < aligned_len / PAGE_SIZE; j++) {
     if (vmm_set_page_flags((void *)(base + j * PAGE_SIZE), pte_flags) < 0) {
       for (uint64_t rollback = 0; rollback < aligned_len / PAGE_SIZE; rollback++)
         vmm_unmap_page((void *)(base + rollback * PAGE_SIZE));
+      vma_remove(current_directory, base, base + aligned_len);
       return MAP_FAILED;
     }
   }
@@ -1462,9 +1487,13 @@ uint64_t sys_mouse_get(void *out);
 int sys_munmap(void *addr, uint64_t length) {
   if (!current_task) return -1;
   if (!addr || !is_user_addr(addr)) return -EFAULT;
+  if (length > UINT64_MAX - 4095) return -EINVAL;
   uint64_t base = (uint64_t)addr & ~(uint64_t)4095;
   uint64_t aligned_len = (length + 4095) & ~(uint64_t)4095;
+  if (!aligned_len) return -EINVAL;
   if (base + aligned_len > USER_ADDR_MAX) return -EFAULT;
+  if (vma_remove(current_directory, base, base + aligned_len) < 0)
+    return -ENOMEM;
   for (uint64_t i = 0; i < aligned_len / 4096; i++) {
     vmm_unmap_page((void *)(base + i * 4096));
   }

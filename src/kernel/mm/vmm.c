@@ -5,6 +5,7 @@
 #include "string.h"
 #include "serial.h"
 #include "usercopy.h"
+#include "vma.h"
 
 page_directory_t *kernel_directory = 0;
 page_directory_t *current_directory = 0;
@@ -456,11 +457,16 @@ page_directory_t *vmm_copy_directory(page_directory_t *src) {
     vmm_free_directory(dest);
     return NULL;
   }
+  if (vma_clone(src, dest) < 0) {
+    vmm_free_directory(dest);
+    return NULL;
+  }
   return dest;
 }
 
 void vmm_free_directory(page_directory_t *dir) {
   if (!dir) return;
+  vma_destroy(dir);
   pml4_t *pml4 = dir->pml4_virt;
   if (!pml4) {
     kfree(dir);
@@ -509,13 +515,15 @@ uint64_t sys_brk(uint64_t addr) {
   if (addr > USER_ADDR_MAX - PAGE_SIZE) return brk_top;
   uint64_t end = (addr + 0xFFF) & ~0xFFFULL;
   for (uint64_t p = start; p < end; p += 4096) {
+    vma_t *existing = vma_find(current_directory, p);
+    if (existing && !(existing->flags & VMA_HEAP)) return brk_top;
     void *phys = pmm_alloc_block();
     if (!phys) {
       for (uint64_t rollback = start; rollback < p; rollback += PAGE_SIZE)
         vmm_unmap_page((void *)rollback);
       return brk_top;
     }
-    vmm_map_page(phys, (void *)p, PTE_P | PTE_W | PTE_U);
+    vmm_map_page(phys, (void *)p, PTE_P | PTE_W | PTE_U | PTE_NX);
     if (validate_user_pointer((void *)p, PAGE_SIZE) < 0) {
       pmm_free_block(phys);
       for (uint64_t rollback = start; rollback < p; rollback += PAGE_SIZE)
@@ -523,6 +531,13 @@ uint64_t sys_brk(uint64_t addr) {
       return brk_top;
     }
     memset((void *)p, 0, 4096);
+  }
+  uint64_t heap_vma_start = current_task->heap_start & ~(uint64_t)(PAGE_SIZE - 1);
+  if (end > heap_vma_start &&
+      vma_resize_heap(current_directory, heap_vma_start, end) < 0) {
+    for (uint64_t p = start; p < end; p += PAGE_SIZE)
+      vmm_unmap_page((void *)p);
+    return brk_top;
   }
   current_task->heap_end = end;
   return current_task->heap_end;

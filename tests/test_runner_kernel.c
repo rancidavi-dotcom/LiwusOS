@@ -66,6 +66,7 @@ int test_v1_compat_read(void);
 int test_sched_priority(void);
 int test_sched_sleep(void);
 int test_ring3_processes(void);
+int test_vma_intervals(void);
 
 /* ---- Global flag so kernel.c knows tests finished ---- */
 volatile int test_runner_done = 0;
@@ -181,6 +182,7 @@ void test_runner_task(void) {
     run_test(test_sdfs_diskfull, "sdfs_diskfull");
 
     serial_print("\n[runner] Scheduler tests...\n");
+    run_test(test_vma_intervals, "vma_intervals");
     run_test(test_sched_sleep,    "sched_sleep");
     run_test(test_sched_priority, "sched_priority");
 

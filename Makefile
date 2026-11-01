@@ -65,6 +65,7 @@ TEST_SRCS = tests/test_runner_kernel.c \
             tests/test_sdfs_perms.c \
             tests/test_sdfs_v2.c \
             tests/test_sched.c \
+            tests/test_vma.c \
             tests/test_runner_ring3.c
 
 TEST_OBJS = $(patsubst %.c,$(TEST_OBJ_DIR)/%.o,$(TEST_SRCS))

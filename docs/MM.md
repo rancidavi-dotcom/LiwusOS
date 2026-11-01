@@ -48,7 +48,7 @@ O layout exato da imagem é definido pelo linker script. Text é read-only/execu
 
 ## Espaço de processo e VMA
 
-Cada processo possui um `mm` independente com page tables e VMAs ordenadas. O kernel mantém seu mapeamento em todos os CR3 de processo conforme necessário; páginas do kernel são supervisor-only. Páginas de usuário têm U/S e permissões coerentes com a VMA. A página nula e a página de guarda nunca têm PTE presente.
+Cada processo possui um `mm` independente com page tables e VMAs ordenadas. **Implementado parcialmente:** o diretório de páginas contém uma lista ligada ordenada de VMA `[start,end)` com proteção, flags, offset e backing; ELF, stack, heap, `mmap`, `munmap` e clone em `fork` atualizam essa lista. O backing de arquivo e a referência ao VFS ainda não são usados. Page tables ainda são materializadas eager, e page fault ainda não consulta VMAs para demand paging. O kernel mantém seu mapeamento em todos os CR3 de processo; páginas do kernel são supervisor-only. Páginas de usuário têm U/S e permissões coerentes com o mapeamento. A página nula e a página de guarda nunca têm PTE presente.
 
 Uma VMA representa `[start, end)`, proteção R/W/X, flags (anônima, arquivo, privada/compartilhada, stack, heap), backing e offset. Page tables representam somente páginas residentes. Page fault verifica VMA e materializa página sob demanda. `mmap`, `munmap`, `mprotect`, `brk`, fork COW e loader atualizam VMAs e page tables por uma API que recebe o `mm` explicitamente.
 

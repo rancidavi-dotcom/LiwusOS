@@ -38,9 +38,10 @@ typedef struct {
   pte_t entries[512];
 } __attribute__((aligned(4096))) pt_t;
 
-typedef struct {
+typedef struct page_directory {
   pml4_t *pml4_virt;
   uint64_t pml4_phys;
+  struct vma *vmas;
 } page_directory_t;
 
 static inline uint64_t vaddr_pml4i(uint64_t vaddr) { return (vaddr >> 39) & 0x1FF; }

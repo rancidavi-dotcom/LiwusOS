@@ -4,6 +4,7 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "usercopy.h"
+#include "vma.h"
 
 uint64_t last_elf_heap_start = 0;
 int last_elf_load_error = -8; /* -ENOEXEC */
@@ -106,6 +107,22 @@ uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
         last_elf_load_error = -12;
         return 0;
       }
+    }
+  }
+
+  for (int i = 0; i < hdr->e_phnum; i++) {
+    if (phdr[i].p_type != PT_LOAD || phdr[i].p_memsz == 0) continue;
+    uint64_t start = (uint64_t)phdr[i].p_vaddr & ~0xFFFULL;
+    uint64_t end = ((uint64_t)phdr[i].p_vaddr + phdr[i].p_memsz + 0xFFFULL) & ~0xFFFULL;
+    uint32_t prot = 0;
+    if (phdr[i].p_flags & 4) prot |= VMA_PROT_READ;
+    if (phdr[i].p_flags & 2) prot |= VMA_PROT_WRITE;
+    if (phdr[i].p_flags & 1) prot |= VMA_PROT_EXEC;
+    if (vma_insert(current_directory, start, end, prot,
+                   VMA_PRIVATE | VMA_ANON | VMA_ELF, phdr[i].p_offset,
+                   0) < 0) {
+      last_elf_load_error = -12;
+      return 0;
     }
   }
 
@@ -225,6 +242,23 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
   }
 
   last_elf_heap_start = max_end;
+
+  for (int i = 0; i < hdr->e_phnum; i++) {
+    if (phdr[i].p_type != PT_LOAD || phdr[i].p_memsz == 0) continue;
+    uint64_t seg_start = (uint64_t)phdr[i].p_vaddr + load_bias;
+    uint64_t start = seg_start & ~0xFFFULL;
+    uint64_t end = (seg_start + phdr[i].p_memsz + 0xFFFULL) & ~0xFFFULL;
+    uint32_t prot = 0;
+    if (phdr[i].p_flags & 4) prot |= VMA_PROT_READ;
+    if (phdr[i].p_flags & 2) prot |= VMA_PROT_WRITE;
+    if (phdr[i].p_flags & 1) prot |= VMA_PROT_EXEC;
+    if (vma_insert(current_directory, start, end, prot,
+                   VMA_PRIVATE | VMA_ANON | VMA_ELF, phdr[i].p_offset,
+                   0) < 0) {
+      last_elf_load_error = -12;
+      return 0;
+    }
+  }
 
   if (!entry_executable || validate_user_pointer((void *)entry_addr, 1) < 0)
     return 0;
