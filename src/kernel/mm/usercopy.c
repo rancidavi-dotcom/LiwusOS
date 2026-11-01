@@ -74,6 +74,16 @@ static int validate_user_range(const void *ptr, size_t size, int write) {
     return 0;
 }
 
+static inline void user_access_begin(void) {
+    if (vmm_smap_available()) asm volatile("stac" ::: "memory");
+}
+
+static inline void user_access_end(void) {
+    if (vmm_smap_available()) asm volatile("clac" ::: "memory");
+}
+
+void usercopy_clear_ac(void) { user_access_end(); }
+
 int validate_user_pointer(const void *ptr, size_t size) {
     return validate_user_range(ptr, size, 0);
 }
@@ -85,14 +95,18 @@ int validate_user_write(const void *ptr, size_t size) {
 int copy_from_user(void *dst, const void *user_src, size_t n) {
     if (n == 0) return 0;
     if (validate_user_pointer(user_src, n) < 0) return -EFAULT;
+    user_access_begin();
     memcpy(dst, user_src, n);
+    user_access_end();
     return 0;
 }
 
 int copy_to_user(void *user_dst, const void *src, size_t n) {
     if (n == 0) return 0;
     if (validate_user_range(user_dst, n, 1) < 0) return -EFAULT;
+    user_access_begin();
     memcpy(user_dst, src, n);
+    user_access_end();
     return 0;
 }
 
@@ -113,7 +127,9 @@ int strncpy_from_user(char *dst, const char *user_src, size_t maxlen) {
         if ((addr & 0xFFF) == 0 || i == 0) {
             if (!walk_user_pt(addr, 1, 0)) return -EFAULT;
         }
+        user_access_begin();
         char c = src[i];
+        user_access_end();
         dst[i] = c;
         if (c == '\0') return 0;
     }

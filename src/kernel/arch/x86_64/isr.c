@@ -4,6 +4,7 @@
 #include "syscall.h" // Para syscall_handler
 #include "task.h"
 #include "string.h"
+#include "usercopy.h"
 
 #define MAX_IRQ_HANDLERS 16
 static void (*irq_handlers[MAX_IRQ_HANDLERS])(void) = {0};
@@ -25,6 +26,7 @@ extern uint64_t schedule(uint64_t current_rsp);
 /* O Assembly chama 'call isr_handler', passando a struct registers_t na stack
  * (por valor) */
 void isr_handler(registers_t *regs) {
+  usercopy_clear_ac();
   if (regs->int_no == 128) {
     syscall_handler(regs);
   } else {
@@ -80,6 +82,7 @@ serial_print(" rip=");
 /* O Assembly 'irq_common_stub' faz 'push %esp' e 'call irq_handler', então
  * recebe um ponteiro */
 uint64_t irq_handler(uint64_t rsp) {
+  usercopy_clear_ac();
   registers_t *regs = (registers_t *)rsp;
 
   extern void lapic_eoi(void);

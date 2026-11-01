@@ -62,6 +62,9 @@ int copy_to_user(void *user_dst, const void *src, size_t n);
  */
 int strncpy_from_user(char *dst, const char *user_src, size_t maxlen);
 
+/* Clear AC immediately on entry to an interrupt/exception handler. */
+void usercopy_clear_ac(void);
+
 /*
  * Quick coarse check: must be below the user address ceiling. The fine
  * PTE_U verification is done by validate_user_pointer().

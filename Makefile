@@ -87,7 +87,7 @@ USER_SHELL_CFLAGS = $(RING3_USER_CFLAGS) -Iprograms/c_example
 USER_INIT_ELF = $(OBJ_DIR)/programs/user_init.elf
 USER_EDITOR_ELF = $(OBJ_DIR)/programs/user_editor.elf
 
-.PHONY: all run run-log test test-build ring3-test user-c-example clean
+.PHONY: all run run-log test test-build ring3-test smap-test user-c-example clean
 
 user-c-example: $(RING3_C_APP_ELF)
 
@@ -99,6 +99,24 @@ ring3-test: $(TEST_ISO_IMAGE)
 		/tmp/liwusos-ring3-integration.serial || true
 	@grep -q '\[RING3 RESULT\] ALL PASS' /tmp/liwusos-ring3-integration.serial
 	@grep -q 'RESULT: ALL PASS' /tmp/liwusos-ring3-integration.serial
+
+# Exercise guarded usercopy on CPUs with SMEP/SMAP and the >1 GiB direct map.
+smap-test: $(TEST_ISO_IMAGE)
+	: > /tmp/liwusos-smap-integration.serial
+	timeout 90 $(QEMU) -machine q35 -cpu max -smp 4 -m 4096 \
+		-display none -monitor none \
+		-serial file:/tmp/liwusos-smap-integration.serial \
+		-no-reboot -no-shutdown \
+		-drive file=$(DISK_IMAGE),format=raw,if=none,id=disk \
+		-device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 \
+		-cdrom $(TEST_ISO_IMAGE) || test $$? -eq 124
+	@grep -E 'CR4.SMAP enabled|AP core|RESULT:|KERNEL PANIC|LIWUS_BOOT_READY' \
+		/tmp/liwusos-smap-integration.serial || true
+	@grep -q 'VMM: CR4.SMAP enabled' /tmp/liwusos-smap-integration.serial
+	@grep -q 'APIC: AP core (APIC ID 3) booted and initialized successfully!' \
+		/tmp/liwusos-smap-integration.serial
+	@grep -q 'RESULT: 43/43 PASS' /tmp/liwusos-smap-integration.serial
+	@grep -q 'RESULT: ALL PASS' /tmp/liwusos-smap-integration.serial
 
 all: $(KERNEL_BIN) $(ISO_IMAGE)
 

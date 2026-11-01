@@ -23,6 +23,8 @@ volatile uint64_t ap_status = 0;
 #include "gdt.h"
 
 void ap_kernel_main(void) {
+    /* Every logical CPU owns CR4; enable NX/SMEP/SMAP before kernel work. */
+    vmm_init_cpu_protections();
     uint32_t apic_id = lapic_read(LAPIC_ID) >> 24;
     int cpu_idx = 0;
     for (int i = 0; i < cpu_count; i++) {

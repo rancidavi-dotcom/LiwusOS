@@ -35,8 +35,9 @@ void vmm_init_pat() {
 
 static int walk_pt_modified_pml4 = 0;
 static int vmm_nx_enabled = 0;
+static int vmm_smap_enabled = 0;
 
-static void vmm_enable_cpu_protections(void) {
+void vmm_init_cpu_protections(void) {
   uint32_t eax, ebx, ecx, edx;
   eax = 0x80000000U;
   asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
@@ -53,17 +54,30 @@ static void vmm_enable_cpu_protections(void) {
     }
   }
 
+  eax = 0;
+  asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+  uint32_t max_basic_leaf = eax;
+  if (max_basic_leaf < 7) return;
   eax = 7;
   ecx = 0;
   asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "+c"(ecx), "=d"(edx));
+  uint64_t cr4;
+  asm volatile("mov %%cr4, %0" : "=r"(cr4));
   if (ebx & (1U << 7)) { /* CPUID.7.0:EBX.SMEP */
-    uint64_t cr4;
-    asm volatile("mov %%cr4, %0" : "=r"(cr4));
     cr4 |= 1ULL << 20;
-    asm volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
     serial_print("VMM: CR4.SMEP enabled\n");
   }
+  if (ebx & (1U << 20)) { /* CPUID.7.0:EBX.SMAP */
+    cr4 |= 1ULL << 21;
+    vmm_smap_enabled = 1;
+    serial_print("VMM: CR4.SMAP enabled\n");
+  }
+  if (ebx & ((1U << 7) | (1U << 20))) {
+    asm volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
+  }
 }
+
+int vmm_smap_available(void) { return vmm_smap_enabled; }
 
 static void *alloc_pt_page(void) {
   void *page = pmm_alloc_block();
@@ -344,7 +358,7 @@ void switch_page_directory(page_directory_t *dir) {
 
 void init_vmm(uint64_t memory_size) {
   (void)memory_size;
-  vmm_enable_cpu_protections();
+  vmm_init_cpu_protections();
   vmm_init_pat();
   kernel_directory = (page_directory_t *)kmalloc_a(sizeof(page_directory_t));
   memset(kernel_directory, 0, sizeof(page_directory_t));
@@ -533,6 +547,8 @@ void vmm_free_directory(page_directory_t *dir) {
 #include "task.h"
 uint64_t sys_brk(uint64_t addr) {
   if (!current_task) return 0;
+  page_directory_t *mm = current_task->page_directory;
+  if (!mm) return 0;
   if (addr == 0) return current_task->heap_end;
   uint64_t brk_top = current_task->heap_end;
   if (brk_top < current_task->heap_start) brk_top = current_task->heap_start;
@@ -541,28 +557,28 @@ uint64_t sys_brk(uint64_t addr) {
   if (addr > USER_ADDR_MAX - PAGE_SIZE) return brk_top;
   uint64_t end = (addr + 0xFFF) & ~0xFFFULL;
   for (uint64_t p = start; p < end; p += 4096) {
-    vma_t *existing = vma_find(current_directory, p);
+    vma_t *existing = vma_find(mm, p);
     if (existing && !(existing->flags & VMA_HEAP)) return brk_top;
     void *phys = pmm_alloc_block();
     if (!phys) {
       for (uint64_t rollback = start; rollback < p; rollback += PAGE_SIZE)
-        vmm_unmap_page((void *)rollback);
+        vmm_unmap_page_in(mm, (void *)rollback);
       return brk_top;
     }
-    vmm_map_page(phys, (void *)p, PTE_P | PTE_W | PTE_U | PTE_NX);
+    memset(phys, 0, PAGE_SIZE);
+    vmm_map_page_in(mm, phys, (void *)p, PTE_P | PTE_W | PTE_U | PTE_NX);
     if (validate_user_pointer((void *)p, PAGE_SIZE) < 0) {
       pmm_free_block(phys);
       for (uint64_t rollback = start; rollback < p; rollback += PAGE_SIZE)
-        vmm_unmap_page((void *)rollback);
+        vmm_unmap_page_in(mm, (void *)rollback);
       return brk_top;
     }
-    memset((void *)p, 0, 4096);
   }
   uint64_t heap_vma_start = current_task->heap_start & ~(uint64_t)(PAGE_SIZE - 1);
   if (end > heap_vma_start &&
-      vma_resize_heap(current_directory, heap_vma_start, end) < 0) {
+      vma_resize_heap(mm, heap_vma_start, end) < 0) {
     for (uint64_t p = start; p < end; p += PAGE_SIZE)
-      vmm_unmap_page((void *)p);
+      vmm_unmap_page_in(mm, (void *)p);
     return brk_top;
   }
   current_task->heap_end = end;

@@ -99,6 +99,7 @@ O stub salva estado de usuário de modo que interrupções e preempção preserv
 - `TSS.RSP0` aponta para o topo da kernel stack da thread corrente antes de qualquer retorno a ring 3. Ele é atualizado na troca de contexto, não no caminho de entrada.
 - `IA32_FMASK` deve mascarar IF, TF, DF e AC, e o kernel assume DF limpo. NMI e #MC usam IST porque `SYSCALL` não os desabilita.
 - A stack de usuário não garante alinhamento de 16 bytes no ponto de entrada; o kernel não pode assumir alinhamento nem usar a red zone (compilação com `-mno-red-zone`).
+- Com SMAP ativo, cada entrada de exceção/interrupção limpa AC antes do handler. Somente as primitivas de usercopy usam STAC/CLAC, depois de validar o intervalo; carregadores e inicializadores de memória devem escrever pelo direct map antes de mapear frames ou chamar `copy_to_user`.
 - Saída: se RIP e RFLAGS de retorno forem canônicos e seguros (sem TF, DF, AC ou NT), usar `SYSRET` com RCX e R11; caso contrário, montar `IRETQ`. `SYSRET` termina com `swapgs`, e a validação acontece antes de qualquer acesso com GS de usuário.
 - O retorno não pode executar `swapgs` duas vezes: interrupções aninhadas já rodam com GS de kernel e stack de kernel.
 - `int 0x80` permanece como entrada nativa do LiwusOS. Uma compatibilidade i386 Linux futura exigirá um seletor de ABI por tarefa antes de reutilizar o mesmo vetor.

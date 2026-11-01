@@ -23,6 +23,17 @@ static int file_range_ok(uint32_t file_size, uint64_t offset, uint64_t size) {
   return offset <= file_size && size <= (uint64_t)file_size - offset;
 }
 
+static int zero_user_range(uint64_t start, uint64_t size) {
+  static const uint8_t zero_page[PAGE_SIZE] = {0};
+  while (size) {
+    size_t chunk = size > PAGE_SIZE ? PAGE_SIZE : (size_t)size;
+    if (copy_to_user((void *)start, zero_page, chunk) < 0) return -1;
+    start += chunk;
+    size -= chunk;
+  }
+  return 0;
+}
+
 uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
   last_elf_load_error = -8;
   if (!file_buffer || file_size < sizeof(Elf32_Ehdr)) return 0;
@@ -58,6 +69,7 @@ uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
         if (validate_user_pointer((void *)p, 1) < 0) {
           void *phys = pmm_alloc_block();
           if (!phys) { last_elf_load_error = -12; return 0; }
+          memset(phys, 0, 4096);
           /* Populate every segment while writable; final permissions are
            * applied after all PT_LOAD copies complete (CR0.WP is enabled). */
           uint64_t map_flags = PTE_P | PTE_U | PTE_W | PTE_NX;
@@ -67,14 +79,19 @@ uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
             last_elf_load_error = -12;
             return 0;
           }
-          memset((void *)p, 0, 4096);
         }
       }
 
-      memcpy((void *)vaddr, (uint8_t *)file_buffer + offset, (uint32_t)filesz);
+      if (copy_to_user((void *)vaddr, (uint8_t *)file_buffer + offset,
+                       (size_t)filesz) < 0) {
+        last_elf_load_error = -12;
+        return 0;
+      }
 
-      if (memsz > filesz) {
-        memset((void *)(vaddr + filesz), 0, (size_t)(memsz - filesz));
+      if (memsz > filesz && zero_user_range(vaddr + filesz,
+                                             memsz - filesz) < 0) {
+        last_elf_load_error = -12;
+        return 0;
       }
     }
   }
@@ -191,6 +208,7 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
         if (validate_user_pointer((void *)p, 1) < 0) {
           void *phys = pmm_alloc_block();
           if (!phys) { last_elf_load_error = -12; return 0; }
+          memset(phys, 0, 4096);
           uint64_t map_flags = PTE_P | PTE_U | PTE_W | PTE_NX;
           vmm_map_page(phys, (void *)p, map_flags);
           if (validate_user_pointer((void *)p, 1) < 0) {
@@ -198,14 +216,19 @@ uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {
             last_elf_load_error = -12;
             return 0;
           }
-          memset((void *)p, 0, 4096);
         }
       }
 
-      memcpy((void *)vaddr, (uint8_t *)file_buffer + offset, (uint32_t)filesz);
+      if (copy_to_user((void *)vaddr, (uint8_t *)file_buffer + offset,
+                       (size_t)filesz) < 0) {
+        last_elf_load_error = -12;
+        return 0;
+      }
 
-      if (memsz > filesz) {
-        memset((void *)(vaddr + filesz), 0, (size_t)(memsz - filesz));
+      if (memsz > filesz && zero_user_range(vaddr + filesz,
+                                             memsz - filesz) < 0) {
+        last_elf_load_error = -12;
+        return 0;
       }
     }
   }

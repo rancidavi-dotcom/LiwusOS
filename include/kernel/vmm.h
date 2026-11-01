@@ -62,6 +62,8 @@ int vmm_map_direct_ram_region(uint64_t phys, uint64_t size);
 void vmm_remove_identity_map(void);
 void vmm_protect_kernel_image(void);
 int vmm_nx_available(void);
+void vmm_init_cpu_protections(void);
+int vmm_smap_available(void);
 int vmm_set_page_flags(void *virt, uint64_t flags);
 int vmm_set_page_flags_in(page_directory_t *dir, void *virt, uint64_t flags);
 int vmm_unmap_page(void *virt);

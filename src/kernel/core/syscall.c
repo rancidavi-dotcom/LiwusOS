@@ -41,6 +41,8 @@ static char stdin_esc_buf[8];
 static int stdin_esc_len = 0;
 static int stdin_esc_pos = 0;
 static const char *resolve_path(const char *path);
+static int user_stack_push64(uint64_t *sp, uint64_t value);
+static int user_stack_push32(uint64_t *sp, uint32_t value);
 
 void sys_exit(int status) {
   serial_print("[syscall] sys_exit called with status ");
@@ -100,15 +102,16 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
   uint64_t stack_base = stack_top - stack_size;
   for (uint64_t vaddr = stack_base; vaddr < stack_top; vaddr += 4096) {
     void *phys = kmalloc_a(4096);
+    if (!phys) return (uint64_t)-1;
+    memset(phys, 0, 4096);
     vmm_map_page(phys, (void *)vaddr, PTE_P | PTE_W | PTE_U | PTE_NX);
-    memset((void *)vaddr, 0, 4096);
   }
   if (vma_insert(current_directory, stack_base, stack_top,
                  VMA_PROT_READ | VMA_PROT_WRITE,
                  VMA_PRIVATE | VMA_ANON | VMA_STACK, 0, 0) < 0)
     return (uint64_t)-1;
 
-  uint8_t *stack_bytes = (uint8_t *)stack_top;
+  uint64_t stack_cursor = stack_top;
 
   int argc = 0;
   if (argv) {
@@ -119,42 +122,42 @@ uint64_t sys_execve(const char *filename, char *const argv[], char *const envp[]
     uint32_t arg_ptrs[16];
     for (int i = 0; i < argc; i++) {
       size_t len = strlen(argv[i]) + 1;
-      stack_bytes -= len;
-      memcpy(stack_bytes, argv[i], len);
-      arg_ptrs[i] = (uint32_t)(uint64_t)stack_bytes;
+      stack_cursor -= len;
+      if (copy_to_user((void *)stack_cursor, argv[i], len) < 0)
+        return (uint64_t)-1;
+      arg_ptrs[i] = (uint32_t)stack_cursor;
     }
 
-    uint32_t *esp = (uint32_t *)((uint64_t)stack_bytes & ~0xFULL);
-    esp--; *esp = 0; // envp NULL
-    esp--; *esp = 0; // argv NULL
+    uint64_t esp = stack_cursor & ~0xFULL;
+    if (user_stack_push32(&esp, 0) < 0 || user_stack_push32(&esp, 0) < 0)
+      return (uint64_t)-1;
     for (int i = argc - 1; i >= 0; i--) {
-      esp--; *esp = arg_ptrs[i];
+      if (user_stack_push32(&esp, arg_ptrs[i]) < 0) return (uint64_t)-1;
     }
-    esp--; *esp = (uint32_t)argc;
+    if (user_stack_push32(&esp, (uint32_t)argc) < 0) return (uint64_t)-1;
 
     extern uint64_t execve_new_esp;
-    execve_new_esp = (uint64_t)esp;
+    execve_new_esp = esp;
   } else {
     uint64_t arg_ptrs[16];
     for (int i = 0; i < argc; i++) {
       size_t len = strlen(argv[i]) + 1;
-      stack_bytes -= len;
-      memcpy(stack_bytes, argv[i], len);
-      arg_ptrs[i] = (uint64_t)stack_bytes;
+      stack_cursor -= len;
+      if (copy_to_user((void *)stack_cursor, argv[i], len) < 0)
+        return (uint64_t)-1;
+      arg_ptrs[i] = stack_cursor;
     }
 
-    uint64_t *rsp = (uint64_t *)((uint64_t)stack_bytes & ~0xFULL);
-    rsp--; *rsp = 0; // auxv NULL value
-    rsp--; *rsp = 0; // auxv NULL type
-    rsp--; *rsp = 0; // envp NULL
-    rsp--; *rsp = 0; // argv NULL
+    uint64_t rsp = stack_cursor & ~0xFULL;
+    for (int i = 0; i < 4; i++)
+      if (user_stack_push64(&rsp, 0) < 0) return (uint64_t)-1;
     for (int i = argc - 1; i >= 0; i--) {
-      rsp--; *rsp = arg_ptrs[i];
+      if (user_stack_push64(&rsp, arg_ptrs[i]) < 0) return (uint64_t)-1;
     }
-    rsp--; *rsp = (uint64_t)argc;
+    if (user_stack_push64(&rsp, (uint64_t)argc) < 0) return (uint64_t)-1;
 
     extern uint64_t execve_new_esp;
-    execve_new_esp = (uint64_t)rsp;
+    execve_new_esp = rsp;
   }
 
   launch_last_error = "ok";
@@ -809,6 +812,16 @@ static int exec_copy_vector(char *const user_vec[], char *storage,
   return -E2BIG; /* no NULL terminator within the bounded vector */
 }
 
+static int user_stack_push64(uint64_t *sp, uint64_t value) {
+  *sp -= sizeof(value);
+  return copy_to_user((void *)*sp, &value, sizeof(value));
+}
+
+static int user_stack_push32(uint64_t *sp, uint32_t value) {
+  *sp -= sizeof(value);
+  return copy_to_user((void *)*sp, &value, sizeof(value));
+}
+
 static int exec_build_stack(int elf_class_value,
                             char *argv[EXEC_VECTOR_MAX], uint32_t argc,
                             char *envp[EXEC_VECTOR_MAX], uint32_t envc,
@@ -817,12 +830,12 @@ static int exec_build_stack(int elf_class_value,
   for (uint64_t va = stack_base; va < EXEC_STACK_TOP; va += PAGE_SIZE) {
     void *phys = pmm_alloc_block();
     if (!phys) return -ENOMEM;
+    memset(phys, 0, PAGE_SIZE);
     vmm_map_page(phys, (void *)va, PTE_P | PTE_W | PTE_U | PTE_NX);
     if (validate_user_pointer((void *)va, PAGE_SIZE) < 0) {
       pmm_free_block(phys);
       return -ENOMEM;
     }
-    memset((void *)va, 0, PAGE_SIZE);
   }
   if (vma_insert(current_directory, stack_base, EXEC_STACK_TOP,
                  VMA_PROT_READ | VMA_PROT_WRITE,
@@ -830,41 +843,48 @@ static int exec_build_stack(int elf_class_value,
     return -ENOMEM;
 
   uint64_t argv_addr[EXEC_VECTOR_MAX], env_addr[EXEC_VECTOR_MAX];
-  uint8_t *bytes = (uint8_t *)EXEC_STACK_TOP;
+  uint64_t cursor = EXEC_STACK_TOP;
   for (int i = (int)envc - 1; i >= 0; i--) {
     uint32_t len = strlen(envp[i]) + 1;
-    bytes -= len;
-    memcpy(bytes, envp[i], len);
-    env_addr[i] = (uint64_t)bytes;
+    cursor -= len;
+    if (copy_to_user((void *)cursor, envp[i], len) < 0) return -EFAULT;
+    env_addr[i] = cursor;
   }
   for (int i = (int)argc - 1; i >= 0; i--) {
     uint32_t len = strlen(argv[i]) + 1;
-    bytes -= len;
-    memcpy(bytes, argv[i], len);
-    argv_addr[i] = (uint64_t)bytes;
+    cursor -= len;
+    if (copy_to_user((void *)cursor, argv[i], len) < 0) return -EFAULT;
+    argv_addr[i] = cursor;
   }
 
   if (elf_class_value == ELFCLASS64) {
-    uint64_t *sp = (uint64_t *)((uint64_t)bytes & ~0xFULL);
+    uint64_t sp = cursor & ~0xFULL;
     uint64_t words = 1 + argc + 1 + envc + 1 + 2;
-    if (((uint64_t)sp - words * sizeof(uint64_t)) & 0x8) *--sp = 0;
-    *--sp = 0; *--sp = 0; /* AT_NULL */
-    *--sp = 0; /* envp terminator */
-    for (int i = (int)envc - 1; i >= 0; i--) *--sp = env_addr[i];
-    *--sp = 0; /* argv terminator */
-    for (int i = (int)argc - 1; i >= 0; i--) *--sp = argv_addr[i];
-    *--sp = argc;
-    *stack_out = (uint64_t)sp;
+    if ((sp - words * sizeof(uint64_t)) & 0x8)
+      if (user_stack_push64(&sp, 0) < 0) return -EFAULT;
+    if (user_stack_push64(&sp, 0) < 0 || user_stack_push64(&sp, 0) < 0)
+      return -EFAULT; /* AT_NULL */
+    if (user_stack_push64(&sp, 0) < 0) return -EFAULT;
+    for (int i = (int)envc - 1; i >= 0; i--)
+      if (user_stack_push64(&sp, env_addr[i]) < 0) return -EFAULT;
+    if (user_stack_push64(&sp, 0) < 0) return -EFAULT;
+    for (int i = (int)argc - 1; i >= 0; i--)
+      if (user_stack_push64(&sp, argv_addr[i]) < 0) return -EFAULT;
+    if (user_stack_push64(&sp, argc) < 0) return -EFAULT;
+    *stack_out = sp;
   } else {
-    uint32_t *sp = (uint32_t *)((uint64_t)bytes & ~0xFULL);
+    uint64_t sp = cursor & ~0xFULL;
     uint64_t words = 1 + argc + 1 + envc + 1;
-    if (((uint64_t)sp - words * sizeof(uint32_t)) & 0x8) *--sp = 0;
-    *--sp = 0; /* envp terminator */
-    for (int i = (int)envc - 1; i >= 0; i--) *--sp = (uint32_t)env_addr[i];
-    *--sp = 0; /* argv terminator */
-    for (int i = (int)argc - 1; i >= 0; i--) *--sp = (uint32_t)argv_addr[i];
-    *--sp = argc;
-    *stack_out = (uint64_t)sp;
+    if ((sp - words * sizeof(uint32_t)) & 0x8)
+      if (user_stack_push32(&sp, 0) < 0) return -EFAULT;
+    if (user_stack_push32(&sp, 0) < 0) return -EFAULT;
+    for (int i = (int)envc - 1; i >= 0; i--)
+      if (user_stack_push32(&sp, (uint32_t)env_addr[i]) < 0) return -EFAULT;
+    if (user_stack_push32(&sp, 0) < 0) return -EFAULT;
+    for (int i = (int)argc - 1; i >= 0; i--)
+      if (user_stack_push32(&sp, (uint32_t)argv_addr[i]) < 0) return -EFAULT;
+    if (user_stack_push32(&sp, argc) < 0) return -EFAULT;
+    *stack_out = sp;
   }
   return 0;
 }
@@ -1438,13 +1458,13 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
       }
       return MAP_FAILED;
     }
+    memset(phys, 0, 4096);
     vmm_map_page_in(mm, phys, (void *)(base + (uint64_t)i * 4096),
                     alloc_flags);
     if (validate_user_pointer((void *)(base + i * 4096), 1) < 0) {
       pmm_free_block(phys);
       break;
     }
-    memset((void *)(base + (uint64_t)i * 4096), 0, 4096);
   }
   if (i != aligned_len / 4096) {
     for (uint64_t j = 0; j < i; j++)
