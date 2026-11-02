@@ -41,6 +41,10 @@ is absent; it is never searched under `/bin`. Only `-ENOENT` advances to the
 next candidate. An invalid executable or another execution error is reported
 and stops resolution. The original `argv[0]` and all arguments are passed
 unchanged. `.lxe` is not used to select an ABI or loader: the ELF header does.
+SDFS stores permission metadata, but the current native open/exec path does not
+yet enforce Unix-style access bits. `ls` and `cat` report syscall failures;
+they cannot reliably distinguish a denied path from a missing path until
+native permission enforcement is implemented.
 
 `ls.lxe` and `cat.lxe` are independent SDK applications. `ls` enumerates a
 directory through `liw_open`/`liw_getdents`; without a path it uses the
