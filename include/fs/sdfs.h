@@ -132,6 +132,7 @@ typedef struct {
 
 /* Public API */
 fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba);
+int sdfs_mount_failed_corrupt(void);
 int sdfs_format(void);
 int sdfs_is_mounted(void);
 
@@ -163,7 +164,12 @@ int sdfs_read_raw_block(uint32_t block, uint8_t *buffer);
 int sdfs_write_raw_block(uint32_t block, uint8_t *buffer);
 
 /* Flush the pending in-RAM allocation bitmap to disk */
-void sdfs_flush_bitmap(void);
+int sdfs_flush_bitmap(void);
+
+#ifdef KERNEL_TEST
+/* Fail one physical SDFS block write to simulate an I/O interruption. */
+void sdfs_test_fail_next_write(uint32_t block);
+#endif
 
 #endif
 void sdfs_enable_ramdisk(uint32_t mb);

@@ -50,9 +50,9 @@ asserts; shared SDFS state is formatted once and then reused in this order.
 | `superblock_crc` | `tests/test_sdfs_v2.c` | Reads block 0 and checks V2 magic/version/block size/layout fields and computed CRC. |
 | `superblock_v2_fields` | same | Checks bitmap, journal, root-block ordering and bounds against total blocks. |
 | `fsck_clean` | same | Requires the mounted filesystem to remain mounted after fsck. It does not inject corruption. |
-| `journal_replay_basic` | `tests/test_sdfs_journal.c` | Replays journaled block updates and compares resulting data. |
+| `journal_replay_basic` | `tests/test_sdfs_journal.c` | Stages and commits a WAL block update, then replays it and compares resulting data. |
 | `journal_clean_noop` | same | Requires a clean journal to report no dirty state; no write should be replayed. |
-| `journal_multiple_entries` | same | Replays at least three entries and checks the target blocks' bytes. |
+| `journal_multiple_entries` | same | Replays at least three entries and checks target bytes; corrupts a committed payload, requires replay and mount to refuse it without clearing the dirty record, restores the journal, and verifies recovery. |
 | `sdfs_create_empty` | `tests/test_sdfs_create.c` | Creates an empty file; path metadata says file and size zero. |
 | `sdfs_create_duplicate` | same | First create succeeds; duplicate create returns `-1`. |
 | `sdfs_create_root_blocked` | same | Creating a file at `/` returns `-1`. |
@@ -60,7 +60,7 @@ asserts; shared SDFS state is formatted once and then reused in this order.
 | `sdfs_write_read_1block` | `tests/test_sdfs_rw.c` | Writes and reads a short 13-byte payload and compares bytes/size. |
 | `sdfs_write_read_exact_block` | same | Writes/reads 4092 bytes and compares exact contents. |
 | `sdfs_write_read_multiblock` | same | Writes/reads a patterned 20,000-byte payload across blocks. |
-| `sdfs_overwrite` | same | Replaces a 13-byte file and checks only the new content/size. |
+| `sdfs_overwrite` | same | Replaces a 13-byte file and checks new bytes; injects failures at WAL commit and target-directory writes, remounts after each, and checks old-or-new complete contents. |
 | `sdfs_empty_file` | same | Reads an empty file and checks a non-null result with size zero. |
 | `sdfs_dir_create` | `tests/test_sdfs_dir.c` | Creates a directory and verifies its type. |
 | `sdfs_dir_list` | same | Creates a listing fixture and requires exactly three entries. |

@@ -8,8 +8,10 @@
 #include "serial.h"
 #include "string.h"
 #include "timer.h"
+#include "spinlock.h"
 
 static int sdfs_mounted = 0;
+static int sdfs_corrupt_mount = 0;
 static uint16_t ata_bus;
 static uint8_t ata_drive;
 static uint32_t disk_total_blocks;
@@ -24,6 +26,15 @@ static uint32_t disk_format_version;
 static uint8_t *bitmap_cache = NULL;
 static uint32_t bitmap_bytes;
 static uint32_t bitmap_dirty_ops = 0;
+static spinlock_t metadata_write_lock = {0};
+
+#ifdef KERNEL_TEST
+static uint32_t sdfs_fail_write_block = UINT32_MAX;
+
+void sdfs_test_fail_next_write(uint32_t block) {
+    sdfs_fail_write_block = block;
+}
+#endif
 
 /* Flush the allocation bitmap only every N block allocations/frees instead
  * of on every single operation. Each flush writes the whole bitmap, so doing
@@ -32,6 +43,7 @@ static uint32_t bitmap_dirty_ops = 0;
 
 static void sdfs_open(fs_node_t *node);
 static void sdfs_close(fs_node_t *node);
+static void sdfs_free_block(uint32_t block);
 static uint32_t sdfs_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 static uint32_t sdfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer);
 static struct dirent *sdfs_readdir(fs_node_t *node, uint32_t index);
@@ -86,7 +98,20 @@ static int sdfs_read_block(uint32_t block, uint8_t *buffer) {
     return 0;
 }
 
+static int sdfs_flush_device(void) {
+    if (sdfs_ramdisk) return 0;
+    if (sdfs_ahci_port != 0xFF)
+        return ahci_flush_cache(sdfs_ahci_port) ? 0 : -1;
+    return ata_flush_cache();
+}
+
 static int sdfs_write_block(uint32_t block, uint8_t *buffer) {
+#ifdef KERNEL_TEST
+    if (block == sdfs_fail_write_block) {
+        sdfs_fail_write_block = UINT32_MAX;
+        return -1;
+    }
+#endif
     if (sdfs_ramdisk) {
         if (block >= disk_total_blocks) return -1;
         memcpy(sdfs_ramdisk + block * SDFS_BLOCK_SIZE, buffer, SDFS_BLOCK_SIZE);
@@ -122,11 +147,20 @@ static int sdfs_zero_block(uint32_t block) {
  * mount does not re-apply already-persisted blocks.
  */
 static int sdfs_metadata_write(uint32_t block, uint8_t *buffer) {
-    sdfs_journal_write_block(block, buffer);
-    int ret = sdfs_write_block(block, buffer);
-    if (ret == 0) {
-        sdfs_journal_clean();
+    spinlock_acquire(&metadata_write_lock);
+    int ret = -1;
+    if (sdfs_journal_begin() == 0) {
+        if (sdfs_journal_write_block(block, buffer) == 0 &&
+            sdfs_journal_commit() == 0) {
+            if (sdfs_write_block(block, buffer) == 0 &&
+                sdfs_flush_device() == 0 && sdfs_journal_clean() == 0) {
+                ret = 0;
+            }
+        } else {
+            sdfs_journal_abort();
+        }
     }
+    spinlock_release(&metadata_write_lock);
     return ret;
 }
 
@@ -151,18 +185,22 @@ static int sdfs_load_bitmap(void) {
     return 0;
 }
 
-static void sdfs_save_bitmap(void) {
-    if (!bitmap_cache) return;
+static int sdfs_save_bitmap(void) {
+    if (!bitmap_cache) return -1;
     for (uint32_t i = 0; i < disk_bitmap_blocks; i++) {
-        sdfs_write_block(disk_bitmap_block + i,
-                         bitmap_cache + i * SDFS_BLOCK_SIZE);
+        if (sdfs_write_block(disk_bitmap_block + i,
+                             bitmap_cache + i * SDFS_BLOCK_SIZE) != 0)
+            return -1;
     }
+    if (sdfs_flush_device() != 0) return -1;
     bitmap_dirty_ops = 0;
+    return 0;
 }
 
-void sdfs_flush_bitmap(void) {
-    if (!bitmap_cache || bitmap_dirty_ops == 0) return;
-    sdfs_save_bitmap();
+int sdfs_flush_bitmap(void) {
+    if (!bitmap_cache) return -1;
+    if (bitmap_dirty_ops == 0) return sdfs_flush_device();
+    return sdfs_save_bitmap();
 }
 
 static void sdfs_bitmap_touch(void) {
@@ -220,7 +258,10 @@ static uint32_t sdfs_alloc_block_raw(void) {
 static uint32_t sdfs_alloc_block(void) {
     uint32_t b = sdfs_alloc_block_raw();
     if (b == 0) return 0;
-    if (sdfs_zero_block(b) != 0) return 0;
+    if (sdfs_zero_block(b) != 0) {
+        sdfs_free_block(b);
+        return 0;
+    }
     return b;
 }
 
@@ -274,6 +315,100 @@ static void sdfs_free_chain(uint32_t start_block) {
         sdfs_free_block(cur);
         cur = next;
     }
+}
+
+static int sdfs_allocate_file_chain(uint8_t *buffer, uint32_t size,
+                                    uint32_t *start_out, uint32_t **blocks_out,
+                                    uint32_t *count_out) {
+    uint32_t count = size ? (uint32_t)(((uint64_t)size + 4091u) / 4092u) : 1u;
+    if (count > UINT32_MAX / sizeof(uint32_t)) return -1;
+    uint32_t *blocks = (uint32_t *)kmalloc((size_t)count * sizeof(uint32_t));
+    if (!blocks) return -1;
+    memset(blocks, 0, (size_t)count * sizeof(uint32_t));
+
+    uint32_t allocated = 0;
+    while (allocated < count) {
+        uint32_t block = sdfs_alloc_block_raw();
+        if (block == 0) break;
+        blocks[allocated++] = block;
+    }
+    if (allocated != count) {
+        for (uint32_t i = 0; i < allocated; i++) sdfs_free_block(blocks[i]);
+        sdfs_flush_bitmap();
+        kfree(blocks);
+        return -1;
+    }
+
+    uint8_t *block_buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+    if (!block_buf) {
+        for (uint32_t i = 0; i < count; i++) sdfs_free_block(blocks[i]);
+        sdfs_flush_bitmap();
+        kfree(blocks);
+        return -1;
+    }
+
+    uint32_t copied = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t chunk = size - copied;
+        if (chunk > 4092) chunk = 4092;
+        uint32_t next = (i + 1 < count) ? blocks[i + 1] : 0;
+        memset(block_buf, 0, SDFS_BLOCK_SIZE);
+        memcpy(block_buf, &next, sizeof(next));
+        if (chunk) memcpy(block_buf + 4, buffer + copied, chunk);
+        if (sdfs_write_block(blocks[i], block_buf) != 0) {
+            kfree(block_buf);
+            for (uint32_t j = 0; j < count; j++) sdfs_free_block(blocks[j]);
+            sdfs_flush_bitmap();
+            kfree(blocks);
+            return -1;
+        }
+        copied += chunk;
+    }
+    kfree(block_buf);
+
+    *start_out = blocks[0];
+    *blocks_out = blocks;
+    *count_out = count;
+    return 0;
+}
+
+static int sdfs_free_block_list(uint32_t *blocks, uint32_t count) {
+    for (uint32_t i = 0; i < count; i++) sdfs_free_block(blocks[i]);
+    return sdfs_flush_bitmap();
+}
+
+static int sdfs_free_file_chain(uint32_t first, uint32_t size) {
+    uint32_t count = size ? (uint32_t)(((uint64_t)size + 4091u) / 4092u) : 1u;
+    uint8_t *buffer = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+    if (!buffer) return -1;
+    uint32_t block = first;
+    for (uint32_t i = 0; i < count; i++) {
+        if (block == 0 || block >= disk_total_blocks ||
+            sdfs_read_block(block, buffer) != 0) {
+            kfree(buffer);
+            return -1;
+        }
+        uint32_t next;
+        memcpy(&next, buffer, sizeof(next));
+        if (i + 1 == count && next != 0) {
+            kfree(buffer);
+            return -1;
+        }
+        block = next;
+    }
+    block = first;
+    for (uint32_t i = 0; i < count; i++) {
+        if (sdfs_read_block(block, buffer) != 0) {
+            kfree(buffer);
+            return -1;
+        }
+        uint32_t next;
+        memcpy(&next, buffer, sizeof(next));
+        sdfs_free_block(block);
+        block = next;
+    }
+    kfree(buffer);
+    return 0;
 }
 
 /* ============================================================
@@ -523,6 +658,12 @@ static int sdfs_dir_add_entry(uint32_t dir_block, sdfs_entry_t *e) {
         if (db->next_block == 0) {
             uint32_t new_block = sdfs_alloc_block();
             if (new_block == 0) { kfree(buf); return -1; }
+            if (sdfs_flush_bitmap() != 0) {
+                sdfs_free_block(new_block);
+                sdfs_flush_bitmap();
+                kfree(buf);
+                return -1;
+            }
             db->next_block = new_block;
             if (sdfs_metadata_write(cur, buf) != 0) { kfree(buf); return -1; }
         }
@@ -788,10 +929,28 @@ int sdfs_format(void) {
     for (uint32_t b = 0; b <= disk_root_block; b++) {
         sdfs_bitmap_set(b, 1);
     }
-    sdfs_save_bitmap();
+    if (sdfs_save_bitmap() != 0) {
+        kfree(bitmap_cache);
+        bitmap_cache = NULL;
+        return -1;
+    }
+
+    for (uint32_t b = disk_journal_start;
+         b < disk_journal_start + disk_journal_blocks; b++) {
+        if (sdfs_zero_block(b) != 0) {
+            kfree(bitmap_cache);
+            bitmap_cache = NULL;
+            return -1;
+        }
+    }
 
     if (sdfs_zero_block(disk_root_block) != 0) {
         serial_print("SDFS: format failed, cannot write root dir\n");
+        kfree(bitmap_cache);
+        bitmap_cache = NULL;
+        return -1;
+    }
+    if (sdfs_flush_device() != 0) {
         kfree(bitmap_cache);
         bitmap_cache = NULL;
         return -1;
@@ -810,6 +969,8 @@ int sdfs_format(void) {
 
 fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
     (void)partition_lba;
+    sdfs_corrupt_mount = 0;
+    sdfs_mounted = 0;
     ata_bus = bus;
     ata_drive = drive;
 
@@ -847,8 +1008,10 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
         sb->superblock_crc = saved_crc;
 
         if (saved_crc != computed_crc) {
-            serial_print("SDFS: Superblock CRC mismatch! Running fsck...\n");
-            /* Continue anyway - fsck will fix */
+            serial_print("SDFS: Superblock CRC mismatch; refusing mount\n");
+            sdfs_corrupt_mount = 1;
+            kfree(sb_buf);
+            return NULL;
         }
 
         disk_total_blocks = sb->total_blocks;
@@ -864,16 +1027,20 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
         if (disk_total_blocks < 10 || disk_total_blocks > SDFS_MAX_BLOCKS ||
             disk_bitmap_blocks == 0 ||
             disk_root_block >= disk_total_blocks ||
-            disk_bitmap_block + disk_bitmap_blocks > disk_total_blocks) {
+            disk_bitmap_block == 0 ||
+            (uint64_t)disk_bitmap_block + disk_bitmap_blocks > disk_total_blocks ||
+            (uint64_t)disk_bitmap_blocks * SDFS_BLOCK_SIZE <
+                ((uint64_t)disk_total_blocks + 7) / 8 ||
+            disk_journal_blocks < 3 ||
+            disk_journal_start != disk_bitmap_block + disk_bitmap_blocks ||
+            (uint64_t)disk_journal_start + disk_journal_blocks != disk_root_block ||
+            (uint64_t)disk_journal_start + disk_journal_blocks > disk_total_blocks) {
             serial_print("SDFS: unsupported/oversized superblock, forcing reformat\n");
+            sdfs_corrupt_mount = 1;
             kfree(sb_buf);
             return NULL;
         }
 
-        sb->mount_count = disk_mount_count;
-        sb->superblock_crc = 0;
-        sb->superblock_crc = crc32_calc(sb_buf, 52);
-        sdfs_write_block(0, sb_buf);
     } else {
         sdfs_super_v1_t *sb1 = (sdfs_super_v1_t *)sb_buf;
         disk_total_blocks = sb1->total_blocks;
@@ -885,6 +1052,11 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
         disk_format_version = 1;
         disk_mount_count = 0;
         disk_max_mounts = 0;
+        /* V1 has no journal. Fail closed for writes instead of reusing a
+         * journal configuration left by a previous mounted filesystem. */
+        sdfs_journal_init(0, 0, disk_total_blocks, disk_bitmap_block,
+                          disk_bitmap_blocks, sdfs_read_block, sdfs_write_block,
+                          sdfs_flush_device);
         serial_print("SDFS: Mounted V1 (no journal)\n");
     }
 
@@ -892,20 +1064,56 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
 
     if (sdfs_load_bitmap() != 0) {
         serial_print("SDFS: Failed to load bitmap\n");
+        sdfs_corrupt_mount = 1;
         return NULL;
     }
 
     if (disk_journal_start > 0 && disk_journal_blocks >= 2) {
         sdfs_journal_init(disk_journal_start, disk_journal_blocks,
-                          sdfs_read_block, sdfs_write_block);
+                          disk_total_blocks, disk_bitmap_block,
+                          disk_bitmap_blocks, sdfs_read_block,
+                          sdfs_write_block, sdfs_flush_device);
 
         int replayed = sdfs_journal_replay();
+        if (replayed < 0) {
+            serial_print("SDFS: invalid or unrecoverable journal; refusing mount\n");
+            sdfs_corrupt_mount = 1;
+            kfree(bitmap_cache);
+            bitmap_cache = NULL;
+            return NULL;
+        }
         if (replayed > 0) {
             serial_print("[journal] Replayed ");
             char buf[16];
             itoa(replayed, buf, 10);
             serial_print(buf);
             serial_print(" entries\n");
+        }
+    }
+
+    /* Do not mutate even the mount counter until the WAL has been validated
+     * and replayed successfully. A damaged committed journal must remain
+     * untouched for offline recovery. */
+    if (disk_format_version == SDFS_FORMAT_VER) {
+        sb_buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+        if (!sb_buf || sdfs_read_block(0, sb_buf) != 0) {
+            if (sb_buf) kfree(sb_buf);
+            sdfs_corrupt_mount = 1;
+            kfree(bitmap_cache);
+            bitmap_cache = NULL;
+            return NULL;
+        }
+        sb = (sdfs_super_t *)sb_buf;
+        sb->mount_count = disk_mount_count;
+        sb->superblock_crc = 0;
+        sb->superblock_crc = crc32_calc(sb_buf, 52);
+        int write_result = sdfs_write_block(0, sb_buf);
+        kfree(sb_buf);
+        if (write_result != 0 || sdfs_flush_device() != 0) {
+            sdfs_corrupt_mount = 1;
+            kfree(bitmap_cache);
+            bitmap_cache = NULL;
+            return NULL;
         }
     }
 
@@ -926,6 +1134,10 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
     sdfs_mounted = 1;
     serial_print("SDFS: Mounted V2\n");
     return root_node;
+}
+
+int sdfs_mount_failed_corrupt(void) {
+    return sdfs_corrupt_mount;
 }
 
 int sdfs_is_mounted(void) {
@@ -964,6 +1176,11 @@ int sdfs_create_file(const char *path) {
 
     uint32_t start_block = sdfs_alloc_block();
     if (start_block == 0) return -1;
+    if (sdfs_flush_bitmap() != 0) {
+        sdfs_free_block(start_block);
+        sdfs_flush_bitmap();
+        return -1;
+    }
 
     uint32_t now = sdfs_now();
 
@@ -981,82 +1198,40 @@ int sdfs_create_file(const char *path) {
     e.permissions = SDFS_DEFAULT_PERM;
 
     if (sdfs_dir_add_entry(parent_block, &e) != 0) {
-        sdfs_free_block(start_block);
+        /* Metadata may have committed even if the subsequent clean/flush
+         * failed. Preserve the referenced block; recovery can reclaim leaks. */
         return -1;
     }
     return 0;
 }
 
-uint32_t sdfs_write_file(const char *path, uint8_t *buffer, uint32_t size) {
+static uint32_t sdfs_write_file_inner(const char *path, uint8_t *buffer,
+                                      uint32_t size) {
     if (!sdfs_mounted || !path || !buffer) return 0;
 
     sdfs_entry_t existing;
     int exists = sdfs_resolve_full(path, &existing);
-
-    uint32_t start_block;
     uint32_t parent_block;
     char name[256];
 
     if (exists) {
         if (existing.type != SDFS_TYPE_FILE) return 0;
-        sdfs_free_chain(existing.start_block);
         if (sdfs_resolve_parent(path, &parent_block, name) != 0) return 0;
     } else {
         if (sdfs_resolve_parent(path, &parent_block, name) != 0) return 0;
     }
 
-    if (size == 0) {
-        start_block = sdfs_alloc_block();
-        if (start_block == 0) return 0;
-    } else {
-        start_block = sdfs_alloc_block_raw();
-        if (start_block == 0) return 0;
+    uint32_t start_block, *new_blocks, new_block_count;
+    if (sdfs_allocate_file_chain(buffer, size, &start_block, &new_blocks,
+                                 &new_block_count) != 0) return 0;
 
-        uint32_t cur_block = start_block;
-        uint32_t remaining = size;
-        uint8_t *src = buffer;
-
-        /* Allocate each next block up-front and link it directly, instead of
-         * walking the whole chain for every block (which was O(n^2) reads and
-         * made installing large files extremely slow on real disks). The full
-         * block is written below, so no separate zeroing pass is needed. */
-        while (remaining > 0) {
-            uint32_t to_write = (remaining > 4092) ? 4092 : remaining;
-            uint32_t next_block = 0;
-
-            if (remaining > to_write) {
-                next_block = sdfs_alloc_block_raw();
-                if (next_block == 0) {
-                    sdfs_free_chain(start_block);
-                    return 0;
-                }
-            }
-
-            uint8_t *buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
-            if (!buf) {
-                if (next_block) sdfs_free_block(next_block);
-                sdfs_free_chain(start_block);
-                return 0;
-            }
-            memset(buf, 0, SDFS_BLOCK_SIZE);
-            memcpy(buf, &next_block, 4);
-            memcpy(buf + 4, src, to_write);
-
-            if (sdfs_write_block(cur_block, buf) != 0) {
-                kfree(buf);
-                uint32_t on_disk_next = sdfs_get_next_block(cur_block);
-                sdfs_free_chain(start_block);
-                if (next_block && on_disk_next != next_block) {
-                    sdfs_free_block(next_block);
-                }
-                return 0;
-            }
-            kfree(buf);
-
-            src += to_write;
-            remaining -= to_write;
-            cur_block = next_block;
-        }
+    /* New file contents must be durable before any directory entry can point
+     * at them. Persist allocation bits too, so replay never references blocks
+     * that the bitmap still considers free. */
+    if (sdfs_flush_device() != 0 || sdfs_flush_bitmap() != 0) {
+        sdfs_free_block_list(new_blocks, new_block_count);
+        kfree(new_blocks);
+        return 0;
     }
 
     uint32_t now = sdfs_now();
@@ -1074,15 +1249,59 @@ uint32_t sdfs_write_file(const char *path, uint8_t *buffer, uint32_t size) {
     e.gid = exists ? existing.gid : 0;
     e.permissions = exists ? existing.permissions : SDFS_DEFAULT_PERM;
 
+    int metadata_result;
     if (exists) {
-        sdfs_dir_remove_entry(parent_block, name);
+        uint8_t *dir_block = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+        if (!dir_block || sdfs_read_block(existing.block, dir_block) != 0) {
+            if (dir_block) kfree(dir_block);
+            sdfs_free_block_list(new_blocks, new_block_count);
+            kfree(new_blocks);
+            return 0;
+        }
+        if (sdfs_entry_serialize(dir_block + existing.block_offset,
+                                 SDFS_BLOCK_SIZE - existing.block_offset,
+                                 &e) < 0) {
+            kfree(dir_block);
+            sdfs_free_block_list(new_blocks, new_block_count);
+            kfree(new_blocks);
+            return 0;
+        }
+        metadata_result = sdfs_metadata_write(existing.block, dir_block);
+        kfree(dir_block);
+    } else {
+        metadata_result = sdfs_dir_add_entry(parent_block, &e);
     }
-    if (sdfs_dir_add_entry(parent_block, &e) != 0) {
-        sdfs_free_chain(start_block);
+
+    if (metadata_result != 0) {
+        /* The target might have reached stable storage even if a later flush
+         * or journal-clean step reported failure. Keep the COW blocks allocated
+         * until recovery can establish which directory version won. */
+        kfree(new_blocks);
         return 0;
     }
 
+    kfree(new_blocks);
+
+    /* The directory now names the replacement. Old blocks are unreachable;
+     * freeing them after commit can leak space on interruption, but cannot
+     * remove data from the committed file. */
+    if (exists && sdfs_free_file_chain(existing.start_block,
+                                       existing.file_size) == 0) {
+        if (sdfs_flush_bitmap() != 0)
+            serial_print("SDFS: replacement committed; old blocks may leak\n");
+    } else if (exists) {
+        serial_print("SDFS: replacement committed; old chain cleanup deferred\n");
+    }
+
     return size;
+}
+
+uint32_t sdfs_write_file(const char *path, uint8_t *buffer, uint32_t size) {
+    static spinlock_t file_write_lock = {0};
+    spinlock_acquire(&file_write_lock);
+    uint32_t result = sdfs_write_file_inner(path, buffer, size);
+    spinlock_release(&file_write_lock);
+    return result;
 }
 
 void *sdfs_read_file(const char *path, uint32_t *size_out) {
@@ -1145,6 +1364,11 @@ int sdfs_create_dir(const char *path) {
 
     uint32_t new_dir_block = sdfs_alloc_block();
     if (new_dir_block == 0) return -1;
+    if (sdfs_flush_bitmap() != 0) {
+        sdfs_free_block(new_dir_block);
+        sdfs_flush_bitmap();
+        return -1;
+    }
 
     uint32_t now = sdfs_now();
 
@@ -1162,7 +1386,7 @@ int sdfs_create_dir(const char *path) {
     e.permissions = SDFS_DEFAULT_PERM | SDFS_PERM_EXEC;
 
     if (sdfs_dir_add_entry(parent_block, &e) != 0) {
-        sdfs_free_block(new_dir_block);
+        /* Do not release a block that a committed directory entry may name. */
         return -1;
     }
     return 0;
@@ -1178,14 +1402,20 @@ int sdfs_delete(const char *path) {
     sdfs_entry_t e;
     if (!sdfs_dir_find_entry(parent_block, name, &e)) return -1;
 
+    if (e.type == SDFS_TYPE_DIR && sdfs_dir_count_entries(e.start_block) > 0)
+        return -1;
+    /* Make the name unreachable durably before releasing any referenced
+     * blocks. A crash can leak blocks, but cannot leave a live entry pointing
+     * into space that has already been reallocated. */
+    if (sdfs_dir_remove_entry(parent_block, name) != 0) return -1;
     if (e.type == SDFS_TYPE_DIR) {
-        if (sdfs_dir_count_entries(e.start_block) > 0) return -1;
         sdfs_free_block(e.start_block);
-    } else {
-        sdfs_free_chain(e.start_block);
+    } else if (sdfs_free_file_chain(e.start_block, e.file_size) != 0) {
+        serial_print("SDFS: file unlinked; block cleanup deferred\n");
+        return 0;
     }
-
-    sdfs_dir_remove_entry(parent_block, name);
+    if (sdfs_flush_bitmap() != 0)
+        serial_print("SDFS: delete committed; freed blocks may leak\n");
     return 0;
 }
 

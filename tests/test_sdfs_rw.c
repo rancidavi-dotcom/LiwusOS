@@ -1,5 +1,6 @@
 #ifdef KERNEL_TEST
 #include "sdfs.h"
+#include "journal.h"
 #include "framework.h"
 #include "string.h"
 #include "kheap.h"
@@ -69,6 +70,39 @@ int test_sdfs_overwrite(void) {
     ASSERT(result != NULL, "read not null");
     ASSERT(size == 13, "size is 13 after overwrite");
     ASSERT(memcmp(result, "new_data_here", 13) == 0, "new data matches");
+    kfree(result);
+
+    /* A failed WAL commit must leave the old directory entry and contents. */
+    sdfs_write_file("/tx.txt", (uint8_t *)"old", 3);
+    ASSERT(sdfs_journal_begin() == 0, "journal can begin before fault injection");
+    sdfs_journal_abort();
+    sdfs_super_t *sb = (sdfs_super_t *)kmalloc(SDFS_BLOCK_SIZE);
+    ASSERT(sb != NULL, "superblock scratch allocated");
+    ASSERT(sdfs_read_raw_block(0, (uint8_t *)sb) == 0, "superblock read");
+    sdfs_test_fail_next_write(sb->journal_start);
+    ASSERT(sdfs_write_file("/tx.txt", (uint8_t *)"not-committed", 13) == 0,
+                           "injected WAL commit failure reported");
+    ASSERT(sdfs_mount(0, 0, 0) != NULL, "clean journal remount succeeds");
+    result = sdfs_read_file("/tx.txt", &size);
+    ASSERT(result != NULL && size == 3 && memcmp(result, "old", 3) == 0,
+           "old file survives pre-commit failure");
+    kfree(result);
+
+    /* Fail the target directory block after the WAL commit. Remount replay
+     * must complete the update instead of exposing a short or mixed file. */
+    sdfs_test_fail_next_write(sb->root_dir_block);
+    ASSERT(sdfs_write_file("/tx.txt", (uint8_t *)"new-committed", 13) == 0,
+                           "injected target write failure reported");
+    ASSERT(sdfs_journal_dirty() == 1, "committed WAL remains dirty for replay");
+    ASSERT(sdfs_mount(0, 0, 0) != NULL, "dirty journal replays on remount");
+    ASSERT(sdfs_journal_dirty() == 0, "replay cleans journal");
+    result = sdfs_read_file("/tx.txt", &size);
+    ASSERT(result != NULL && size == 13 &&
+           memcmp(result, "new-committed", 13) == 0,
+           "replay exposes complete replacement");
+    kfree(result);
+    kfree(sb);
+    sdfs_delete("/tx.txt");
 
     sdfs_delete("/ov.txt");
     PASS("test_sdfs_overwrite");

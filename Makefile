@@ -80,9 +80,11 @@ TEST_SRCS = tests/test_runner_kernel.c \
 
 TEST_OBJS = $(patsubst %.c,$(TEST_OBJ_DIR)/%.o,$(TEST_SRCS))
 TEST_S_OBJS = $(TEST_OBJ_DIR)/tests/kstack_fault_probe.o
-# Kernel compilado com -DKERNEL_TEST (substitui o kernel.o normal)
-TEST_KERNEL_OBJS = $(filter-out $(OBJ_DIR)/src/kernel/core/kernel.o,$(KERNEL_OBJS)) \
+# Kernel compilado com -DKERNEL_TEST (substitui kernel.o e SDFS.o normais)
+TEST_KERNEL_OBJS = $(filter-out $(OBJ_DIR)/src/kernel/core/kernel.o \
+	$(OBJ_DIR)/src/fs/sdfs.o,$(KERNEL_OBJS)) \
                    $(TEST_OBJ_DIR)/src/kernel/core/kernel.o \
+                   $(TEST_OBJ_DIR)/src/fs/sdfs.o \
                    $(TEST_OBJS) $(TEST_S_OBJS)
 
 TEST_CFLAGS = $(CFLAGS) -DKERNEL_TEST
@@ -246,6 +248,10 @@ $(OBJ_DIR)/src/drivers/font.o: src/drivers/font.psf
 
 # kernel de teste: mesmo codigo, mas com -DKERNEL_TEST
 $(TEST_OBJ_DIR)/src/kernel/core/kernel.o: src/kernel/core/kernel.c
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ $(TEST_CFLAGS)
+
+$(TEST_OBJ_DIR)/src/fs/sdfs.o: src/fs/sdfs.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $< -o $@ $(TEST_CFLAGS)
 

@@ -149,3 +149,6 @@ Use `REPLACE=1` to update an existing `/bin` entry. The installer is a host
 tool and requires the disk image to be offline. See
 [`docs/SDFS_INSTALL.md`](docs/SDFS_INSTALL.md) for ELF checks, persistence
 behavior, safety limits, and `make app-install-test`.
+
+The kernel's replacement and journal protocol is documented in
+[`docs/SDFS_TRANSACTIONS.md`](docs/SDFS_TRANSACTIONS.md).

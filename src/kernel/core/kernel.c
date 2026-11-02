@@ -365,12 +365,18 @@ static void init_filesystem(int kernel_test_mode) {
     boot_stage("fs: mount tried");
 
     if (!sdfs_root) {
-        serial_print("SDFS: no valid filesystem, formatting disk...\n");
-        vga_puts("Formatting disk for first use...\n");
-        if (sdfs_format() == 0) {
-            sdfs_root = sdfs_mount(disk_bus, disk_drive, 0);
+        if (sdfs_mount_failed_corrupt()) {
+            /* A recognized but damaged SDFS must never be formatted as a
+             * first-boot fallback. Continue without persistent storage. */
+            serial_print("SDFS: existing filesystem is damaged; refusing reformat\n");
+        } else {
+            serial_print("SDFS: no valid filesystem, formatting disk...\n");
+            vga_puts("Formatting disk for first use...\n");
+            if (sdfs_format() == 0) {
+                sdfs_root = sdfs_mount(disk_bus, disk_drive, 0);
+            }
+            boot_stage("fs: formatted");
         }
-        boot_stage("fs: formatted");
     }
 
     if (sdfs_root) {

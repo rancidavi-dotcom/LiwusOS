@@ -133,6 +133,7 @@ typedef struct {
 void ahci_init();
 int ahci_read_sector(uint8_t port, uint64_t lba, uint32_t count, uint8_t *buf);
 int ahci_write_sector(uint8_t port, uint64_t lba, uint32_t count, uint8_t *buf);
+int ahci_flush_cache(uint8_t port);
 int ahci_find_first(uint8_t *port_out);
 hba_mem_t *ahci_get_abar(void);
 

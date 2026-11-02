@@ -357,6 +357,55 @@ int ahci_write_sector(uint8_t portno, uint64_t lba, uint32_t count, uint8_t *buf
     return ahci_issue_cmd(&abar->ports[portno], lba, count, buf, 1);
 }
 
+/* Issue ATA FLUSH CACHE EXT through a no-data AHCI command. Filesystem WAL
+ * ordering depends on this completing before a commit record is published. */
+int ahci_flush_cache(uint8_t portno) {
+    if (!ahci_initialized || !abar || portno >= 32) return 0;
+    hba_port_t *port = &abar->ports[portno];
+    int slot = find_cmdslot(port);
+    if (slot < 0) return 0;
+
+    hba_cmd_header_t *headers = (hba_cmd_header_t *)ahci_clb_mem;
+    hba_cmd_header_t *header = &headers[slot];
+    header->cfl = sizeof(fis_reg_h2d_t) / sizeof(uint32_t);
+    header->w = 0;
+    header->c = 1;
+    header->p = 0;
+    header->a = 0;
+    header->r = 0;
+    header->b = 0;
+    header->prdtl = 0;
+    header->prdbc = 0;
+
+    hba_cmd_tbl_t *table = (hba_cmd_tbl_t *)
+        ((uint64_t)ahci_ctba_mem + (uint64_t)slot * 256);
+    memset(table, 0, sizeof(hba_cmd_tbl_t));
+    fis_reg_h2d_t *fis = (fis_reg_h2d_t *)&table->cfis;
+    fis->fis_type = FIS_TYPE_REG_H2D;
+    fis->c = 1;
+    fis->command = 0xEA; /* FLUSH CACHE EXT */
+    fis->device = 1 << 6;
+
+    port->serr = 0xFFFFFFFF;
+    port->is = 0xFFFFFFFF;
+    uint64_t spin = 0;
+    while ((port->tfd & (AHCI_DEV_BUSY | AHCI_DEV_DRQ)) && spin < 10000000) {
+        spin++;
+        ahci_poll_delay();
+    }
+    if (spin >= 10000000) return 0;
+
+    port->ci = 1u << slot;
+    uint64_t timeout = 0;
+    while (port->ci & (1u << slot)) {
+        if (port->is & ((1u << 30) | (1u << 29) | (1u << 28) |
+                        (1u << 27) | (1u << 26))) return 0;
+        if (++timeout > 5000000) return 0;
+        ahci_poll_delay();
+    }
+    return (port->tfd & 0x01) == 0;
+}
+
 int ahci_find_first(uint8_t *port_out) {
     if (!abar) return -1;
     uint32_t pi = abar->pi;

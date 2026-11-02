@@ -89,5 +89,10 @@ first, then pass `DISK=liwus_disk.img` explicitly.
 - No package database, dependency resolver, network transport, Linux ABI call,
   or kernel-specific application registry is added.
 
-The filesystem does not provide atomic multi-block transactions or a crash
-recovery guarantee for this operation. The v0.1 tool is intentionally offline.
+The host tool does not use a kernel SDFS transaction: it publishes a complete
+temporary image by host rename and is intentionally offline.
+
+The kernel's `sdfs_write_file()` now uses copy-on-write plus a journaled
+directory-block update; see [SDFS_TRANSACTIONS.md](SDFS_TRANSACTIONS.md) for
+its commit ordering, fault-injection evidence, and exact limits. The host tool
+still publishes a complete temporary image and does not use that kernel WAL.
