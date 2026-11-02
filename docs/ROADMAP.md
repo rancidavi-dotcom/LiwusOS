@@ -2,7 +2,7 @@
 
 Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verificáveis. A compatibilidade traduz a ABI na borda e reutiliza o mesmo motor de processos, memória virtual e VFS do sistema. Cada fase começa somente depois do gate anterior passar.
 
-> **Estado desta revisão:** Gate 0 permanece como marco histórico (`6402de8`). Os passos 9a/9b (`6bbb7cf`, `7fd8184`), 9c–14 e 16 estão implementados; 12–13 incluem VMAs ordenadas, NXE e W^X. O passo 15 foi implementado com stacks de kernel guardadas, stacks distintas por tarefa, IRQ por CPU e IST para page fault/double fault. O passo 17 foi migrado nos caminhos de ELF/VM e nos mapeamentos de kernel/MMIO; wrappers legados ainda existem dentro da camada VMM para operações de boot. A Fase 2 está aberta: Incremento A separou armazenamento/ownership de processo e thread, mas mantém uma thread por processo. Evidência atual: build de produção com `-Werror`; kernel/ring-3 46/46; `make ring3-test` 46/46; `make smap-test` em QEMU `-cpu max -smp 4 -m 4096`, com SMAP, três APs iniciados, identidade removida e frame alocado/acessado/liberado acima de 1 GiB. PIE ET_DYN executa na base definida e o teste ring-3 comprova NX. Isso não exercita migração de tarefas entre CPUs: o scheduler de userspace segue no BSP. Um probe Linux estático freestanding valida apenas a fatia de syscalls documentada em `ABI_LINUX.md`; não é compatibilidade Linux completa. O ELF glibc estático local falhou em `#UD` por instrução AVX, e `PT_INTERP` ainda não é carregado.
+> **Estado desta revisão:** Gate 0 permanece como marco histórico (`6402de8`). Os passos 9a/9b (`6bbb7cf`, `7fd8184`), 9c–14 e 16 estão implementados; 12–13 incluem VMAs ordenadas, NXE e W^X. O passo 15 foi implementado com stacks de kernel guardadas, stacks distintas por tarefa, IRQ por CPU e IST para page fault/double fault. O passo 17 foi migrado nos caminhos de ELF/VM e nos mapeamentos de kernel/MMIO; wrappers legados ainda existem dentro da camada VMM para operações de boot. A Fase 2 está aberta: Incremento A separou objetos e ownership de processo/thread; Incremento B adicionou thread compartilhando o processo, saída individual/grupal e contexto x87/SSE. Evidência atual: build de produção com `-Werror`; testes nativos/ring-3 46/46; `make smap-test` em QEMU `-cpu max -smp 4 -m 4096`, SMAP ativo e três APs iniciados. O probe Linux freestanding verifica clone de thread com memória/recursos compartilhados, FS-base independente via `CLONE_SETTLS`, continuidade do pai após `exit` da thread e `exit_group`. O scheduler de usuários ainda executa no BSP. Não há wait queues, futex, sinais ou execução de um binário musl/glibc funcional; o ELF glibc estático local falhou em `#UD` por AVX e `PT_INTERP` ainda não é carregado.
 
 ## Fase 0 — Congelar e descrever a base
 
@@ -33,9 +33,9 @@ Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verific
 
 ## Fase 2 — Processos, threads e sincronização
 
-18. **Parcial — Incremento A:** separar `process_t` (PID, relação parental, mm, FDs, cwd, credenciais, ABI, heap, referências e lista de threads) de `thread_t` (TID, scheduler, registradores/contexto, kernel stack, FS/GS e FPU). O scheduler ainda usa o alias de fonte `task_t` para `thread_t`, e cada processo tem uma thread. Attach/detach e ownership básico têm teste; threads simultâneas e semântica de encerramento de processo multithread ainda não existem.
-19. Implementar clone com `CLONE_VM`, `CLONE_FS`, `CLONE_FILES`, `CLONE_SIGHAND`, `CLONE_THREAD` e `CLONE_SETTLS`, além de `exit` e `exit_group`.
-20. Implementar `arch_prctl(ARCH_SET_FS/ARCH_GET_FS)` e base FS por thread, com suporte a TLS. **Parcial:** `ARCH_SET_FS/ARCH_GET_FS` e armazenamento/restauração de FS-base por tarefa passam no probe; ainda não há threads Linux nem teste de migração entre CPUs.
+18. **Parcial — Incrementos A/B:** separar `process_t` (PID, relação parental, mm, FDs, cwd, credenciais, ABI, heap, referências e lista de threads) de `thread_t` (TID, scheduler, registradores/contexto, kernel stack, FS/GS e FPU). O scheduler usa o alias de fonte `task_t` para `thread_t`. Há threads simultâneas dentro do mesmo processo, saída individual/grupal, coleta após troca de stack e um teste de processo multithread. Faltam revisão/stress de falhas concorrentes, sinais e bloqueio seguro.
+19. **Parcial — Incremento B:** a personality aceita a combinação básica de `CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD`, opcionalmente `CLONE_SETTLS`; combinações não suportadas são recusadas. O teste freestanding valida stack do filho, retorno 0 no filho, compartilhamento de memória, FS TLS independente, `exit` individual e `exit_group`. `fork` continua criando processo próprio. Clones de processos com combinações independentes de recursos, TID pointers e rollback/stress ainda faltam.
+20. **Parcial — Incremento B:** `ARCH_SET_FS/ARCH_GET_FS`, `ARCH_SET_GS/ARCH_GET_GS`, base FS/GS e clone com `CLONE_SETTLS` são armazenados por thread. O probe alterna pai/filho e verifica FS-base distinto sob SMAP. Não há teste de estresse de alternância TLS, interrupções dirigidas a threads, nem migração entre CPUs.
 21. Implementar sinais pendentes/bloqueados, `sigaction`, `sigprocmask`, `sigreturn`, `sigaltstack` e entrega síncrona de SIGSEGV/SIGFPE.
 22. Implementar credenciais consistentes (`uid/euid/gid/egid`, `umask` e consultas), inicialmente com IDs zero.
 23. Implementar grupos e sessões, `wait4`, `WIFEXITED`, `WNOHANG` e SIGCHLD.
@@ -45,7 +45,7 @@ Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verific
 
 **Gate 2:** programa musl estático com oito pthreads, mutex e condvar executa; kill com handler funciona; `wait4` retorna status correto.
 
-**Estado Gate 2:** aberto. Incremento A tem estrutura e lifecycle de processo/thread separados, `fork` cria um processo com uma thread, e o `waitpid` nativo coleta o processo e sua thread. Os incrementos B–E não foram iniciados. Ainda não existe `clone`, wait queue, futex ou entrega de sinais Linux; nenhum teste de pthreads ou binário musl externo foi executado.
+**Estado Gate 2:** aberto. Incrementos A/B têm separação de objetos, uma primitiva Linux de criação de thread compartilhada, TLS por thread e saída individual/grupal, com probe freestanding executado em QEMU. Espera ainda usa loops de yield; wait queues, futex/robust lists, sinais, `wait4` Linux, credenciais completas e execução multicore de threads não estão implementados. O critério principal segue sem evidência: nenhum programa musl Linux estático com oito pthreads/mutex/condvar passou, e não há teste Linux de sinal via `kill` nem de status `wait4`.
 
 ## Fase 3 — VM de userspace e loader ELF
 
@@ -112,9 +112,10 @@ Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verific
 
 Esta sequência prioriza dependências técnicas; os itens não têm estimativa de prazo.
 
-1. Fase 1/Gate 1 foi fechada com as evidências acima. Incremento A da Fase 2 separou as estruturas e o ownership para processo/thread; revisar o checkpoint local antes de iniciar B.
-2. Implementar `clone`/`CLONE_SETTLS` e permitir múltiplas threads em um processo; testar FS-base independente em alternância de threads na BSP antes de qualquer migração SMP.
-3. Definir política de capacidades da CPU e implementar estado x87/SSE/AVX com save/restore e sinalização coerente ao userspace; repetir o ELF glibc estático com alvo ISA explicitamente suportado.
+1. Incrementos A/B da Fase 2 separam processo/thread e permitem uma thread Linux compartilhada; ampliar testes de criação inválida, rollback, saída individual e alternância repetida de TLS na BSP.
+2. Implementar wait queues genéricas integradas ao scheduler e converter `waitpid`/pipes, com testes de lost wakeup, cancelamento e ausência de consumo contínuo de CPU.
+3. Implementar futex WAIT/WAKE e timeout sobre chaves de memória corretas; depois REQUEUE, `set_tid_address`/clear-child-tid e robust lists, recusando operações não suportadas.
+4. Definir política de capacidades da CPU e ampliar estado x87/SSE/AVX com save/restore antes de anunciar extensões; repetir ELF Linux externo com alvo ISA suportado.
 4. Completar VM Linux que o loader necessita: demand paging, stack/auxv, `PT_TLS`, COW e mmap de arquivo; então validar ELF estático de terceiros sem modificação e registrar os artefatos/hash do teste.
 5. Implementar `PT_INTERP` e o carregamento do interpretador dinâmico; validar glibc dinâmica após a execução estática passar.
 6. Expandir syscalls guiado pelos binários-alvo e pelas dependências já disponíveis (sinais, `wait4`, futex, arquivos e tempo), mantendo o dispatcher/personality isolado e a suíte nativa como bloqueio de regressão.

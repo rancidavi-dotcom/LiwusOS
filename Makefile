@@ -89,6 +89,7 @@ RING3_EXEC_ELF = $(TEST_OBJ_DIR)/ring3/exec_target.elf
 RING3_C_APP_ELF = $(TEST_OBJ_DIR)/ring3/c_example.elf
 RING3_PIE_ELF = $(TEST_OBJ_DIR)/ring3/pie_probe.elf
 RING3_LINUX_SYSCALL_ELF = $(TEST_OBJ_DIR)/ring3/linux_syscall_probe.elf
+RING3_LINUX_CLONE_ELF = $(TEST_OBJ_DIR)/ring3/linux_clone_probe.elf
 RING3_USER_CFLAGS = -std=gnu99 -O2 -ffreestanding -fno-pie -fno-pic \
 	-fno-stack-protector -fno-asynchronous-unwind-tables -m64 -mno-red-zone \
 	-Iinclude/uapi
@@ -194,6 +195,14 @@ $(TEST_OBJ_DIR)/ring3/linux_syscall_probe.o: tests/ring3/linux_syscall_probe.S
 	$(CC) -c $< -o $@ -m64 -fno-pie -fno-pic
 
 $(RING3_LINUX_SYSCALL_ELF): $(TEST_OBJ_DIR)/ring3/linux_syscall_probe.o tests/ring3/suite.ld
+	$(LD) -nostdlib -static -no-pie -Wl,--build-id=none \
+		-Wl,-T,tests/ring3/suite.ld -o $@ $<
+
+$(TEST_OBJ_DIR)/ring3/linux_clone_probe.o: tests/ring3/linux_clone_probe.S
+	@mkdir -p $(dir $@)
+	$(CC) -c $< -o $@ -m64 -fno-pie -fno-pic
+
+$(RING3_LINUX_CLONE_ELF): $(TEST_OBJ_DIR)/ring3/linux_clone_probe.o tests/ring3/suite.ld
 	$(LD) -nostdlib -static -no-pie -Wl,--build-id=none \
 		-Wl,-T,tests/ring3/suite.ld -o $@ $<
 
@@ -312,7 +321,7 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 
 test-build: $(TEST_ISO_IMAGE)
 
-$(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF) $(RING3_PIE_ELF) $(RING3_LINUX_SYSCALL_ELF) $(LINUX_STATIC_TEST_DEP)
+$(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF) $(RING3_PIE_ELF) $(RING3_LINUX_SYSCALL_ELF) $(RING3_LINUX_CLONE_ELF) $(LINUX_STATIC_TEST_DEP)
 	@mkdir -p repo-test
 	: > repo-test/test_mode
 	@mkdir -p isodir-test/boot/grub
@@ -323,12 +332,13 @@ $(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE
 	cp -f $(RING3_C_APP_ELF) repo-test/c_example
 	cp -f $(RING3_PIE_ELF) repo-test/pie_probe
 	cp -f $(RING3_LINUX_SYSCALL_ELF) repo-test/linux_syscall_probe
+	cp -f $(RING3_LINUX_CLONE_ELF) repo-test/linux_clone_probe
 	rm -f repo-test/linux_glibc_hello
 	if test -n "$(LINUX_STATIC_ELF)"; then cp -f "$(LINUX_STATIC_ELF)" repo-test/linux_glibc_hello; fi
 	cp -f tests/ring3/invalid_elf repo-test/invalid_elf
 	tar -cf initrd-test.tar -C repo-test . --format=ustar
 	rm -f repo-test/ring3_suite
-	rm -f repo-test/exec_target repo-test/c_example repo-test/pie_probe repo-test/linux_syscall_probe repo-test/invalid_elf
+	rm -f repo-test/exec_target repo-test/c_example repo-test/pie_probe repo-test/linux_syscall_probe repo-test/linux_clone_probe repo-test/invalid_elf
 	cp -f initrd-test.tar isodir-test/boot/initrd.tar
 	$(GRUB) -o $@ isodir-test
 

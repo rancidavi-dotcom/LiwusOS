@@ -92,12 +92,16 @@ void vmm_init_cpu_protections(void) {
   eax = 0;
   asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
   uint32_t max_basic_leaf = eax;
-  if (max_basic_leaf < 7) return;
-  eax = 7;
-  ecx = 0;
-  asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "+c"(ecx), "=d"(edx));
   uint64_t cr4;
   asm volatile("mov %%cr4, %0" : "=r"(cr4));
+  cr4 |= (1ULL << 9) | (1ULL << 10); /* OSFXSR and OSXMMEXCPT */
+  if (max_basic_leaf >= 7) {
+    eax = 7;
+    ecx = 0;
+    asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "+c"(ecx), "=d"(edx));
+  } else {
+    ebx = 0;
+  }
   if (ebx & (1U << 7)) { /* CPUID.7.0:EBX.SMEP */
     cr4 |= 1ULL << 20;
     serial_print("VMM: CR4.SMEP enabled\n");
@@ -107,9 +111,7 @@ void vmm_init_cpu_protections(void) {
     vmm_smap_enabled = 1;
     serial_print("VMM: CR4.SMAP enabled\n");
   }
-  if (ebx & ((1U << 7) | (1U << 20))) {
-    asm volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
-  }
+  asm volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
 }
 
 int vmm_smap_available(void) { return vmm_smap_enabled; }

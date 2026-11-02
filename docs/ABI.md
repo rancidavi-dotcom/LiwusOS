@@ -117,10 +117,11 @@ this document.
 
 ## 5. Processes and threads
 
-- A process and its schedulable thread are separate kernel objects. For now
-  each process has exactly one thread; there is no `clone` or signal delivery.
-  The native `fork` and `waitpid` contract remains unchanged. FS-base storage
-  belongs to the thread object for reuse by the Linux personality.
+- A process and its schedulable thread are separate kernel objects. Native
+  process creation still starts with one thread; the Linux personality can
+  create a shared-process thread through the generic scheduler/task layer.
+  Native `fork` and `waitpid` retain their contracts. FS/GS-base and FPU state
+  belong to the thread object. Signals and futexes are not implemented.
 - `fork` copies the entire address space (`vmm_copy_directory`), with no COW.
 - Kernel task stacks use 16–32 KiB virtual slots with unmapped guards. IRQ
   stacks are per CPU; page-fault and double-fault paths use per-CPU IST stacks.
@@ -207,7 +208,8 @@ layout.
    the broad Linux syscall surface and Linux-specific auxv remain incomplete
    (steps 32–36).
 3. No auxv beyond `AT_NULL`, no vDSO (steps 32–34).
-4. No threads, TLS, signals or futex (steps 18–26).
+4. Linux clone has only the tested shared-thread flag combination; no general
+   clone resource combinations, signals, wait queues or futex (steps 18–26).
 5. No demand paging, COW or file-backed `mmap` (steps 27–30).
-6. Linux threads, clone, and cross-CPU task migration (steps 18–20).
+6. Linux pthread/libc support and cross-CPU task migration (steps 18–20).
 7. 32 file descriptors and no `O_CLOEXEC` (step 37).

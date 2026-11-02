@@ -77,6 +77,7 @@ typedef struct process {
 typedef struct thread {
   int id;
   task_state_t state;
+  int exit_status;
   uint64_t stack_top;
   uint64_t kernel_stack;
   uint64_t kernel_stack_base;
@@ -85,6 +86,7 @@ typedef struct thread {
   uint64_t stack_canary_addr;
   uint64_t fs_base;
   uint64_t user_gs_base;
+  uint64_t clear_child_tid;
   struct thread *next;
   struct thread *process_next;
   process_t *process;
@@ -160,8 +162,11 @@ int task_get_priority(int pid);
 /* Syscall Helpers */
 #include "isr.h"
 int fork_process(registers_t *regs);
+int task_clone_thread(registers_t *regs, uint64_t user_stack,
+                      uint64_t tls_base, int set_tls);
 int sys_waitpid(int pid, int *status, int options);
 void sys_exit_process(int status);
+void sys_exit_thread(int status);
 void sys_kill_by_pid(int pid);
 extern process_t *process_list;
 process_t *task_process_create(int pid, process_t *parent,

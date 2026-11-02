@@ -20,6 +20,15 @@
 #define LINUX_O_CREAT 0x40
 #define LINUX_O_TRUNC 0x200
 #define LINUX_O_APPEND 0x400
+#define LINUX_CLONE_VM       0x00000100
+#define LINUX_CLONE_FS       0x00000200
+#define LINUX_CLONE_FILES    0x00000400
+#define LINUX_CLONE_SIGHAND  0x00000800
+#define LINUX_CLONE_THREAD   0x00010000
+#define LINUX_CLONE_SETTLS   0x00080000
+#define LINUX_CLONE_REQUIRED (LINUX_CLONE_VM | LINUX_CLONE_FS | \
+                              LINUX_CLONE_FILES | LINUX_CLONE_SIGHAND | \
+                              LINUX_CLONE_THREAD)
 
 extern int sys_read(int fd, void *buf, uint32_t count);
 extern int sys_write(int fd, const void *buf, uint32_t count);
@@ -181,6 +190,22 @@ void linux_syscall_handler(registers_t *regs) {
     case 39: /* getpid */
       regs->rax = (uint64_t)sys_getpid();
       break;
+    case 56: { /* clone: initial support for shared-process threads */
+      uint64_t flags = regs->rdi;
+      uint64_t supported = LINUX_CLONE_REQUIRED | LINUX_CLONE_SETTLS;
+      if ((flags & LINUX_CLONE_REQUIRED) != LINUX_CLONE_REQUIRED ||
+          (flags & ~supported) != 0 || regs->rdx != 0 || regs->r10 != 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+        break;
+      }
+      int tid = task_clone_thread(regs, regs->rsi, regs->r8,
+                                  (flags & LINUX_CLONE_SETTLS) != 0);
+      regs->rax = tid < 0 ? (uint64_t)(int64_t)tid : (uint64_t)tid;
+      break;
+    }
+    case 186: /* gettid */
+      regs->rax = current_task ? (uint64_t)current_task->id : 0;
+      break;
     case 158: { /* arch_prctl: per-thread TLS bases */
       uint64_t base = regs->rsi;
       switch (regs->rdi) {
@@ -218,8 +243,10 @@ void linux_syscall_handler(registers_t *regs) {
       }
       break;
     }
-    case 60: /* exit */
-    case 231: /* exit_group (single-threaded process model for now) */
+    case 60: /* exit: terminate this thread */
+      sys_exit_thread((int)regs->rdi);
+      break;
+    case 231: /* exit_group: terminate all threads in this process */
       sys_exit_process((int)regs->rdi);
       break;
     default:

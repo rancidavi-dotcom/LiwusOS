@@ -63,6 +63,10 @@ int test_ring3_processes(void) {
         FAIL("ring3_processes", "Linux SYSCALL ABI probe failed");
     serial_print("[RING3 RESULT] Linux x86-64 SYSCALL getpid/fstat/openat/mmap/munmap/FS-TLS/write PASS\n");
 
+    if (run_linux_elf("linux_clone_probe") != 0)
+        FAIL("ring3_processes", "Linux clone/TLS/thread-exit probe failed");
+    serial_print("[RING3 RESULT] Linux clone shared-mm, independent FS TLS, thread exit PASS\n");
+
     uint32_t static_elf_size = 0;
     if (initrd_get_file("linux_glibc_hello", &static_elf_size)) {
         if (run_linux_elf("linux_glibc_hello") != 0)

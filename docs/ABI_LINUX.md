@@ -45,15 +45,21 @@ LiwusOS permanece um sistema operacional independente. A personality Linux fica 
 
 `clone` cria processo ou thread conforme flags e compartilha recursos somente quando a flag correspondente é pedida. `exit` encerra uma thread; `exit_group` encerra todas as threads do processo. `fork` e `clone` chamam as mesmas primitivas de VM e recursos, sem dispatcher alternativo.
 
-**Estado atual (após Incremento A da Fase 2):** `process_t` é um objeto separado
+**Estado atual (após Incrementos A/B da Fase 2):** `process_t` é um objeto separado
 que possui PID, pai, mm, heap/brk, mmap cursor, FDs, cwd, ABI, credenciais,
 referências e lista de threads. `thread_t` possui TID, estado/contexto do
 scheduler, kernel stack, FS/GS-base e contexto FPU; `task_t` é apenas um alias
 de compatibilidade de fonte para `thread_t`. Uma thread mantém uma referência
 ao processo; o objeto de processo só pode ser coletado sem threads e depois da
 remoção da referência da tabela de processos. `fork` cria processo/thread
-separados e `waitpid` os coleta. Ainda há exatamente uma thread por processo:
-`clone`, pthreads, TLS concorrente, sinais, futex e migração SMP não existem.
+separados e `waitpid` os coleta. A personality Linux pode criar uma thread com
+`CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD`, opcionalmente com
+`CLONE_SETTLS`. `gettid`, `exit` individual e `exit_group` são implementados.
+Um probe ET_EXEC freestanding confirma memória compartilhada, retorno do filho,
+FS-base diferente no filho e continuidade do processo após o filho encerrar.
+Isso ainda não implementa a semântica geral de `clone`, pthreads da libc, espera
+eficiente, futex, sinais ou migração SMP. A infraestrutura de estado FPU salva e
+restaura x87/SSE por thread; AVX/XSAVE não é habilitado nem anunciado.
 O PID e TID coincidem enquanto essa limitação existir.
 
 ## Espaço de endereçamento e VMAs
@@ -137,6 +143,6 @@ O stub salva estado de usuário de modo que interrupções e preempção preserv
 - `make smap-test` executa o probe e a suíte nativa/ring-3 no QEMU `-cpu max -smp 4 -m 4096`; a evidência atual mostra SMAP, APIC IDs 1–3, remoção da identidade, frame alocado/acessado/liberado acima de 1 GiB, page fault real na guarda e `46/46 PASS`. O agendador executa as tarefas do teste no BSP; os outros processadores são validados na inicialização SMP, não por migração de tarefas entre CPUs.
 - É possível fornecer um ELF GNU/Linux estático externo sem incorporá-lo ao repositório: `make smap-test LINUX_STATIC_ELF=/caminho/para/programa`. O ELF é empacotado temporariamente como `linux_glibc_hello` na imagem de teste.
 - O teste adicional com a libc estática desta máquina foi tentado. O ELF estático sem `PT_INTERP` começou a executar, mas terminou com `#UD` em `vpxor` no `_dl_aux_init`; seu `GNU_PROPERTY` exige x86-64 v3/v4, AVX/XSAVE, que o kernel ainda não habilita nem salva/restaura. Portanto, o probe freestanding Linux passa, mas esse binário glibc não passa. O ELF GNU original com `PT_INTERP` também é corretamente recusado enquanto o loader dinâmico não existir.
-- FS-base por tarefa é carregada em `set_current_task`; a entrada/saída de interrupções preserva FS e alterna GS com `swapgs`; o teste valida `ARCH_SET_FS`/`ARCH_GET_FS` e leitura relativa a FS entre syscalls, com troca ao retornar à tarefa kernel pai. Ainda não há teste de pthreads nem migração de tarefa entre APs.
+- FS/GS-base são armazenadas por thread e restauradas na troca de contexto. `ARCH_SET_FS/GET_FS`, `ARCH_SET_GS/GET_GS` e `CLONE_SETTLS` passam no probe Linux; o teste verifica valores FS diferentes no pai e no filho e roda com SMAP ativo. O retorno da thread de teste via `exit` deixa o pai continuar; o `exit_group` termina o processo. Ainda não há prova com libc/pthreads, alternância repetitiva de várias threads, entrega de sinais durante interrupções nem migração entre APs.
 - Esta evidência fecha apenas a fatia inicial da entrada Linux e TLS. Não constitui suporte completo Linux nem conclui os gates musl/glibc, threads, sinais, VM sob demanda ou dynamic linker.
 - O ensaio foi executado com SMAP ativo em QEMU de quatro CPUs; isso valida a inicialização SMP e as rotas testadas sob SMAP. A suíte ainda não migra tarefas de usuário entre APs, então preservação TLS sob migração multicore permanece sem evidência. Também não foi validado TLB shootdown remoto para tasks concorrentes em APs.

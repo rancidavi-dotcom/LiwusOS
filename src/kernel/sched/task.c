@@ -184,6 +184,15 @@ static inline void fpu_context_restore(void *area) {
   asm volatile("fxrstor (%0)" :: "r"(area) : "memory");
 }
 
+static void *fpu_context_create(void) {
+  uint8_t *area = (uint8_t *)kmalloc_a(512);
+  if (!area) return NULL;
+  memset(area, 0, 512);
+  *(uint16_t *)(void *)(area + 0) = 0x037f; /* x87 default control word */
+  *(uint32_t *)(void *)(area + 24) = 0x1f80; /* MXCSR default */
+  return area;
+}
+
 void task_set_fpu(void *fpu_area) {
   if (!current_task) return;
   current_task->fpu_ctx = fpu_area;
@@ -307,6 +316,13 @@ int create_task_named_stack(void (*entry_point)(), const char *name,
   *(uint64_t *)stack_base = 0xDEADBEEFCAFEBABE;
 
   new_task->stack_top = (uint64_t)regs;
+  new_task->fpu_ctx = fpu_context_create();
+  if (!new_task->fpu_ctx) {
+    kernel_stack_free((void *)stack_base, actual_stack_size);
+    task_process_discard(process);
+    kfree(new_task);
+    return -1;
+  }
   task_process_attach(process, new_task);
 
   uint64_t sched_flags = scheduler_lock_irqsave();
@@ -369,6 +385,13 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
   new_task->stack_top = (uint64_t)regs;
   process->heap_start = 0x40000000;
   process->heap_end = 0x40000000;
+  new_task->fpu_ctx = fpu_context_create();
+  if (!new_task->fpu_ctx) {
+    kernel_stack_free((void *)stack_base, stack_size);
+    task_process_discard(process);
+    kfree(new_task);
+    return -1;
+  }
   task_process_attach(process, new_task);
 
   serial_print("DBG_TASK: pid=");
@@ -439,6 +462,13 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
   uint64_t hstart = last_elf_heap_start ? last_elf_heap_start : 0x40000000;
   process->heap_start = hstart;
   process->heap_end = hstart;
+  new_task->fpu_ctx = fpu_context_create();
+  if (!new_task->fpu_ctx) {
+    kernel_stack_free((void *)stack_base, stack_size);
+    task_process_discard(process);
+    kfree(new_task);
+    return -1;
+  }
   task_process_attach(process, new_task);
 
   serial_print("DBG_TASK64: pid=");
@@ -519,13 +549,15 @@ uint64_t schedule(uint64_t current_rsp) {
       task_t *fg = task_list;
       do {
         if (fg->id == last_foreground_pid && fg->user_mode) {
-          task_release_io(fg);
           fg->state = TASK_ZOMBIE;
+          fg->exit_status = 128 + 2;
           last_foreground_pid = -1;
           if (fg->process) {
-            fg->process->zombie = true;
-            fg->process->exit_status = 128 + 2;
-            process_wake_parent(fg->process);
+            for (thread_t *thread = fg->process->threads; thread;
+                 thread = thread->process_next) {
+              thread->state = TASK_ZOMBIE;
+              thread->exit_status = 128 + 2;
+            }
           }
           break;
         }
@@ -615,7 +647,38 @@ uint64_t schedule(uint64_t current_rsp) {
     }
   }
 
+  int reap_current = curr != new_curr && curr->state == TASK_ZOMBIE &&
+                     curr->id != 0;
+  if (reap_current) {
+    task_t *prev = task_list;
+    while (prev->next != curr && prev->next != task_list)
+      prev = prev->next;
+    if (prev->next == curr) {
+      if (task_list == curr) task_list = curr->next;
+      prev->next = curr->next;
+    } else {
+      reap_current = 0;
+    }
+  }
+
   scheduler_unlock_irqrestore(sched_flags);
+
+  if (reap_current) {
+    process_t *process = curr->process;
+    int exit_status = curr->exit_status;
+    task_process_detach(process, curr);
+    if (process && process->thread_count == 0) {
+      process->zombie = true;
+      process->exit_status = exit_status;
+      task_process_release_io(process);
+      process_wake_parent(process);
+    }
+    if (curr->kernel_stack_base && curr->kernel_stack_size)
+      kernel_stack_free((void *)curr->kernel_stack_base,
+                        curr->kernel_stack_size);
+    if (curr->fpu_ctx) kfree(curr->fpu_ctx);
+    kfree(curr);
+  }
 
   return new_curr->stack_top;
 }
@@ -736,11 +799,8 @@ static void task_kill_job_locked(int job_id) {
   do {
       if (t->user_mode && t->process && t->process->job_id == job_id &&
           t->state != TASK_ZOMBIE) {
-      task_release_io(t);
       t->state = TASK_ZOMBIE;
-      t->process->zombie = true;
-      t->process->exit_status = 128 + 2;
-      process_wake_parent(t->process);
+      t->exit_status = 128 + 2;
     }
     t = t->next;
   } while (t != task_list);
@@ -882,6 +942,20 @@ int fork_process(registers_t *regs) {
   new_task->stack_canary_addr = 0;
   *(uint64_t *)kernel_stack_base = new_task->stack_canary;
 
+  new_task->fpu_ctx = fpu_context_create();
+  if (!new_task->fpu_ctx) {
+    kernel_stack_free((void *)kernel_stack_base, kernel_stack_size);
+    vmm_free_directory(child_process->mm);
+    child_process->mm = NULL;
+    task_process_discard(child_process);
+    kfree(new_task);
+    return -ENOMEM;
+  }
+  if (parent->fpu_ctx) {
+    fpu_context_save(parent->fpu_ctx);
+    memcpy(new_task->fpu_ctx, parent->fpu_ctx, 512);
+  }
+
   uint64_t regs_size = sizeof(registers_t);
   uint64_t new_stack_ptr = new_task->kernel_stack - regs_size;
   memcpy((void *)(uint64_t)new_stack_ptr, regs, (uint32_t)regs_size);
@@ -925,6 +999,63 @@ int fork_process(registers_t *regs) {
 
   asm volatile("sti");
   return child_process->pid;
+}
+
+int task_clone_thread(registers_t *regs, uint64_t user_stack,
+                      uint64_t tls_base, int set_tls) {
+  thread_t *parent = current_task;
+  if (!parent || !parent->process || !regs || !parent->user_mode ||
+      !user_stack || user_stack > USER_ADDR_MAX ||
+      validate_user_write((void *)(user_stack - 1), 1) < 0 ||
+      (set_tls && tls_base &&
+       (tls_base < USER_ADDR_MIN || tls_base >= USER_ADDR_MAX)))
+    return -EINVAL;
+
+  thread_t *thread = (thread_t *)kmalloc(sizeof(*thread));
+  if (!thread) return -ENOMEM;
+  memset(thread, 0, sizeof(*thread));
+  thread->id = next_pid++;
+  thread->state = TASK_READY;
+  thread->user_mode = 1;
+  thread->priority = parent->priority;
+  thread->time_slice = task_quantum(thread);
+  thread->fs_base = set_tls ? tls_base : parent->fs_base;
+  thread->user_gs_base = parent->user_gs_base;
+  thread->clear_child_tid = 0;
+  strncpy(thread->name, parent->name, sizeof(thread->name) - 1);
+
+  size_t stack_size = 0;
+  thread->kernel_stack_base = (uint64_t)kernel_stack_alloc(
+      KERNEL_STACK_MIN_SIZE, &stack_size);
+  if (!thread->kernel_stack_base) { kfree(thread); return -ENOMEM; }
+  thread->kernel_stack_size = (uint32_t)stack_size;
+  thread->kernel_stack = thread->kernel_stack_base + stack_size;
+  thread->stack_canary = 0xDEADBEEFCAFEBABE;
+  *(uint64_t *)thread->kernel_stack_base = thread->stack_canary;
+
+  registers_t *child_regs = (registers_t *)(thread->kernel_stack -
+                                              sizeof(registers_t));
+  memcpy(child_regs, regs, sizeof(*child_regs));
+  child_regs->rax = 0;
+  child_regs->rsp = user_stack;
+  thread->stack_top = (uint64_t)child_regs;
+  thread->fpu_ctx = fpu_context_create();
+  if (!thread->fpu_ctx) {
+    kernel_stack_free((void *)thread->kernel_stack_base, stack_size);
+    kfree(thread);
+    return -ENOMEM;
+  }
+  if (parent->fpu_ctx) {
+    fpu_context_save(parent->fpu_ctx);
+    memcpy(thread->fpu_ctx, parent->fpu_ctx, 512);
+  }
+
+  task_process_attach(parent->process, thread);
+  uint64_t flags = scheduler_lock_irqsave();
+  thread->next = task_list->next;
+  task_list->next = thread;
+  scheduler_unlock_irqrestore(flags);
+  return thread->id;
 }
 
 int sys_waitpid(int pid, int *status, int options) {
@@ -1011,32 +1142,45 @@ void sys_kill_by_pid(int pid) {
   uint64_t sched_flags = scheduler_lock_irqsave();
   for (process_t *process = process_list; process; process = process->next) {
     if (process->pid != pid) continue;
-    thread_t *thread = process->leader;
-    if (!thread || !thread->user_mode || process->zombie) break;
-    task_release_io(thread);
-    thread->state = TASK_ZOMBIE;
-    process->zombie = true;
-    process->exit_status = 128 + 2;
+    if (!process->leader || !process->leader->user_mode || process->zombie)
+      break;
+    for (thread_t *thread = process->threads; thread;
+         thread = thread->process_next) {
+      thread->state = TASK_ZOMBIE;
+      thread->exit_status = 128 + 2;
+    }
     if (process->pid == last_foreground_pid) last_foreground_pid = -1;
-    process_wake_parent(process);
     break;
   }
   scheduler_unlock_irqrestore(sched_flags);
 }
 
-void sys_exit_process(int status) {
-  /* Clean up any GUI nodes (windows, images) owned by this process */
-
-  task_release_io(current_task);
+void sys_exit_thread(int status) {
+  if (!current_task) for (;;) asm volatile("hlt");
   uint64_t sched_flags = scheduler_lock_irqsave();
-  process_t *process = current_task->process;
-  if (process->pid == last_foreground_pid)
-    last_foreground_pid = -1;
+  current_task->exit_status = status;
   current_task->state = TASK_ZOMBIE;
-  process->zombie = true;
-  process->exit_status = status;
+  if (current_task->process &&
+      current_task->process->pid == last_foreground_pid)
+    last_foreground_pid = -1;
+  scheduler_unlock_irqrestore(sched_flags);
 
-  process_wake_parent(process);
+  while (1) {
+    switch_task();
+  }
+}
+
+void sys_exit_process(int status) {
+  if (!current_task || !current_task->process)
+    for (;;) asm volatile("hlt");
+  process_t *process = current_task->process;
+  uint64_t sched_flags = scheduler_lock_irqsave();
+  if (process->pid == last_foreground_pid) last_foreground_pid = -1;
+  for (thread_t *thread = process->threads; thread;
+       thread = thread->process_next) {
+    thread->exit_status = status;
+    thread->state = TASK_ZOMBIE;
+  }
   scheduler_unlock_irqrestore(sched_flags);
 
   while (1) {
