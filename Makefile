@@ -126,7 +126,7 @@ smap-test: $(TEST_ISO_IMAGE)
 	@grep -q 'VMM: CR4.SMAP enabled' /tmp/liwusos-smap-integration.serial
 	@grep -q 'APIC: AP core (APIC ID 3) booted and initialized successfully!' \
 		/tmp/liwusos-smap-integration.serial
-	@grep -q 'RESULT: 46/46 PASS' /tmp/liwusos-smap-integration.serial
+	@grep -q 'RESULT: 47/47 PASS' /tmp/liwusos-smap-integration.serial
 	@grep -q 'RESULT: ALL PASS' /tmp/liwusos-smap-integration.serial
 	@grep -q 'Linux x86-64 SYSCALL getpid/fstat/openat/mmap/munmap/FS-TLS/write PASS' \
 		/tmp/liwusos-smap-integration.serial

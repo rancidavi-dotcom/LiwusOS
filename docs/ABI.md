@@ -121,17 +121,21 @@ this document.
   process creation still starts with one thread; the Linux personality can
   create a shared-process thread through the generic scheduler/task layer.
   Native `fork` and `waitpid` retain their contracts. FS/GS-base and FPU state
-  belong to the thread object. Signals and futexes are not implemented.
+  belong to the thread object. Generic wait queues back native blocking and
+  Linux private futex WAIT/WAKE; signal delivery is not implemented.
 - `fork` copies the entire address space (`vmm_copy_directory`), with no COW.
 - Kernel task stacks use 16–32 KiB virtual slots with unmapped guards. IRQ
   stacks are per CPU; page-fault and double-fault paths use per-CPU IST stacks.
 - Each process has 32 file descriptors. 0–2 are standard streams; the first
   free descriptor is searched from 3. `dup`/`fork` share a reference-counted
   `file_description_t`, so offsets are shared as in POSIX.
-- Pipes hold 4096 bytes and block by yielding the CPU (`switch_task`), not by a
-  wait queue.
+- Pipes hold 4096 bytes and use scheduler wait queues for empty reads and full
+  writes. Data, available space, and endpoint close wake the corresponding
+  waiters. Active operations pin the pipe object so close/exit cannot free a
+  queue under a blocked syscall.
 - `kill` terminates the target immediately; signal numbers are ignored.
-- `waitpid` blocks by yielding and returns the raw exit code, not a wait status.
+- `waitpid` blocks on its process child wait queue and returns the raw exit
+  code, not a POSIX/Linux wait status.
 
 ## 6. ELF and initial stack
 
@@ -209,7 +213,8 @@ layout.
    (steps 32–36).
 3. No auxv beyond `AT_NULL`, no vDSO (steps 32–34).
 4. Linux clone has only the tested shared-thread flag combination; no general
-   clone resource combinations, signals, wait queues or futex (steps 18–26).
+   clone resource combinations, signal delivery, futex REQUEUE/timeouts or
+   shared futex backing (steps 18–26).
 5. No demand paging, COW or file-backed `mmap` (steps 27–30).
 6. Linux pthread/libc support and cross-CPU task migration (steps 18–20).
 7. 32 file descriptors and no `O_CLOEXEC` (step 37).

@@ -12,6 +12,11 @@
 #define LINUX_EBADF 9
 #define LINUX_ENOENT 2
 #define LINUX_EOVERFLOW 75
+#define LINUX_EFAULT 14
+#define LINUX_EAGAIN 11
+#define LINUX_FUTEX_WAIT 0
+#define LINUX_FUTEX_WAKE 1
+#define LINUX_FUTEX_PRIVATE_FLAG 128
 #define LINUX_ARCH_SET_GS 0x1001
 #define LINUX_ARCH_SET_FS 0x1002
 #define LINUX_ARCH_GET_FS 0x1003
@@ -206,6 +211,43 @@ void linux_syscall_handler(registers_t *regs) {
     case 186: /* gettid */
       regs->rax = current_task ? (uint64_t)current_task->id : 0;
       break;
+    case 202: { /* futex: private WAIT/WAKE only; no shared backing yet */
+      uint64_t operation = regs->rsi;
+      uint64_t allowed = LINUX_FUTEX_PRIVATE_FLAG | 0x7f;
+      uint32_t command = (uint32_t)(operation & 0x7f);
+      if ((operation & ~allowed) != 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+        break;
+      }
+      if ((operation & LINUX_FUTEX_PRIVATE_FLAG) == 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_ENOSYS;
+        break;
+      }
+      if (command == LINUX_FUTEX_WAIT) {
+        if (regs->r10 != 0) {
+          regs->rax = (uint64_t)-(int64_t)LINUX_ENOSYS;
+          break;
+        }
+        if (((uintptr_t)regs->rdi & 3U) != 0) {
+          regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+          break;
+        }
+        int rc = task_futex_wait_private((uint32_t *)regs->rdi,
+                                         (uint32_t)regs->rdx);
+        regs->rax = (uint64_t)(int64_t)rc;
+      } else if (command == LINUX_FUTEX_WAKE) {
+        if (((uintptr_t)regs->rdi & 3U) != 0 || regs->rdx > 0x7fffffffULL) {
+          regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+          break;
+        }
+        int rc = task_futex_wake_private((uint32_t *)regs->rdi,
+                                         (uint32_t)regs->rdx);
+        regs->rax = (uint64_t)(int64_t)rc;
+      } else {
+        regs->rax = (uint64_t)-(int64_t)LINUX_ENOSYS;
+      }
+      break;
+    }
     case 158: { /* arch_prctl: per-thread TLS bases */
       uint64_t base = regs->rsi;
       switch (regs->rdi) {

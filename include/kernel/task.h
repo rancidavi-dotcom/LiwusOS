@@ -9,7 +9,8 @@ typedef enum {
   TASK_RUNNING,
   TASK_READY,
   TASK_SLEEPING,
-  TASK_ZOMBIE
+  TASK_ZOMBIE,
+  TASK_BLOCKED
 } task_state_t;
 
 typedef enum {
@@ -18,6 +19,12 @@ typedef enum {
 } task_abi_t;
 
 #include "vfs.h"
+
+struct thread;
+typedef struct wait_queue {
+  struct thread *head;
+} wait_queue_t;
+typedef void (*wait_cancel_fn)(void *context);
 
 #define PIPE_BUF_SIZE 4096
 
@@ -29,6 +36,8 @@ typedef struct {
   int references;
   int readers;
   int writers;
+  wait_queue_t read_waiters;
+  wait_queue_t write_waiters;
 } pipe_t;
 
 typedef struct {
@@ -48,14 +57,13 @@ typedef struct {
   file_description_t *description;
 } kfile_t;
 
-struct thread;
-
 typedef struct process {
   int pid; /* process identity (TGID), distinct from thread TIDs */
   struct process *parent;
   struct process *next;
   struct thread *threads;
   struct thread *leader;
+  wait_queue_t child_waiters;
   uint32_t thread_count;
   uint32_t references; /* process table plus attached thread references */
   bool zombie;
@@ -87,6 +95,13 @@ typedef struct thread {
   uint64_t fs_base;
   uint64_t user_gs_base;
   uint64_t clear_child_tid;
+  wait_queue_t *waiting_on;
+  struct thread *wait_next;
+  uintptr_t wait_space;
+  uintptr_t wait_address;
+  bool wait_keyed;
+  wait_cancel_fn wait_cancel;
+  void *wait_cancel_context;
   struct thread *next;
   struct thread *process_next;
   process_t *process;
@@ -154,6 +169,21 @@ uint32_t task_total_switches(void);
 /* Bloqueia a tarefa atual por aproximadamente ms milissegundos. A tarefa vira
  * TASK_SLEEPING e e acordada automaticamente pelo scheduler no tick alvo. */
 void task_sleep_ms(uint32_t ms);
+/* Wait queues are thread-context only, never for interrupt handlers.
+ * block_locked requires the scheduler lock; unlock before switch_task(). */
+uint64_t task_scheduler_lock(void);
+void task_scheduler_unlock(uint64_t flags);
+void wait_queue_init(wait_queue_t *queue);
+int wait_queue_block_locked(wait_queue_t *queue, uintptr_t space,
+                            uintptr_t address, bool keyed,
+                            wait_cancel_fn cancel, void *cancel_context);
+uint32_t wait_queue_wake_locked(wait_queue_t *queue, uintptr_t space,
+                                uintptr_t address, bool keyed,
+                                uint32_t maximum);
+uint32_t wait_queue_wake(wait_queue_t *queue, uint32_t maximum);
+uint32_t wait_queue_count(wait_queue_t *queue);
+int task_futex_wait_private(uint32_t *address, uint32_t expected);
+int task_futex_wake_private(uint32_t *address, uint32_t maximum);
 
 /* Ajusta/consulta a prioridade de uma tarefa pelo pid. */
 void task_set_priority(int pid, int priority);

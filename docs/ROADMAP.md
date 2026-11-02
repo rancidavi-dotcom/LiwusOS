@@ -2,7 +2,7 @@
 
 Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verificáveis. A compatibilidade traduz a ABI na borda e reutiliza o mesmo motor de processos, memória virtual e VFS do sistema. Cada fase começa somente depois do gate anterior passar.
 
-> **Estado desta revisão:** Gate 0 permanece como marco histórico (`6402de8`). Os passos 9a/9b (`6bbb7cf`, `7fd8184`), 9c–14 e 16 estão implementados; 12–13 incluem VMAs ordenadas, NXE e W^X. O passo 15 foi implementado com stacks de kernel guardadas, stacks distintas por tarefa, IRQ por CPU e IST para page fault/double fault. O passo 17 foi migrado nos caminhos de ELF/VM e nos mapeamentos de kernel/MMIO; wrappers legados ainda existem dentro da camada VMM para operações de boot. A Fase 2 está aberta: Incremento A separou objetos e ownership de processo/thread; Incremento B adicionou thread compartilhando o processo, saída individual/grupal e contexto x87/SSE. Evidência atual: build de produção com `-Werror`; testes nativos/ring-3 46/46; `make smap-test` em QEMU `-cpu max -smp 4 -m 4096`, SMAP ativo e três APs iniciados. O probe Linux freestanding verifica clone de thread com memória/recursos compartilhados, FS-base independente via `CLONE_SETTLS`, continuidade do pai após `exit` da thread e `exit_group`. O scheduler de usuários ainda executa no BSP. Não há wait queues, futex, sinais ou execução de um binário musl/glibc funcional; o ELF glibc estático local falhou em `#UD` por AVX e `PT_INTERP` ainda não é carregado.
+> **Estado desta revisão:** Gate 0 permanece como marco histórico (`6402de8`). Os passos 9a/9b (`6bbb7cf`, `7fd8184`), 9c–14 e 16 estão implementados; 12–13 incluem VMAs ordenadas, NXE e W^X. O passo 15 foi implementado com stacks de kernel guardadas, stacks distintas por tarefa, IRQ por CPU e IST para page fault/double fault. O passo 17 foi migrado nos caminhos de ELF/VM e nos mapeamentos de kernel/MMIO; wrappers legados ainda existem dentro da camada VMM para operações de boot. A Fase 2 está aberta: Incrementos A/B separam processo e thread; Incremento C adiciona wait queues, bloqueio nativo de waitpid/pipes e FUTEX_WAIT/WAKE privados sem timeout. Evidência: build com `-Werror`, `make test`/`make ring3-test`/`make smap-test` 47/47, QEMU SMAP com quatro CPUs e probe Linux futex. Tarefas de usuário continuam no BSP. Futex compartilhado, REQUEUE, timeouts, sinais e execução de binário musl/glibc funcional seguem ausentes; o ELF glibc estático local falhou em `#UD` por AVX e `PT_INTERP` ainda não é carregado.
 
 ## Fase 0 — Congelar e descrever a base
 
@@ -39,13 +39,13 @@ Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verific
 21. Implementar sinais pendentes/bloqueados, `sigaction`, `sigprocmask`, `sigreturn`, `sigaltstack` e entrega síncrona de SIGSEGV/SIGFPE.
 22. Implementar credenciais consistentes (`uid/euid/gid/egid`, `umask` e consultas), inicialmente com IDs zero.
 23. Implementar grupos e sessões, `wait4`, `WIFEXITED`, `WNOHANG` e SIGCHLD.
-24. Substituir loops de espera em waitpid e pipes por wait queues de bloqueio e despertar no scheduler.
-25. Implementar futex WAIT/WAKE/REQUEUE e robust lists sobre as wait queues; prioridade herdada pode ficar para depois.
+24. **Parcial — Incremento C:** wait queues genéricas, estado `TASK_BLOCKED`, wake individual/múltiplo e remoção durante término. `waitpid` nativo, leitor e escritor de pipe usam bloqueio sem polling; os pipes retêm o objeto durante I/O suspenso e acordam em dados, espaço e fechamento. O teste mede ticks de oito waiters durante quatro ciclos de bloqueio/despertar; o scheduler não os escalona enquanto bloqueados.
+25. **Parcial — Incremento C:** Linux `FUTEX_WAIT_PRIVATE` e `FUTEX_WAKE_PRIVATE` com chave `(mm,address)`, comparação do valor antes do bloqueio e contagem real de waiters despertados. O probe Linux verifica `-EAGAIN` com palavra gravável e somente leitura, `-EFAULT`, desalinhamento `-EINVAL`, wake sem waiter (`0`), timeout e operação compartilhada recusados com `-ENOSYS`, e WAIT bloqueante acordado por WAKE. FUTEX_REQUEUE, timeout, futex compartilhado entre processos e robust lists não são suportados; somente operações privadas sem timeout.
 26. Implementar `set_tid_address` e `set_robust_list`; `rseq` pode responder ENOSYS para runtimes que saibam desativá-lo.
 
 **Gate 2:** programa musl estático com oito pthreads, mutex e condvar executa; kill com handler funciona; `wait4` retorna status correto.
 
-**Estado Gate 2:** aberto. Incrementos A/B têm separação de objetos, uma primitiva Linux de criação de thread compartilhada, TLS por thread e saída individual/grupal, com probe freestanding executado em QEMU. Espera ainda usa loops de yield; wait queues, futex/robust lists, sinais, `wait4` Linux, credenciais completas e execução multicore de threads não estão implementados. O critério principal segue sem evidência: nenhum programa musl Linux estático com oito pthreads/mutex/condvar passou, e não há teste Linux de sinal via `kill` nem de status `wait4`.
+**Estado Gate 2:** aberto. Incrementos A–C fornecem threads Linux básicas, TLS por thread, wait queues, espera nativa sem busy-wait e FUTEX_WAIT/WAKE privados sem timeout. Os testes exercitam bloqueio/despertar e pipes; o probe ET_EXEC Linux freestanding demonstra um waiter futex acordado. Ainda faltam REQUEUE/timeouts, futex compartilhado, robust lists, sinais, `wait4` Linux, credenciais completas, pthreads de libc e execução multicore de threads. O critério principal continua sem evidência: nenhum programa musl estático com oito pthreads/mutex/condvar passou; não há teste Linux de sinal via `kill` nem de status `wait4`.
 
 ## Fase 3 — VM de userspace e loader ELF
 
@@ -112,10 +112,9 @@ Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verific
 
 Esta sequência prioriza dependências técnicas; os itens não têm estimativa de prazo.
 
-1. Incrementos A/B da Fase 2 separam processo/thread e permitem uma thread Linux compartilhada; ampliar testes de criação inválida, rollback, saída individual e alternância repetida de TLS na BSP.
-2. Implementar wait queues genéricas integradas ao scheduler e converter `waitpid`/pipes, com testes de lost wakeup, cancelamento e ausência de consumo contínuo de CPU.
-3. Implementar futex WAIT/WAKE e timeout sobre chaves de memória corretas; depois REQUEUE, `set_tid_address`/clear-child-tid e robust lists, recusando operações não suportadas.
-4. Definir política de capacidades da CPU e ampliar estado x87/SSE/AVX com save/restore antes de anunciar extensões; repetir ELF Linux externo com alvo ISA suportado.
-4. Completar VM Linux que o loader necessita: demand paging, stack/auxv, `PT_TLS`, COW e mmap de arquivo; então validar ELF estático de terceiros sem modificação e registrar os artefatos/hash do teste.
-5. Implementar `PT_INTERP` e o carregamento do interpretador dinâmico; validar glibc dinâmica após a execução estática passar.
-6. Expandir syscalls guiado pelos binários-alvo e pelas dependências já disponíveis (sinais, `wait4`, futex, arquivos e tempo), mantendo o dispatcher/personality isolado e a suíte nativa como bloqueio de regressão.
+1. Incremento C residual: estressar wake/close concorrentes e repetidos nos pipes, e cobrir encerramento/cancelamento de waiters futex. O teste ring-3 já cobre o kill de um processo com leitor de pipe bloqueado e a liberação de suas referências.
+2. Adicionar timeouts e FUTEX_REQUEUE somente após formalizar sua integração com as wait queues e criar provas de requeue para chaves iguais e diferentes.
+3. Definir política de capacidades da CPU e ampliar estado x87/SSE/AVX com save/restore antes de anunciar extensões; repetir ELF Linux externo com alvo ISA suportado.
+4. Incremento D: implementar sinais, semântica de `wait4`/SIGCHLD e credenciais, preservando o contrato nativo de `waitpid`.
+5. Completar VM Linux que o loader necessita: demand paging, stack/auxv, `PT_TLS`, COW e mmap de arquivo; então validar ELF estático de terceiros sem modificação e registrar os artefatos/hash do teste.
+6. Implementar `PT_INTERP` e o carregamento do interpretador dinâmico; validar glibc dinâmica após a execução estática passar.

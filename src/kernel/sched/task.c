@@ -18,6 +18,7 @@ cpu_local_t cpus_local[16];
 spinlock_t scheduler_lock = {0};
 task_t *task_list = NULL;
 process_t *process_list = NULL;
+static inline int task_quantum(const task_t *t);
 
 /* The scheduler also runs from the timer interrupt. On this single-CPU
  * kernel, any code taking this lock must prevent a timer interrupt from
@@ -33,6 +34,148 @@ static inline void scheduler_unlock_irqrestore(uint64_t flags) {
   spinlock_release(&scheduler_lock);
   if (flags & (1ULL << 9))
     asm volatile("sti" ::: "memory");
+}
+
+uint64_t task_scheduler_lock(void) {
+  return scheduler_lock_irqsave();
+}
+
+void task_scheduler_unlock(uint64_t flags) {
+  scheduler_unlock_irqrestore(flags);
+}
+
+void wait_queue_init(wait_queue_t *queue) {
+  if (queue) queue->head = NULL;
+}
+
+int wait_queue_block_locked(wait_queue_t *queue, uintptr_t space,
+                            uintptr_t address, bool keyed,
+                            wait_cancel_fn cancel, void *cancel_context) {
+  thread_t *thread = current_task;
+  if (!queue || !thread || thread->waiting_on ||
+      thread->state == TASK_ZOMBIE)
+    return -1;
+  thread->wait_space = space;
+  thread->wait_address = address;
+  thread->wait_keyed = keyed;
+  thread->wait_cancel = cancel;
+  thread->wait_cancel_context = cancel_context;
+  thread->waiting_on = queue;
+  thread->wait_next = queue->head;
+  queue->head = thread;
+  thread->state = TASK_BLOCKED;
+  return 0;
+}
+
+static void wait_queue_unlink_locked(wait_queue_t *queue, thread_t *thread) {
+  if (!queue || !thread || thread->waiting_on != queue) return;
+  thread_t **link = &queue->head;
+  while (*link && *link != thread) link = &(*link)->wait_next;
+  if (*link == thread) *link = thread->wait_next;
+  thread->wait_next = NULL;
+  thread->waiting_on = NULL;
+  thread->wait_space = 0;
+  thread->wait_address = 0;
+  thread->wait_keyed = false;
+}
+
+uint32_t wait_queue_wake_locked(wait_queue_t *queue, uintptr_t space,
+                                uintptr_t address, bool keyed,
+                                uint32_t maximum) {
+  if (!queue || !maximum) return 0;
+  uint32_t woken = 0;
+  thread_t **link = &queue->head;
+  while (*link && woken < maximum) {
+    thread_t *thread = *link;
+    if (keyed && (!thread->wait_keyed || thread->wait_space != space ||
+                  thread->wait_address != address)) {
+      link = &thread->wait_next;
+      continue;
+    }
+    *link = thread->wait_next;
+    thread->wait_next = NULL;
+    thread->waiting_on = NULL;
+    thread->wait_space = 0;
+    thread->wait_address = 0;
+    thread->wait_keyed = false;
+    if (thread->state == TASK_BLOCKED) {
+      thread->state = TASK_READY;
+      thread->time_slice = task_quantum(thread);
+      woken++;
+    }
+  }
+  return woken;
+}
+
+uint32_t wait_queue_wake(wait_queue_t *queue, uint32_t maximum) {
+  uint64_t flags = scheduler_lock_irqsave();
+  uint32_t woken = wait_queue_wake_locked(queue, 0, 0, false, maximum);
+  scheduler_unlock_irqrestore(flags);
+  return woken;
+}
+
+uint32_t wait_queue_count(wait_queue_t *queue) {
+  uint64_t flags = scheduler_lock_irqsave();
+  uint32_t count = 0;
+  if (queue)
+    for (thread_t *thread = queue->head; thread; thread = thread->wait_next)
+      count++;
+  scheduler_unlock_irqrestore(flags);
+  return count;
+}
+
+#define FUTEX_QUEUE_COUNT 64
+#define EAGAIN 11
+static wait_queue_t futex_private_queues[FUTEX_QUEUE_COUNT];
+
+static wait_queue_t *futex_private_queue(page_directory_t *mm,
+                                         uint32_t *address) {
+  uintptr_t key = ((uintptr_t)mm >> 12) ^ ((uintptr_t)address >> 2);
+  return &futex_private_queues[key & (FUTEX_QUEUE_COUNT - 1)];
+}
+
+int task_futex_wait_private(uint32_t *address, uint32_t expected) {
+  thread_t *thread = current_task;
+  if (!thread || !thread->process || !address) return -EFAULT;
+  if (((uintptr_t)address & (sizeof(uint32_t) - 1)) != 0) return -EINVAL;
+  if (validate_user_pointer(address, sizeof(*address)) < 0) return -EFAULT;
+
+  wait_queue_t *queue = futex_private_queue(thread->process->mm, address);
+  uint64_t flags = scheduler_lock_irqsave();
+  uint32_t observed = 0;
+  /* The range was validated before taking the scheduler lock. Page tables are
+   * eager and user tasks currently run only on the BSP, so this short aligned
+   * access cannot fault or race with another running user CPU. */
+  if (copy_from_user_u32_atomic(&observed, address) < 0) {
+    scheduler_unlock_irqrestore(flags);
+    return -EFAULT;
+  }
+  if (observed != expected) {
+    scheduler_unlock_irqrestore(flags);
+    return -EAGAIN;
+  }
+  if (wait_queue_block_locked(queue, (uintptr_t)thread->process->mm,
+                              (uintptr_t)address, true, NULL, NULL) < 0) {
+    scheduler_unlock_irqrestore(flags);
+    return -EINVAL;
+  }
+  scheduler_unlock_irqrestore(flags);
+  switch_task();
+  return 0;
+}
+
+int task_futex_wake_private(uint32_t *address, uint32_t maximum) {
+  thread_t *thread = current_task;
+  if (!thread || !thread->process || !address) return -EFAULT;
+  if (((uintptr_t)address & (sizeof(uint32_t) - 1)) != 0) return -EINVAL;
+  if (validate_user_pointer(address, sizeof(*address)) < 0) return -EFAULT;
+  wait_queue_t *queue = futex_private_queue(thread->process->mm, address);
+  uint64_t flags = scheduler_lock_irqsave();
+  uint32_t woken = wait_queue_wake_locked(
+      queue, (uintptr_t)thread->process->mm, (uintptr_t)address, true,
+      maximum);
+  scheduler_unlock_irqrestore(flags);
+  return (int)woken;
 }
 
 /* Setado por switch_task() para forcar um reschedule mesmo quando a tarefa
@@ -147,9 +290,19 @@ void task_process_discard(process_t *process) {
 }
 
 static void process_wake_parent(process_t *process) {
-  if (process && process->parent && process->parent->leader &&
-      process->parent->leader->state == TASK_SLEEPING)
-    process->parent->leader->state = TASK_READY;
+  if (!process || !process->parent) return;
+  uint64_t flags = scheduler_lock_irqsave();
+  wait_queue_wake_locked(&process->parent->child_waiters, 0, 0, false,
+                         UINT32_MAX);
+  scheduler_unlock_irqrestore(flags);
+}
+
+static void task_mark_zombie_locked(thread_t *thread, int status) {
+  if (!thread) return;
+  if (thread->waiting_on)
+    wait_queue_unlink_locked(thread->waiting_on, thread);
+  thread->exit_status = status;
+  thread->state = TASK_ZOMBIE;
 }
 
 void init_cpu_local(int cpu_id) {
@@ -549,14 +702,12 @@ uint64_t schedule(uint64_t current_rsp) {
       task_t *fg = task_list;
       do {
         if (fg->id == last_foreground_pid && fg->user_mode) {
-          fg->state = TASK_ZOMBIE;
-          fg->exit_status = 128 + 2;
+          task_mark_zombie_locked(fg, 128 + 2);
           last_foreground_pid = -1;
           if (fg->process) {
             for (thread_t *thread = fg->process->threads; thread;
                  thread = thread->process_next) {
-              thread->state = TASK_ZOMBIE;
-              thread->exit_status = 128 + 2;
+              task_mark_zombie_locked(thread, 128 + 2);
             }
           }
           break;
@@ -609,6 +760,20 @@ uint64_t schedule(uint64_t current_rsp) {
     next = next->next;
   }
 
+  /* The boot task is the single-CPU idle context. If all user tasks are
+   * blocked, return to it so timer/device interrupts can make progress. */
+  if (next->state != TASK_READY && curr->state != TASK_READY) {
+    task_t *idle = task_list;
+    do {
+      if (idle->id == 0 && idle->state != TASK_ZOMBIE) {
+        idle->state = TASK_READY;
+        next = idle;
+        break;
+      }
+      idle = idle->next;
+    } while (idle != task_list);
+  }
+
   if (next->state == TASK_READY) {
       next->state = TASK_RUNNING;
       next->time_slice = task_quantum(next);
@@ -647,37 +812,61 @@ uint64_t schedule(uint64_t current_rsp) {
     }
   }
 
-  int reap_current = curr != new_curr && curr->state == TASK_ZOMBIE &&
-                     curr->id != 0;
-  if (reap_current) {
+  /* A blocked thread can be killed while it is not the current task. Such a
+   * zombie will never be selected again, so reap one non-running zombie on
+   * every scheduler pass as well as the task we just switched away from. */
+  task_t *reap_task = NULL;
+  if (curr != new_curr && curr->state == TASK_ZOMBIE && curr->id != 0) {
+    reap_task = curr;
+  } else if (task_list) {
+    task_t *candidate = task_list;
+    do {
+      if (candidate != curr && candidate != new_curr &&
+          candidate->id != 0 && candidate->state == TASK_ZOMBIE) {
+        reap_task = candidate;
+        break;
+      }
+      candidate = candidate->next;
+    } while (candidate != task_list);
+  }
+  wait_cancel_fn reap_cancel = NULL;
+  void *reap_cancel_context = NULL;
+  if (reap_task) {
+    reap_cancel = reap_task->wait_cancel;
+    reap_cancel_context = reap_task->wait_cancel_context;
+    reap_task->wait_cancel = NULL;
+    reap_task->wait_cancel_context = NULL;
+    if (reap_task->waiting_on)
+      wait_queue_unlink_locked(reap_task->waiting_on, reap_task);
     task_t *prev = task_list;
-    while (prev->next != curr && prev->next != task_list)
+    while (prev->next != reap_task && prev->next != task_list)
       prev = prev->next;
-    if (prev->next == curr) {
-      if (task_list == curr) task_list = curr->next;
-      prev->next = curr->next;
+    if (prev->next == reap_task) {
+      if (task_list == reap_task) task_list = reap_task->next;
+      prev->next = reap_task->next;
     } else {
-      reap_current = 0;
+      reap_task = NULL;
     }
   }
 
   scheduler_unlock_irqrestore(sched_flags);
 
-  if (reap_current) {
-    process_t *process = curr->process;
-    int exit_status = curr->exit_status;
-    task_process_detach(process, curr);
+  if (reap_task) {
+    if (reap_cancel) reap_cancel(reap_cancel_context);
+    process_t *process = reap_task->process;
+    int exit_status = reap_task->exit_status;
+    task_process_detach(process, reap_task);
     if (process && process->thread_count == 0) {
       process->zombie = true;
       process->exit_status = exit_status;
       task_process_release_io(process);
       process_wake_parent(process);
     }
-    if (curr->kernel_stack_base && curr->kernel_stack_size)
-      kernel_stack_free((void *)curr->kernel_stack_base,
-                        curr->kernel_stack_size);
-    if (curr->fpu_ctx) kfree(curr->fpu_ctx);
-    kfree(curr);
+    if (reap_task->kernel_stack_base && reap_task->kernel_stack_size)
+      kernel_stack_free((void *)reap_task->kernel_stack_base,
+                        reap_task->kernel_stack_size);
+    if (reap_task->fpu_ctx) kfree(reap_task->fpu_ctx);
+    kfree(reap_task);
   }
 
   return new_curr->stack_top;
@@ -799,8 +988,7 @@ static void task_kill_job_locked(int job_id) {
   do {
       if (t->user_mode && t->process && t->process->job_id == job_id &&
           t->state != TASK_ZOMBIE) {
-      t->state = TASK_ZOMBIE;
-      t->exit_status = 128 + 2;
+      task_mark_zombie_locked(t, 128 + 2);
     }
     t = t->next;
   } while (t != task_list);
@@ -870,6 +1058,8 @@ const char *task_state_name(task_state_t state) {
     return "READY";
   case TASK_SLEEPING:
     return "SLEEP";
+  case TASK_BLOCKED:
+    return "BLOCKED";
   case TASK_ZOMBIE:
     return "ZOMB";
   default:
@@ -1131,7 +1321,11 @@ int sys_waitpid(int pid, int *status, int options) {
       scheduler_unlock_irqrestore(sched_flags);
       return 0;
     }
-    parent_thread->state = TASK_SLEEPING;
+    if (wait_queue_block_locked(&parent->child_waiters, 0, 0, false,
+                                NULL, NULL) < 0) {
+      scheduler_unlock_irqrestore(sched_flags);
+      return -1;
+    }
     scheduler_unlock_irqrestore(sched_flags);
     switch_task();
   }
@@ -1146,8 +1340,7 @@ void sys_kill_by_pid(int pid) {
       break;
     for (thread_t *thread = process->threads; thread;
          thread = thread->process_next) {
-      thread->state = TASK_ZOMBIE;
-      thread->exit_status = 128 + 2;
+      task_mark_zombie_locked(thread, 128 + 2);
     }
     if (process->pid == last_foreground_pid) last_foreground_pid = -1;
     break;
@@ -1158,8 +1351,7 @@ void sys_kill_by_pid(int pid) {
 void sys_exit_thread(int status) {
   if (!current_task) for (;;) asm volatile("hlt");
   uint64_t sched_flags = scheduler_lock_irqsave();
-  current_task->exit_status = status;
-  current_task->state = TASK_ZOMBIE;
+  task_mark_zombie_locked(current_task, status);
   if (current_task->process &&
       current_task->process->pid == last_foreground_pid)
     last_foreground_pid = -1;
@@ -1178,8 +1370,7 @@ void sys_exit_process(int status) {
   if (process->pid == last_foreground_pid) last_foreground_pid = -1;
   for (thread_t *thread = process->threads; thread;
        thread = thread->process_next) {
-    thread->exit_status = status;
-    thread->state = TASK_ZOMBIE;
+    task_mark_zombie_locked(thread, status);
   }
   scheduler_unlock_irqrestore(sched_flags);
 

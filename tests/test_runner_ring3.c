@@ -65,7 +65,7 @@ int test_ring3_processes(void) {
 
     if (run_linux_elf("linux_clone_probe") != 0)
         FAIL("ring3_processes", "Linux clone/TLS/thread-exit probe failed");
-    serial_print("[RING3 RESULT] Linux clone shared-mm, independent FS TLS, thread exit PASS\n");
+    serial_print("[RING3 RESULT] Linux clone, private futex WAIT/WAKE, shared-mm, independent FS TLS, thread exit PASS\n");
 
     uint32_t static_elf_size = 0;
     if (initrd_get_file("linux_glibc_hello", &static_elf_size)) {

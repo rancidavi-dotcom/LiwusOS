@@ -10,6 +10,13 @@
  * seguintes. */
 static volatile int sched_run = 0;
 static volatile uint64_t sched_loops[3];
+static wait_queue_t sched_waitq;
+static wait_queue_t sched_wait_gate;
+static volatile int sched_wait_done;
+static volatile int sched_wait_round_done;
+static volatile int sched_wait_monitor_done;
+#define WAITQ_WORKERS 8
+#define WAITQ_ROUNDS 4
 
 #define SCHED_WORKER(idx)                        \
   do {                                           \
@@ -120,6 +127,109 @@ int test_sched_sleep(void) {
   ASSERT(elapsed <= 40, "sleep demorou demais para acordar");
 
   PASS("sched_sleep");
+}
+
+static void sched_waitq_worker(void) {
+  for (int round = 0; round < WAITQ_ROUNDS; round++) {
+    uint64_t flags = task_scheduler_lock();
+    int rc = wait_queue_block_locked(&sched_waitq, 0, 0, false, NULL, NULL);
+    task_scheduler_unlock(flags);
+    if (rc == 0) switch_task();
+    __sync_fetch_and_add(&sched_wait_round_done, 1);
+    if (round + 1 < WAITQ_ROUNDS) {
+      flags = task_scheduler_lock();
+      rc = wait_queue_block_locked(&sched_wait_gate, 0, 0, false, NULL, NULL);
+      task_scheduler_unlock(flags);
+      if (rc == 0) switch_task();
+    }
+  }
+  __sync_fetch_and_add(&sched_wait_done, 1);
+  for (;;) task_sleep_ms(1000);
+}
+
+static void sched_wait_monitor(void) {
+  for (volatile uint64_t work = 0; work < 10000; work++)
+    asm volatile("pause" ::: "memory");
+  sched_wait_monitor_done = 1;
+  for (;;) task_sleep_ms(1000);
+}
+
+static int waitq_workers_ready(uint32_t expected) {
+  for (uint32_t tick = 0; tick < 100; tick++) {
+    if (wait_queue_count(&sched_waitq) == expected) return 1;
+    task_sleep_ms(10);
+  }
+  return 0;
+}
+
+static uint64_t task_ticks_for(int id) {
+  task_info_t info[64];
+  int count = task_snapshot(info, 64);
+  for (int i = 0; i < count; i++)
+    if (info[i].id == id) return info[i].cpu_ticks;
+  return UINT64_MAX;
+}
+
+int test_sched_wait_queue(void) {
+  wait_queue_init(&sched_waitq);
+  wait_queue_init(&sched_wait_gate);
+  sched_wait_done = 0;
+  sched_wait_round_done = 0;
+  sched_wait_monitor_done = 0;
+  int ids[WAITQ_WORKERS];
+  for (int i = 0; i < WAITQ_WORKERS; i++) {
+    ids[i] = create_task_named(sched_waitq_worker, "waitq-worker");
+    if (ids[i] < 0) FAIL("sched_wait_queue", "worker creation failed");
+  }
+  if (!waitq_workers_ready(WAITQ_WORKERS))
+    FAIL("sched_wait_queue", "workers did not all block");
+
+  for (int round = 0; round < WAITQ_ROUNDS; round++) {
+    if (round == 0) {
+      uint64_t ticks[WAITQ_WORKERS];
+      for (int i = 0; i < WAITQ_WORKERS; i++) ticks[i] = task_ticks_for(ids[i]);
+      if (create_task_named(sched_wait_monitor, "waitq-monitor") < 0)
+        FAIL("sched_wait_queue", "monitor creation failed");
+      for (int attempt = 0; attempt < 16 && !sched_wait_monitor_done;
+           attempt++)
+        switch_task();
+      ASSERT(sched_wait_monitor_done,
+             "scheduler monitor did not finish its bounded work");
+      for (int i = 0; i < WAITQ_WORKERS; i++)
+        ASSERT(task_ticks_for(ids[i]) == ticks[i],
+               "blocked waiters consumed scheduler ticks");
+    }
+    if (!waitq_workers_ready(WAITQ_WORKERS))
+      FAIL("sched_wait_queue", "workers failed to requeue");
+    if (round == 0) {
+      ASSERT(wait_queue_wake(&sched_waitq, 3) == 3,
+             "wake-one-count did not wake exactly three waiters");
+      ASSERT(wait_queue_wake(&sched_waitq, UINT32_MAX) == WAITQ_WORKERS - 3,
+             "wake-all did not wake remaining waiters");
+    } else {
+      ASSERT(wait_queue_wake(&sched_waitq, UINT32_MAX) == WAITQ_WORKERS,
+             "wake-all did not wake all workers in stress round");
+    }
+    for (uint32_t tick = 0; tick < 100 &&
+         sched_wait_round_done != WAITQ_WORKERS; tick++)
+      task_sleep_ms(10);
+    ASSERT(sched_wait_round_done == WAITQ_WORKERS,
+           "workers failed bounded round completion");
+    if (round + 1 < WAITQ_ROUNDS) {
+      sched_wait_round_done = 0;
+      ASSERT(wait_queue_wake(&sched_wait_gate, UINT32_MAX) == WAITQ_WORKERS,
+             "round gate did not release all workers");
+    }
+  }
+
+  for (uint32_t tick = 0; tick < 100 && sched_wait_done != WAITQ_WORKERS;
+       tick++)
+    task_sleep_ms(10);
+  ASSERT(sched_wait_done == WAITQ_WORKERS,
+         "not all waiters resumed before bounded deadline");
+  ASSERT(wait_queue_wake(&sched_waitq, 1) == 0,
+         "wake on empty queue should return zero");
+  PASS("sched_wait_queue");
 }
 
 #endif /* KERNEL_TEST */

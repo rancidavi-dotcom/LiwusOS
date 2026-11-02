@@ -48,6 +48,9 @@ int validate_user_write(const void *ptr, size_t size);
  */
 int copy_from_user(void *dst, const void *user_src, size_t n);
 
+/* Atomic aligned 32-bit user load for futex compare-and-block. */
+int copy_from_user_u32_atomic(uint32_t *dst, const uint32_t *user_src);
+
 /*
  * Copy `n` bytes from kernel buffer `src` to user-space address `user_dst`.
  * Returns 0 on success, -EFAULT on invalid user pointer.

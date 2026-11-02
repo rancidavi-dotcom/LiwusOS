@@ -65,6 +65,7 @@ int test_v1_compat_read(void);
 /* ---- Scheduler tests ---- */
 int test_sched_priority(void);
 int test_sched_sleep(void);
+int test_sched_wait_queue(void);
 int test_ring3_processes(void);
 int test_vma_intervals(void);
 int test_kernel_stack_guard(void);
@@ -191,6 +192,7 @@ void test_runner_task(void) {
     run_test(test_process_thread_ownership, "process_thread_ownership");
     run_test(test_sched_sleep,    "sched_sleep");
     run_test(test_sched_priority, "sched_priority");
+    run_test(test_sched_wait_queue, "sched_wait_queue");
 
     serial_print("\n[runner] Ring-3 integration tests...\n");
     run_test(test_ring3_processes, "ring3_processes");

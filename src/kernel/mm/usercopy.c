@@ -101,6 +101,19 @@ int copy_from_user(void *dst, const void *user_src, size_t n) {
     return 0;
 }
 
+int copy_from_user_u32_atomic(uint32_t *dst, const uint32_t *user_src) {
+    if (!dst || !user_src || ((uintptr_t)user_src & 3U) != 0)
+        return -EINVAL;
+    if (validate_user_pointer(user_src, sizeof(*user_src)) < 0)
+        return -EFAULT;
+    uint32_t value;
+    user_access_begin();
+    asm volatile("movl (%1), %0" : "=r"(value) : "r"(user_src) : "memory");
+    user_access_end();
+    *dst = value;
+    return 0;
+}
+
 int copy_to_user(void *user_dst, const void *src, size_t n) {
     if (n == 0) return 0;
     if (validate_user_range(user_dst, n, 1) < 0) return -EFAULT;

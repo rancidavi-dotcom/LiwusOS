@@ -45,7 +45,7 @@ LiwusOS permanece um sistema operacional independente. A personality Linux fica 
 
 `clone` cria processo ou thread conforme flags e compartilha recursos somente quando a flag correspondente é pedida. `exit` encerra uma thread; `exit_group` encerra todas as threads do processo. `fork` e `clone` chamam as mesmas primitivas de VM e recursos, sem dispatcher alternativo.
 
-**Estado atual (após Incrementos A/B da Fase 2):** `process_t` é um objeto separado
+**Estado atual (após Incrementos A/B/C da Fase 2):** `process_t` é um objeto separado
 que possui PID, pai, mm, heap/brk, mmap cursor, FDs, cwd, ABI, credenciais,
 referências e lista de threads. `thread_t` possui TID, estado/contexto do
 scheduler, kernel stack, FS/GS-base e contexto FPU; `task_t` é apenas um alias
@@ -57,8 +57,8 @@ separados e `waitpid` os coleta. A personality Linux pode criar uma thread com
 `CLONE_SETTLS`. `gettid`, `exit` individual e `exit_group` são implementados.
 Um probe ET_EXEC freestanding confirma memória compartilhada, retorno do filho,
 FS-base diferente no filho e continuidade do processo após o filho encerrar.
-Isso ainda não implementa a semântica geral de `clone`, pthreads da libc, espera
-eficiente, futex, sinais ou migração SMP. A infraestrutura de estado FPU salva e
+Isso ainda não implementa a semântica geral de `clone`, pthreads da libc, futex
+compartilhado ou migração SMP. A infraestrutura de estado FPU salva e
 restaura x87/SSE por thread; AVX/XSAVE não é habilitado nem anunciado.
 O PID e TID coincidem enquanto essa limitação existir.
 
@@ -140,7 +140,9 @@ O stub salva estado de usuário de modo que interrupções e preempção preserv
 ## Evidência do milestone atual
 
 - O ELF `tests/ring3/linux_syscall_probe.S` é um `ET_EXEC` estático, sem `PT_INTERP`, que usa a convenção Linux x86-64 sem caminhos ou chamadas especiais do Liwus. Ele valida `getpid`, `fstat`/`stat` layout, `openat`/`-ENOENT`, `-ENOSYS`, `mmap` com argumento 4 em R10, `munmap`, `ARCH_SET_FS`, leitura via `FS:0`, `ARCH_GET_FS`, `write` e `exit`.
-- `make smap-test` executa o probe e a suíte nativa/ring-3 no QEMU `-cpu max -smp 4 -m 4096`; a evidência atual mostra SMAP, APIC IDs 1–3, remoção da identidade, frame alocado/acessado/liberado acima de 1 GiB, page fault real na guarda e `46/46 PASS`. O agendador executa as tarefas do teste no BSP; os outros processadores são validados na inicialização SMP, não por migração de tarefas entre CPUs.
+- `tests/ring3/linux_clone_probe.S` também executa `FUTEX_WAIT_PRIVATE` bloqueante e exige que o WAKE do pai retorne exatamente um waiter; valida mismatch `-EAGAIN` em memória gravável e somente leitura, endereço desalinhado `-EINVAL`, ponteiro inválido `-EFAULT` e recusa do modo compartilhado sem backing com `-ENOSYS`. O waiter confirma que a palavra compartilhada mudou e termina individualmente.
+- A personalidade suporta apenas `FUTEX_WAIT_PRIVATE` sem timeout e `FUTEX_WAKE_PRIVATE`. A chave é `(process->mm, endereço virtual alinhado)`; colisões de hash comparam os dois campos. Futexes compartilhados entre processos, REQUEUE e timeout retornam `-ENOSYS`. O teste não prova paralelismo SMP: usuários executam no BSP; o lock do scheduler torna comparação/enfileiramento atômicos em relação às syscalls concorrentes nesse modelo atual.
+- `make smap-test` executa o probe e a suíte nativa/ring-3 no QEMU `-cpu max -smp 4 -m 4096`; a evidência atual mostra SMAP, APIC IDs 1–3, remoção da identidade, frame alocado/acessado/liberado acima de 1 GiB, page fault real na guarda e `47/47 PASS`. O agendador executa as tarefas do teste no BSP; os outros processadores são validados na inicialização SMP, não por migração de tarefas entre CPUs.
 - É possível fornecer um ELF GNU/Linux estático externo sem incorporá-lo ao repositório: `make smap-test LINUX_STATIC_ELF=/caminho/para/programa`. O ELF é empacotado temporariamente como `linux_glibc_hello` na imagem de teste.
 - O teste adicional com a libc estática desta máquina foi tentado. O ELF estático sem `PT_INTERP` começou a executar, mas terminou com `#UD` em `vpxor` no `_dl_aux_init`; seu `GNU_PROPERTY` exige x86-64 v3/v4, AVX/XSAVE, que o kernel ainda não habilita nem salva/restaura. Portanto, o probe freestanding Linux passa, mas esse binário glibc não passa. O ELF GNU original com `PT_INTERP` também é corretamente recusado enquanto o loader dinâmico não existir.
 - FS/GS-base são armazenadas por thread e restauradas na troca de contexto. `ARCH_SET_FS/GET_FS`, `ARCH_SET_GS/GET_GS` e `CLONE_SETTLS` passam no probe Linux; o teste verifica valores FS diferentes no pai e no filho e roda com SMAP ativo. O retorno da thread de teste via `exit` deixa o pai continuar; o `exit_group` termina o processo. Ainda não há prova com libc/pthreads, alternância repetitiva de várias threads, entrega de sinais durante interrupções nem migração entre APs.

@@ -344,10 +344,12 @@ void sys_fd_get(kfile_t *file) {
   if (file->type == FD_TYPE_FILE && file->description) {
     file->description->references++;
   } else if (file->type == FD_TYPE_PIPE && file->socket_ptr) {
+    uint64_t flags = task_scheduler_lock();
     pipe_t *p = (pipe_t *)file->socket_ptr;
     p->references++;
     if (file->base_addr == 1) p->readers++;
     else if (file->base_addr == 2) p->writers++;
+    task_scheduler_unlock(flags);
   }
 }
 
@@ -363,9 +365,14 @@ void sys_fd_put(kfile_t *file) {
     }
   } else if (file->type == FD_TYPE_PIPE && file->socket_ptr) {
     pipe_t *p = (pipe_t *)file->socket_ptr;
+    uint64_t flags = task_scheduler_lock();
     if (file->base_addr == 1 && p->readers > 0) p->readers--;
     if (file->base_addr == 2 && p->writers > 0) p->writers--;
-    if (p->references > 0 && --p->references == 0) {
+    wait_queue_wake_locked(&p->read_waiters, 0, 0, false, UINT32_MAX);
+    wait_queue_wake_locked(&p->write_waiters, 0, 0, false, UINT32_MAX);
+    int free_pipe = p->references > 0 && --p->references == 0;
+    task_scheduler_unlock(flags);
+    if (free_pipe) {
       kfree(p);
       if (live_pipe_objects) live_pipe_objects--;
     }
@@ -374,6 +381,65 @@ void sys_fd_put(kfile_t *file) {
     vfs_node_put((fs_node_t *)file->socket_ptr);
   }
   memset(file, 0, sizeof(*file));
+}
+
+static pipe_t *pipe_pin_fd(int fd, int endpoint) {
+  uint64_t flags = task_scheduler_lock();
+  kfile_t *table = get_fd_table();
+  pipe_t *pipe = NULL;
+  if (fd >= 0 && fd < 32 && table[fd].type == FD_TYPE_PIPE &&
+      table[fd].base_addr == (uint32_t)endpoint && table[fd].socket_ptr) {
+    pipe = (pipe_t *)table[fd].socket_ptr;
+    pipe->references++;
+    if (endpoint == 1) pipe->readers++;
+    else pipe->writers++;
+  }
+  task_scheduler_unlock(flags);
+  return pipe;
+}
+
+typedef struct {
+  pipe_t *pipe;
+  int endpoint;
+} pipe_wait_pin_t;
+
+static int pipe_unpin_locked(pipe_t *pipe, int endpoint) {
+  if (endpoint == 1 && pipe->readers > 0) pipe->readers--;
+  if (endpoint == 2 && pipe->writers > 0) pipe->writers--;
+  wait_queue_wake_locked(&pipe->read_waiters, 0, 0, false, UINT32_MAX);
+  wait_queue_wake_locked(&pipe->write_waiters, 0, 0, false, UINT32_MAX);
+  return pipe->references > 0 && --pipe->references == 0;
+}
+
+static void pipe_unpin(pipe_t *pipe, int endpoint) {
+  if (!pipe) return;
+  uint64_t flags = task_scheduler_lock();
+  int free_pipe = pipe_unpin_locked(pipe, endpoint);
+  task_scheduler_unlock(flags);
+  if (free_pipe) {
+    kfree(pipe);
+    if (live_pipe_objects) live_pipe_objects--;
+  }
+}
+
+static void pipe_unpin_current(pipe_wait_pin_t *pin) {
+  if (!pin || !pin->pipe) return;
+  uint64_t flags = task_scheduler_lock();
+  if (current_task && current_task->wait_cancel_context == pin) {
+    current_task->wait_cancel = NULL;
+    current_task->wait_cancel_context = NULL;
+  }
+  int free_pipe = pipe_unpin_locked(pin->pipe, pin->endpoint);
+  task_scheduler_unlock(flags);
+  if (free_pipe) {
+    kfree(pin->pipe);
+    if (live_pipe_objects) live_pipe_objects--;
+  }
+}
+
+static void pipe_wait_cancel(void *context) {
+  pipe_wait_pin_t *pin = (pipe_wait_pin_t *)context;
+  if (pin) pipe_unpin(pin->pipe, pin->endpoint);
 }
 
 void task_process_release_io(process_t *process) {
@@ -471,25 +537,47 @@ int sys_read(int fd, void *buf, uint32_t count) {
   if (count == 0) return 0;
   kfile_t *fd_table = get_fd_table();
   if (fd >= 0 && fd < 32 && fd_table[fd].type == FD_TYPE_PIPE) {
-    pipe_t *p = (pipe_t *)fd_table[fd].socket_ptr;
+    pipe_t *p = pipe_pin_fd(fd, 1);
     if (!p) return -1;
-    if (fd_table[fd].base_addr != 1) return -1;
-    while (p->bytes_avail == 0) {
-      if (p->writers == 0) return 0; // EOF after the final writer closes.
-      switch_task();
-    }
-    uint32_t to_read = count < p->bytes_avail ? count : p->bytes_avail;
+    pipe_wait_pin_t wait_pin = {p, 1};
+    uint8_t chunk_buffer[256];
     uint32_t got = 0;
-    while (got < to_read) {
-      uint32_t chunk = to_read - got;
+    while (got < count) {
+      uint64_t flags = task_scheduler_lock();
+      if (p->bytes_avail == 0) {
+        if (got || p->writers == 0) {
+          task_scheduler_unlock(flags);
+          break; /* Return available data, or EOF after the last writer. */
+        }
+        int rc = wait_queue_block_locked(&p->read_waiters, 0, 0, false,
+                                         pipe_wait_cancel, &wait_pin);
+        task_scheduler_unlock(flags);
+        if (rc < 0) {
+          pipe_unpin_current(&wait_pin);
+          return -1;
+        }
+        switch_task();
+        continue;
+      }
+
+      uint32_t amount = count - got;
+      if (amount > p->bytes_avail) amount = p->bytes_avail;
+      if (amount > sizeof(chunk_buffer)) amount = sizeof(chunk_buffer);
       uint32_t first = PIPE_BUF_SIZE - p->read_pos;
-      if (chunk > first) chunk = first;
-      if (copy_to_user((char *)buf + got, &p->buffer[p->read_pos], chunk) < 0)
-        return -EFAULT;
-      p->read_pos = (p->read_pos + chunk) % PIPE_BUF_SIZE;
-      p->bytes_avail -= chunk;
-      got += chunk;
+      if (amount > first) amount = first;
+      memcpy(chunk_buffer, &p->buffer[p->read_pos], amount);
+      p->read_pos = (p->read_pos + amount) % PIPE_BUF_SIZE;
+      p->bytes_avail -= amount;
+      wait_queue_wake_locked(&p->write_waiters, 0, 0, false, UINT32_MAX);
+      task_scheduler_unlock(flags);
+
+      if (copy_to_user((char *)buf + got, chunk_buffer, amount) < 0) {
+        pipe_unpin_current(&wait_pin);
+        return got ? (int)got : -EFAULT;
+      }
+      got += amount;
     }
+    pipe_unpin_current(&wait_pin);
     return (int)got;
   }
   if (fd == 0 && fd_table[0].type == FD_TYPE_FREE) {
@@ -652,25 +740,50 @@ int sys_write(int fd, const void *buf, uint32_t count) {
   if (fd < 0 || fd >= 32) return -1;
   kfile_t *f = &fd_table[fd];
   if (f->type == FD_TYPE_PIPE) {
-    pipe_t *p = (pipe_t *)f->socket_ptr;
+    pipe_t *p = pipe_pin_fd(fd, 2);
     if (!p) return -1;
-    if (f->base_addr != 2) return -1;
-    if (p->readers == 0) return -EPIPE;
-    uint32_t space = PIPE_BUF_SIZE - p->bytes_avail;
-    if (space == 0) return 0;
-    if (count > space) count = space;
-    done = 0;
-    while (done < count) {
-      uint32_t chunk = (count - done) < sizeof(tmp) ? (count - done) : (uint32_t)sizeof(tmp);
-      if (copy_from_user(tmp, (const char *)buf + done, chunk) < 0) return -EFAULT;
-      for (uint32_t i = 0; i < chunk; i++) {
-        p->buffer[p->write_pos] = tmp[i];
+    pipe_wait_pin_t wait_pin = {p, 2};
+    uint32_t written = 0;
+    uint8_t chunk_buffer[sizeof(tmp)];
+    while (written < count) {
+      uint32_t amount = count - written;
+      if (amount > sizeof(chunk_buffer)) amount = sizeof(chunk_buffer);
+      if (copy_from_user(chunk_buffer, (const char *)buf + written,
+                         amount) < 0) {
+        pipe_unpin_current(&wait_pin);
+        return written ? (int)written : -EFAULT;
+      }
+
+      uint64_t flags = task_scheduler_lock();
+      if (p->readers == 0) {
+        task_scheduler_unlock(flags);
+        pipe_unpin_current(&wait_pin);
+        return written ? (int)written : -EPIPE;
+      }
+      uint32_t space = PIPE_BUF_SIZE - p->bytes_avail;
+      if (space == 0) {
+        int rc = wait_queue_block_locked(&p->write_waiters, 0, 0, false,
+                                         pipe_wait_cancel, &wait_pin);
+        task_scheduler_unlock(flags);
+        if (rc < 0) {
+          pipe_unpin_current(&wait_pin);
+          return written ? (int)written : -1;
+        }
+        switch_task();
+        continue;
+      }
+      if (amount > space) amount = space;
+      for (uint32_t i = 0; i < amount; i++) {
+        p->buffer[p->write_pos] = chunk_buffer[i];
         p->write_pos = (p->write_pos + 1) % PIPE_BUF_SIZE;
       }
-      p->bytes_avail += chunk;
-      done += chunk;
+      p->bytes_avail += amount;
+      wait_queue_wake_locked(&p->read_waiters, 0, 0, false, UINT32_MAX);
+      task_scheduler_unlock(flags);
+      written += amount;
     }
-    return (int)done;
+    pipe_unpin_current(&wait_pin);
+    return (int)written;
   }
   if (f->type == FD_TYPE_FILE && f->socket_ptr) {
     fs_node_t *node = (fs_node_t *)f->socket_ptr;
@@ -1340,6 +1453,8 @@ int sys_pipe(int pipefd[2]) {
   if (!p) return -1;
   live_pipe_objects++;
   memset(p, 0, sizeof(pipe_t));
+  wait_queue_init(&p->read_waiters);
+  wait_queue_init(&p->write_waiters);
 
   int rfd = -1, wfd = -1;
   for (int i = 3; i < 32; i++) {

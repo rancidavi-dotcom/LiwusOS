@@ -19,6 +19,7 @@ typedef unsigned long u64;
 #define SYS_STAT     22
 #define SYS_FSTAT    23
 #define SYS_GETCWD   27
+#define SYS_KILL     28
 #define SYS_PIPE     31
 #define EPIPE        32
 
@@ -328,6 +329,102 @@ void _start(void) {
         sc1(SYS_CLOSE, 31) != -1)
         fail("invalid file descriptors were accepted");
     pass("pipe write without readers returns -EPIPE; invalid descriptors fail");
+
+    /* Force a writer to block after filling the 4 KiB pipe, then verify that
+     * reader progress wakes it and preserves all bytes in order. */
+    int stress_pipe[2] = { -1, -1 };
+    static unsigned char stress_data[8192];
+    if (sc1(SYS_PIPE, (long)stress_pipe) != 0)
+        fail("pipe for blocked writer stress");
+    for (int i = 0; i < (int)sizeof(stress_data); i++)
+        stress_data[i] = (unsigned char)(i * 17U + 3U);
+    child = sc0(SYS_FORK);
+    if (child < 0) fail("fork for blocked pipe writer");
+    if (child == 0) {
+        if (sc1(SYS_CLOSE, stress_pipe[0]) != 0 ||
+            sc3(SYS_WRITE, stress_pipe[1], (long)stress_data,
+                sizeof(stress_data)) != (long)sizeof(stress_data))
+            sc1(SYS_EXIT, 83);
+        sc1(SYS_CLOSE, stress_pipe[1]);
+        sc1(SYS_EXIT, 0);
+        for (;;) __asm__ volatile("hlt");
+    }
+    if (sc1(SYS_CLOSE, stress_pipe[1]) != 0)
+        fail("close parent pipe writer");
+    static unsigned char stress_result[8192];
+    int stress_total = 0;
+    while (stress_total < (int)sizeof(stress_result)) {
+        long got = sc3(SYS_READ, stress_pipe[0],
+                       (long)(stress_result + stress_total),
+                       sizeof(stress_result) - (unsigned)stress_total);
+        if (got <= 0) fail("blocked pipe writer did not resume");
+        stress_total += (int)got;
+    }
+    if (sc1(SYS_CLOSE, stress_pipe[0]) != 0 || !wait_for((int)child, 0))
+        fail("blocked pipe writer failed to exit cleanly");
+    for (int i = 0; i < (int)sizeof(stress_data); i++)
+        if (stress_result[i] != stress_data[i])
+            fail("blocked pipe writer corrupted byte order");
+    pass("pipe writer blocks at capacity and resumes after reader progress");
+
+    int reader_pipe[2] = { -1, -1 };
+    if (sc1(SYS_PIPE, (long)reader_pipe) != 0)
+        fail("pipe for blocked reader test");
+    child = sc0(SYS_FORK);
+    if (child < 0) fail("fork for blocked pipe reader");
+    if (child == 0) {
+        char byte = 'R';
+        if (sc1(SYS_CLOSE, reader_pipe[0]) != 0 ||
+            sc3(SYS_WRITE, reader_pipe[1], (long)&byte, 1) != 1)
+            sc1(SYS_EXIT, 84);
+        sc1(SYS_CLOSE, reader_pipe[1]);
+        sc1(SYS_EXIT, 0);
+        for (;;) __asm__ volatile("hlt");
+    }
+    if (sc1(SYS_CLOSE, reader_pipe[1]) != 0)
+        fail("close reader test parent writer");
+    char reader_byte = 0;
+    if (sc3(SYS_READ, reader_pipe[0], (long)&reader_byte, 1) != 1 ||
+        reader_byte != 'R' || sc1(SYS_CLOSE, reader_pipe[0]) != 0 ||
+        !wait_for((int)child, 0))
+        fail("blocked pipe reader did not wake with data");
+    pass("pipe reader blocks empty and wakes after writer progress");
+
+    int cancel_pipe[2] = { -1, -1 };
+    int cancel_sync[2] = { -1, -1 };
+    if (sc1(SYS_PIPE, (long)cancel_pipe) != 0 ||
+        sc1(SYS_PIPE, (long)cancel_sync) != 0)
+        fail("pipes for blocked-reader cancellation test");
+    child = sc0(SYS_FORK);
+    if (child < 0) fail("fork for blocked-reader cancellation");
+    if (child == 0) {
+        if (sc1(SYS_CLOSE, cancel_sync[0]) != 0 ||
+            sc1(SYS_CLOSE, cancel_pipe[1]) != 0)
+            sc1(SYS_EXIT, 85);
+        char ready = 'B';
+        if (sc3(SYS_WRITE, cancel_sync[1], (long)&ready, 1) != 1)
+            sc1(SYS_EXIT, 86);
+        sc1(SYS_CLOSE, cancel_sync[1]);
+        char byte = 0;
+        sc3(SYS_READ, cancel_pipe[0], (long)&byte, 1);
+        sc1(SYS_EXIT, 87); /* Parent must terminate the blocked read. */
+        for (;;) __asm__ volatile("hlt");
+    }
+    if (sc1(SYS_CLOSE, cancel_sync[1]) != 0)
+        fail("close cancellation sync writer");
+    char ready = 0;
+    if (sc3(SYS_READ, cancel_sync[0], (long)&ready, 1) != 1 || ready != 'B')
+        fail("blocked-reader child did not reach synchronization point");
+    if (sc1(SYS_CLOSE, cancel_sync[0]) != 0 ||
+        sc1(SYS_KILL, child) != 0)
+        fail("kill blocked pipe reader");
+    if (
+        sc1(SYS_CLOSE, cancel_pipe[0]) != 0 ||
+        sc1(SYS_CLOSE, cancel_pipe[1]) != 0)
+        fail("parent close cancellation endpoints");
+    if (!wait_for((int)child, 130))
+        fail("termination did not remove blocked reader and release its pin");
+    pass("process exit cancels blocked pipe reader and releases pipe refs");
 
     static char *exec_argv[] = { "exec_target", "alpha", "beta", 0 };
     static char *exec_envp[] = { "MODE=ring3", "COUNT=2", 0 };
