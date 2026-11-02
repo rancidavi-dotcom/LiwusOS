@@ -46,7 +46,7 @@ Linux ABI compatibility layer. See [docs/ROADMAP.md](docs/ROADMAP.md).
 | Initrd | tar archive installed into SDFS on first boot |
 | Drivers | ACPI, PCI, AHCI, ATA (PIO and bus-master DMA), PS/2 keyboard and mouse, serial, VGA text |
 | Shell | Ring-3 shell with pipes, redirection and background jobs |
-| Tests | 47 named kernel/integration cases, 22 ring-3 subcases and host VMA model tests |
+| Tests | 49 named kernel/integration cases, 23 ring-3 subcases and host VMA model tests |
 
 ## Not implemented (yet)
 
@@ -93,6 +93,7 @@ make test-stress  # 50,000 fixed-seed host VMA model operations
 make ring3-test   # same QEMU suite, validating its ring-3 cases
 make smap-test    # same suite with SMAP and 4 vCPUs initialized
 make test-all     # all listed quick and QEMU gates, serially
+make sdk          # package SDK headers/library/CRT/linker and native-hello.lxe
 ```
 
 QEMU runs have a 90-second timeout and must exit through `isa-debug-exit` with
@@ -101,6 +102,10 @@ panic/failure markers, and missing ring-3 results. Unique serial logs are kept
 in ignored `test-logs/`; `test_serial.log` is the latest standard run. See
 [docs/TESTING.md](docs/TESTING.md) and [docs/TEST_COVERAGE.md](docs/TEST_COVERAGE.md)
 for the case inventory and explicit gaps.
+
+The Native SDK v0.1 and `.lxe` ELF convention are documented in
+[docs/SDK_LXE.md](docs/SDK_LXE.md). `make all` installs the example at
+`/bin/native-hello.lxe` in the initrd.
 
 ## Documentation
 

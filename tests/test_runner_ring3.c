@@ -76,28 +76,28 @@ int test_ring3_processes(void) {
         serial_print("[RING3 SKIP] optional static GNU/Linux ELF not supplied\n");
     }
 
-    if (vfs_live_owned_nodes() != nodes_before)
-        FAIL("ring3_processes", "VFS lookup nodes leaked across user I/O tests");
-    if (sys_io_live_file_descriptions() != files_before)
-        FAIL("ring3_processes", "open file descriptions leaked across user exit");
-    if (sys_io_live_pipe_objects() != pipes_before)
-        FAIL("ring3_processes", "pipe objects leaked across user exit");
-
-    /* Native LiwusOS C program using crt0 + public wrappers */
+    /* Native SDK artifact: the .lxe suffix names an ELF64 image. */
     {
         uint64_t irq_flags;
         asm volatile("pushfq; popq %0; cli" : "=r"(irq_flags) :: "memory");
-        int pid = launch_initrd_program_argv("native_hello", NULL);
+        int pid = launch_initrd_program_argv("native-hello.lxe", NULL);
         if (irq_flags & (1ULL << 9)) asm volatile("sti" ::: "memory");
         if (pid < 0)
-            FAIL("ring3_processes", "native LiwusOS ELF not launched/executed");
+            FAIL("ring3_processes", "native LIWUS .lxe ELF not launched/executed");
         int native_status = -1;
         if (sys_waitpid(pid, &native_status, 0) != pid)
-            FAIL("ring3_processes", "native LiwusOS ELF not reaped");
+            FAIL("ring3_processes", "native LIWUS .lxe ELF not reaped");
         if (native_status != 0)
-            FAIL("ring3_processes", "native LiwusOS ELF exited with non-zero status");
-        serial_print("[RING3 RESULT] native LiwusOS crt0+wrappers+main executed\n");
+            FAIL("ring3_processes", "native LIWUS .lxe ELF exited with non-zero status");
+        serial_print("[RING3 RESULT] native LIWUS .lxe ELF via crt0+SDK wrappers executed\n");
     }
+
+    if (vfs_live_owned_nodes() != nodes_before)
+        FAIL("ring3_processes", "VFS lookup nodes leaked across native/Linux SDK probes");
+    if (sys_io_live_file_descriptions() != files_before)
+        FAIL("ring3_processes", "open file descriptions leaked across native/Linux SDK probes");
+    if (sys_io_live_pipe_objects() != pipes_before)
+        FAIL("ring3_processes", "pipe objects leaked across native/Linux SDK probes");
 
     uint64_t free_after = pmm_get_free_memory();
     serial_print("[RING3 MEMORY] PMM free before=");

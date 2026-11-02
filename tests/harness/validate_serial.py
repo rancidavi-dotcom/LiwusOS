@@ -23,7 +23,7 @@ RING3_RESULTS = [
     "ET_DYN PIE executed at USER_PIE_BASE",
     "Linux x86-64 SYSCALL getpid/fstat/openat/mmap/munmap/FS-TLS/write PASS",
     "Linux clone, private futex WAIT/WAKE, shared-mm, independent FS TLS, thread exit PASS",
-    "native LiwusOS crt0+wrappers+main executed",
+    "native LIWUS .lxe ELF via crt0+SDK wrappers executed",
     "kernel observed clean user exit",
 ]
 

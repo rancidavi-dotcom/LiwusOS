@@ -16,6 +16,7 @@ pipe reader blocks empty and wakes after writer progress
 process exit cancels blocked pipe reader and releases pipe refs
 fork followed by ELF64 execve, argc, argv, envp, and waitpid
 independent freestanding C ELF runs through execve and waitpid
+SDK-built .lxe ELF execve, crt0 argv/envp and syscall wrapper
 invalid ELF returns error and original image keeps running
 invalid filename, argv, and envp pointers are rejected safely
 12 repeated execve image replacements complete

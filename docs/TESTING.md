@@ -12,16 +12,17 @@ does not prove that the kernel is free of bugs.
 | `make test-unit` | Harness self-checks plus the actual `src/kernel/mm/vma.c` compiled on the host with ASan/UBSan; 5,000 fixed-seed model operations | Fast development gate |
 | `make test-stress` | Same VMA source and reference model for 50,000 operations with seed `0x4c495755` | Explicit host stress |
 | `make test` | Host checks, then the 49 top-level kernel cases and the ring-3 integration group in QEMU with 2 GiB RAM | Main regression gate |
-| `make ring3-test` | Repeats that same 47-case test image and ring-3 group in QEMU | Ring-3 focused reproduction |
+| `make ring3-test` | Repeats that same 49-case test image and ring-3 group in QEMU | Ring-3 focused reproduction |
 | `make smap-test` | Repeats the same suite with `-cpu max -smp 4 -m 4096`, checking SMAP and AP startup | Protection/SMP bring-up regression |
 | `make test-all` | Runs host, standard QEMU, ring-3, and SMAP modes serially | Pre-checkpoint validation |
 
 `make test`, `make ring3-test`, and `make smap-test` use the same test ISO and
 runner. They are three environment runs, not three independent counts of the
 same test cases. The runner reports 49 top-level cases: 48 kernel-side cases
-and one `ring3_processes` integration case. That integration case emits 22
+and one `ring3_processes` integration case. That integration case emits 23
 separate `[RING3 PASS]` markers and runs PIE, Linux ABI, Linux clone/futex, and
-native C ELF probes. Those subcases are not added to the 47 count.
+native C ELF probes. The SDK `.lxe` exec check is one of the 23 markers; these
+subcases are not added to the 49 count.
 
 The non-`KERNEL_TEST` `tests/test_runner_user.c` and `tests/test_user_*.c` are
 not part of the active Makefile test image. `test_crc32_empty` is declared but
@@ -42,7 +43,7 @@ a run:
 - The ordered kernel case names match `tests/harness/kernel_cases.txt` exactly;
   missing, extra, or duplicate cases fail.
 - Every top-level case emits exactly one `PASS` result.
-- The 22 ring-3 markers and required PIE/Linux/native integration results each
+- The 23 ring-3 markers and required PIE/Linux/native integration results each
   appear exactly once.
 - Panic, fatal setup, assertion, and failure markers are absent.
 - QEMU exited through the expected code; SMAP mode also confirms SMAP and APIC

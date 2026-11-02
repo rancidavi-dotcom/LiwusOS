@@ -97,3 +97,68 @@ void *liw_mmap(void *addr, size_t len, int prot, int flags, int fd, long off) {
 int liw_munmap(void *addr, size_t len) {
     return (int)liw_syscall2(SYS_MUNMAP, (long)addr, (long)len);
 }
+
+long liw_lseek(int fd, int32_t offset, int whence) {
+    return liw_syscall3(SYS_LSEEK, fd, offset, whence);
+}
+
+long liw_stat(const char *path, struct liw_stat *out) {
+    return liw_syscall2(SYS_STAT, (long)path, (long)out);
+}
+
+long liw_fstat(int fd, struct liw_stat *out) {
+    return liw_syscall2(SYS_FSTAT, fd, (long)out);
+}
+
+long liw_gettimeofday(struct liw_timeval *out, void *timezone) {
+    return liw_syscall2(SYS_GETTIMEOFDAY, (long)out, (long)timezone);
+}
+
+long liw_unlink(const char *path) {
+    return liw_syscall1(SYS_UNLINK, (long)path);
+}
+
+long liw_mkdir(const char *path, uint32_t mode) {
+    return liw_syscall2(SYS_MKDIR, (long)path, mode);
+}
+
+long liw_rmdir(const char *path) {
+    return liw_syscall1(SYS_RMDIR, (long)path);
+}
+
+long liw_rename(const char *old_path, const char *new_path) {
+    return liw_syscall2(SYS_RENAME, (long)old_path, (long)new_path);
+}
+
+long liw_chdir(const char *path) {
+    return liw_syscall1(SYS_CHDIR, (long)path);
+}
+
+long liw_getcwd(char *buffer, size_t size) {
+    return liw_syscall2(SYS_GETCWD, (long)buffer, (long)size);
+}
+
+long liw_pipe(int descriptors[2]) {
+    return liw_syscall1(SYS_PIPE, (long)descriptors);
+}
+
+long liw_dup(int fd) {
+    return liw_syscall1(SYS_DUP, fd);
+}
+
+long liw_dup2(int oldfd, int newfd) {
+    return liw_syscall2(SYS_DUP2, oldfd, newfd);
+}
+
+long liw_write_all(int fd, const void *buffer, size_t count) {
+    const unsigned char *cursor = (const unsigned char *)buffer;
+    size_t remaining = count;
+    while (remaining) {
+        long written = liw_write(fd, cursor, remaining);
+        if (written < 0) return written;
+        if (written == 0 || (size_t)written > remaining) return -1;
+        cursor += (size_t)written;
+        remaining -= (size_t)written;
+    }
+    return 0;
+}

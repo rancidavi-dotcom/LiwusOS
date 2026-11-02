@@ -99,12 +99,54 @@ USER_SHELL_ELF = $(OBJ_DIR)/programs/user_shell.elf
 USER_SHELL_CFLAGS = $(RING3_USER_CFLAGS) -Iprograms/c_example
 USER_INIT_ELF = $(OBJ_DIR)/programs/user_init.elf
 USER_EDITOR_ELF = $(OBJ_DIR)/programs/user_editor.elf
+NATIVE_HELLO_LXE = build/liwus-sdk/bin/native-hello.lxe
+SDK_LIBRARY = build/liwus-sdk/lib/libliwus.a
+SDK_CRT0 = build/liwus-sdk/lib/crt0.o
+SDK_LINKER_SCRIPT = build/liwus-sdk/share/liwus/elf64.ld
+SDK_HEADERS_STAMP = build/liwus-sdk/include/.headers-installed
 
-.PHONY: all run run-log test test-build ring3-test smap-test user-c-example clean
+.PHONY: all run run-log test test-build ring3-test smap-test user-c-example sdk clean
 .PHONY: test-harness test-unit test-stress test-all
-.NOTPARALLEL: test-all
+.NOTPARALLEL: test-all sdk
 
 user-c-example: $(RING3_C_APP_ELF)
+
+sdk: $(NATIVE_HELLO_LXE) $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_HEADERS_STAMP) $(SDK_LINKER_SCRIPT)
+
+lib/liwus/libliwus.a: lib/liwus/Makefile lib/liwus/syscall.c \
+		lib/liwus/crt.c lib/liwus/string.c \
+		include/liwus/syscall.h include/liwus/stat.h \
+		include/liwus/string.h include/uapi/syscall_nums.h
+	$(MAKE) -C lib/liwus all
+
+lib/liwus/crt0.o: lib/liwus/Makefile lib/liwus/crt0.S
+	$(MAKE) -C lib/liwus crt0.o
+
+$(NATIVE_HELLO_LXE): programs/native-hello/main.c \
+		sdk/elf64.ld programs/native-hello/Makefile \
+		lib/liwus/syscall.c lib/liwus/crt.c lib/liwus/crt0.S \
+		lib/liwus/string.c lib/liwus/Makefile \
+		include/liwus/liwus.h include/liwus/syscall.h include/liwus/stat.h \
+		include/liwus/string.h include/liwus/fcntl.h include/liwus/mman.h \
+		include/uapi/syscall_nums.h
+	$(MAKE) -C programs/native-hello lxe
+
+$(SDK_LIBRARY): lib/liwus/libliwus.a
+	@mkdir -p $(dir $@)
+	cp -f $< $@
+
+$(SDK_CRT0): lib/liwus/crt0.o
+	@mkdir -p $(dir $@)
+	cp -f $< $@
+
+$(SDK_LINKER_SCRIPT): sdk/elf64.ld
+	@mkdir -p $(dir $@)
+	cp -f $< $@
+
+$(SDK_HEADERS_STAMP): $(wildcard include/liwus/*.h)
+	@mkdir -p $(dir $@)
+	cp -R include/liwus build/liwus-sdk/include/
+	touch $@
 
 ring3-test: test-unit $(TEST_ISO_IMAGE)
 	@mkdir -p test-logs
@@ -302,7 +344,7 @@ $(USER_EDITOR_ELF): $(OBJ_DIR)/programs/user_editor/main.o $(OBJ_DIR)/programs/u
 		-Wl,-T,programs/user_editor/linker.ld -o $@ \
 		$(OBJ_DIR)/programs/user_editor/start.o $(OBJ_DIR)/programs/user_editor/runtime.o $(OBJ_DIR)/programs/user_editor/main.o
 
-$(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_SHELL_ELF) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF)
+$(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_SHELL_ELF) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE)
 	@mkdir -p repo
 	tar -cf initrd.tar -C repo . --format=ustar
 	tar -rf initrd.tar --format=ustar --transform='s|user_shell.elf|liwus_shell|' -C $(OBJ_DIR)/programs user_shell.elf
@@ -310,6 +352,7 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 	tar -rf initrd.tar --format=ustar --transform='s|user_init.elf|liwus_init|' -C $(OBJ_DIR)/programs user_init.elf
 	tar -rf initrd.tar --format=ustar --transform='s|user_editor.elf|edit|' -C $(OBJ_DIR)/programs user_editor.elf
 	tar -rf initrd.tar --format=ustar --transform='s|user_editor.elf|bin/edit|' -C $(OBJ_DIR)/programs user_editor.elf
+	tar -rf initrd.tar --format=ustar --transform='s|native-hello.lxe|bin/native-hello.lxe|' -C build/liwus-sdk/bin native-hello.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|c_example.elf|c_example|' -C $(TEST_OBJ_DIR)/ring3 c_example.elf
 	tar -rf initrd.tar --format=ustar --transform='s|c_example.elf|bin/c_example|' -C $(TEST_OBJ_DIR)/ring3 c_example.elf
 	cp initrd.tar isodir/boot/initrd.tar
@@ -341,7 +384,7 @@ $(TEST_OBJ_DIR)/host/test_vma_host: tests/host/test_vma_host.c src/kernel/mm/vma
 
 test-build: $(TEST_ISO_IMAGE)
 
-$(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF) $(RING3_PIE_ELF) $(RING3_LINUX_SYSCALL_ELF) $(RING3_LINUX_CLONE_ELF) $(LINUX_STATIC_TEST_DEP) programs/native-hello/native-hello.elf
+$(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF) $(RING3_PIE_ELF) $(RING3_LINUX_SYSCALL_ELF) $(RING3_LINUX_CLONE_ELF) $(LINUX_STATIC_TEST_DEP) $(NATIVE_HELLO_LXE)
 	@mkdir -p repo-test
 	: > repo-test/test_mode
 	@mkdir -p isodir-test/boot/grub
@@ -353,13 +396,15 @@ $(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE
 	cp -f $(RING3_PIE_ELF) repo-test/pie_probe
 	cp -f $(RING3_LINUX_SYSCALL_ELF) repo-test/linux_syscall_probe
 	cp -f $(RING3_LINUX_CLONE_ELF) repo-test/linux_clone_probe
-	cp -f programs/native-hello/native-hello.elf repo-test/native_hello
+	cp -f $(NATIVE_HELLO_LXE) repo-test/native-hello.lxe
+	mkdir -p repo-test/bin
+	cp -f $(NATIVE_HELLO_LXE) repo-test/bin/native-hello.lxe
 	rm -f repo-test/linux_glibc_hello
 	if test -n "$(LINUX_STATIC_ELF)"; then cp -f "$(LINUX_STATIC_ELF)" repo-test/linux_glibc_hello; fi
 	cp -f tests/ring3/invalid_elf repo-test/invalid_elf
 	tar -cf initrd-test.tar -C repo-test . --format=ustar
 	rm -f repo-test/ring3_suite
-	rm -f repo-test/exec_target repo-test/c_example repo-test/pie_probe repo-test/linux_syscall_probe repo-test/linux_clone_probe repo-test/native_hello repo-test/invalid_elf
+	rm -f repo-test/exec_target repo-test/c_example repo-test/pie_probe repo-test/linux_syscall_probe repo-test/linux_clone_probe repo-test/native_hello repo-test/native-hello.lxe repo-test/bin/native-hello.lxe repo-test/invalid_elf
 	cp -f initrd-test.tar isodir-test/boot/initrd.tar
 	$(GRUB) -o $@ isodir-test
 

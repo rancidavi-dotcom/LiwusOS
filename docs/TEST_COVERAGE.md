@@ -4,7 +4,7 @@ Snapshot: 2026-11-02, branch `lean-kernel`, base commit `6afc34f` before this
 verification-framework change. The original kernel runner had 47 top-level
 cases. The current runner has 49 top-level cases after adding `pmm_contract`
 and `kheap_contract`; 48 are kernel-side functions and one is the `ring3_processes`
-aggregator. Its 22 ring-3 pass markers are nested subcases, not extra members
+aggregator. Its 23 ring-3 pass markers are nested subcases, not extra members
 of the 47-case denominator. `make test`, `make ring3-test`, and `make smap-test`
 repeat this same inventory with different QEMU settings.
 
@@ -30,7 +30,7 @@ percentage or a claim of completeness. BSP means the bootstrap processor.
 | Pipes | ✓ | ✓ | ✓ | ~ | ~ | ~ | High. Ring-3 cases cover data, 4 KiB-full writer, empty reader, EOF, EPIPE, fork/exec, invalid output, killed blocked reader. No multi-reader/writer stress or repeated close races. |
 | VFS/SDFS | ✓ | ✓ | ~ | — | — | ~ | Medium-high. 38 SDFS/VFS top-level cases cover create/read/write/directories/rename/delete/remount/permissions/journal/CRC/disk-full and terminal redirection. Shared RAM disk and fixed order; no concurrent VFS stress. |
 | ELF loader | ✓ | ✓ | ~ | ✓ | — | ~ | High. Ring-3 covers native ELF, ET_DYN, Linux static probes, malformed ELF, invalid argv/envp, repeated exec and segment permission faults. No parser fuzzing or header-overflow corpus. |
-| Native ABI | ✓ | ✓ | ~ | ✓ | ~ | ~ | High. Ring-3 suite exercises selected `int 0x80` calls, invalid pointers, process/pipes/mmap; `native-hello` runs through crt0/wrappers. Not every published syscall has a regression. |
+| Native ABI | ✓ | ✓ | ~ | ✓ | ~ | ~ | High. Ring-3 suite exercises selected `int 0x80` calls, invalid pointers, process/pipes/mmap; `native-hello.lxe` runs through crt0 and SDK wrappers. Not every published syscall has a regression. |
 | Linux personality | ✓ | ✓ | ~ | ✓ | ~ | ~ | High. Two freestanding probes cover selected SYSCALL, stat/openat/mmap, arch_prctl, clone/TLS and private futex behavior. No libc/pthreads or full errno/syscall matrix. |
 | SMP | ~ | — | — | — | — | — | High. `smap-test` boots APIC IDs 1–3 with four vCPUs; user tasks remain on BSP. No scheduler migration or remote TLB shootdown proof. |
 | Memory protection/usercopy | ✓ | ✓ | ✓ | ✓ | — | ~ | High. Ring-3 tests cover NX, supervisor/read-only pages, cross-permission ranges, syscall output pointers, SMAP and stack guard. Not exhaustive for all syscalls or wraparound lengths. |
@@ -92,9 +92,9 @@ asserts; shared SDFS state is formatted once and then reused in this order.
 | `sched_sleep` | `tests/test_sched.c` | Sleeps approximately 200 ms and checks elapsed timer ticks within a tolerance. |
 | `sched_priority` | same | Runs three priority workers and compares scheduler ticks/loop progress; timing is relative and QEMU-dependent. |
 | `sched_wait_queue` | same | Eight waiters block through four rounds; checks exact partial/all/empty wake counts, bounded completion, and unchanged waiter ticks while a monitor runs. |
-| `ring3_processes` | `tests/test_runner_ring3.c` | Runs the ring-3 suite and native/Linux ELF probes, then checks VFS/file/pipe counters and that PMM free bytes did not decrease. See the 22 nested cases below. |
+| `ring3_processes` | `tests/test_runner_ring3.c` | Runs the ring-3 suite and native/Linux ELF probes, then checks VFS/file/pipe counters and that PMM free bytes did not decrease. See the 23 nested cases below. |
 
-## Ring-3 nested cases (22; under `ring3_processes`)
+## Ring-3 nested cases (23; under `ring3_processes`)
 
 Markers are defined in `tests/harness/ring3_cases.txt` and emitted by
 `tests/ring3/suite.c`.
@@ -118,6 +118,7 @@ Markers are defined in `tests/harness/ring3_cases.txt` and emitted by
 | `process exit cancels blocked pipe reader and releases pipe refs` | Kills a child synchronized into blocked read; parent wait and final I/O counters verify cleanup. |
 | `fork followed by ELF64 execve, argc, argv, envp, and waitpid` | Executes a valid ELF and checks arguments/environment and child result. |
 | `independent freestanding C ELF runs through execve and waitpid` | Runs a separately linked C ELF through the loader and checks its result. |
+| `SDK-built .lxe ELF execve, crt0 argv/envp and syscall wrapper` | Executes the SDK artifact by `/bin/native-hello.lxe`, then checks its CRT argument/environment parsing and native `getpid`/write wrappers through child exit status. `.lxe` remains an ELF64 file. |
 | `invalid ELF returns error and original image keeps running` | Malformed ELF is rejected without replacing the parent image. |
 | `invalid filename, argv, and envp pointers are rejected safely` | Bad user pointers fail without corrupting the caller. |
 | `12 repeated execve image replacements complete` | Repeated image replacement completes in a child and is reaped. |
@@ -125,9 +126,10 @@ Markers are defined in `tests/harness/ring3_cases.txt` and emitted by
 | `supervisor page access kills only child` | Ring-3 supervisor-only access faults and leaves the parent alive. |
 
 The same integration group also executes an ET_DYN PIE probe, a freestanding
-Linux SYSCALL probe, a Linux clone/private-futex probe, and native `native-hello`
-through crt0 and wrappers. They have separate `[RING3 RESULT]` markers but do
-not add to the 22 `suite.c` cases or the 49 top-level count.
+Linux SYSCALL probe, a Linux clone/private-futex probe, and native
+`native-hello.lxe` through crt0 and SDK wrappers. They have separate
+`[RING3 RESULT]` markers but do not add to the 23 `suite.c` cases or the 49
+top-level count.
 
 ## Known coverage holes
 

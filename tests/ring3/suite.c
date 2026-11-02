@@ -450,6 +450,20 @@ void _start(void) {
     if (!wait_for((int)child, 73)) fail("standalone C program startup or exit");
     pass("independent freestanding C ELF runs through execve and waitpid");
 
+    static char *sdk_lxe_argv[] = { "native-hello.lxe", "--sdk-probe", 0 };
+    static char *sdk_lxe_envp[] = { "LIWUS_SDK=0.1", 0 };
+    child = sc0(SYS_FORK);
+    if (child < 0) fail("fork for SDK .lxe execution");
+    if (child == 0) {
+        sc3(SYS_EXECVE, (long)"/bin/native-hello.lxe", (long)sdk_lxe_argv,
+            (long)sdk_lxe_envp);
+        sc1(SYS_EXIT, 78);
+        for (;;) __asm__ volatile("hlt");
+    }
+    if (!wait_for((int)child, 0))
+        fail("SDK .lxe execve, crt0 argv/envp, syscall wrapper or exit failed");
+    pass("SDK-built .lxe ELF execve, crt0 argv/envp and syscall wrapper");
+
     child = sc0(SYS_FORK);
     if (child < 0) fail("fork for invalid ELF execve");
     if (child == 0) {

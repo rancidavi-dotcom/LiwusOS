@@ -1,18 +1,26 @@
 CC = gcc
-CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -fno-stack-protector -fno-pic -fno-pie -m64 -mno-red-zone -I../../include -I../c_example
+CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Werror -fno-stack-protector -fno-pic -fno-pie -m64 -mno-red-zone -I../../include
+AR = ar
 
-all: syscall.o crt0.o crt.o
+all: libliwus.a crt0.o
 
-syscall.o: syscall.c
+libliwus.a: syscall.o crt.o string.o
+	rm -f $@
+	$(AR) rcs $@ $^
+
+syscall.o: syscall.c ../../include/liwus/syscall.h ../../include/liwus/stat.h ../../include/uapi/syscall_nums.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 crt0.o: crt0.S
 	$(CC) -m64 -fno-pie -fno-pic -c $< -o $@
 
-crt.o: crt.c
+crt.o: crt.c ../../include/liwus/syscall.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+string.o: string.c ../../include/liwus/string.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o
+	rm -f *.o libliwus.a
 
 .PHONY: all clean
