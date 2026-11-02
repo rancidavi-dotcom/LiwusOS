@@ -73,8 +73,24 @@ def main() -> int:
             process.stdin.write(command_bytes)
             process.stdin.flush()
 
+        def process_cpu_ticks() -> int:
+            stat = Path(f"/proc/{process.pid}/stat").read_text()
+            fields = stat[stat.rfind(")") + 2:].split()
+            return int(fields[11]) + int(fields[12])
+
         try:
             expect(b"liwus> ")
+
+            # With no bytes arriving, the shell must block and let the guest
+            # halt between bounded input polls instead of spinning in userspace.
+            cpu_start = process_cpu_ticks()
+            time.sleep(1.0)
+            cpu_ticks = process_cpu_ticks() - cpu_start
+            cpu_seconds = cpu_ticks / os.sysconf("SC_CLK_TCK")
+            if cpu_seconds > 0.75:
+                raise RuntimeError(
+                    f"idle shell consumed {cpu_seconds:.2f} QEMU CPU seconds in 1 second"
+                )
 
             send(b"help\n")
             expect(b"Built-ins: help, version, exit\n")
@@ -114,7 +130,11 @@ def main() -> int:
             send(b"\x04")
             expect(b"LIWUS OS\nNative Shell v0.1\nType help for commands.\n")
 
-            transcript.extend(b"\n[SHELL TEST] console input, commands, child lifecycle, EOF, restart PASS\n")
+            transcript.extend(
+                f"\n[SHELL IDLE] QEMU CPU seconds per idle second: {cpu_seconds:.3f} PASS\n"
+                "[SHELL TEST] console input, commands, child lifecycle, EOF, restart PASS\n"
+                .encode()
+            )
             log_path.write_bytes(transcript)
             print(f"SHELL QEMU INTEGRATION PASS: {log_path}")
             return 0

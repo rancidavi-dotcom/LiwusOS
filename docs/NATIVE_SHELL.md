@@ -77,7 +77,8 @@ the repository, installs the SDK to a separate temporary prefix, checks the
 linked static ELF, and runs the artifact in ring 3. `shell-test` boots the
 normal userspace init path, sends multiple commands through QEMU COM1, and
 checks child output/status, invalid-command recovery, and shell restart after
-`exit` and Ctrl-D. Its serial transcript is written to the ignored
+`exit` and Ctrl-D. It also measures QEMU CPU time during one idle second at the
+prompt and requires less than 0.75 CPU seconds. Its serial transcript is written to the ignored
 `test-logs/shell-integration.serial`.
 
 This is a minimal interactive process launcher, not a general-purpose shell.
