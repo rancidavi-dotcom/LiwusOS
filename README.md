@@ -110,3 +110,9 @@ address space are known limitations that Gate 1 of the roadmap removes.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Linux compatibility (paused) & native ABI development
+
+- **Linux x86-64 compatibility (PAUSED)**: The Linux personality remains fully implemented and tested. Expansion is paused to prioritize the native Liwus ABI. Documentation for resuming: [docs/linux-compat/HANDOFF.md](docs/linux-compat/HANDOFF.md), [docs/linux-compat/IMPLEMENTATION_STATUS.md](docs/linux-compat/IMPLEMENTATION_STATUS.md), [docs/linux-compat/RESUME_PLAN.md](docs/linux-compat/RESUME_PLAN.md), [docs/linux-compat/KNOWN_ISSUES.md](docs/linux-compat/KNOWN_ISSUES.md), [docs/linux-compat/REPRODUCIBILITY.md](docs/linux-compat/REPRODUCIBILITY.md). See also [docs/ABI_LINUX.md](docs/ABI_LINUX.md).
+- **Native Liwus ABI**: Native ABI is primary. Development docs: [docs/native-abi/ARCHITECTURE.md](docs/native-abi/ARCHITECTURE.md), [docs/native-abi/SYSCALL_REFERENCE.md](docs/native-abi/SYSCALL_REFERENCE.md), [docs/native-abi/DEVELOPMENT_PLAN.md](docs/native-abi/DEVELOPMENT_PLAN.md), [docs/native-abi/GETTING_STARTED.md](docs/native-abi/GETTING_STARTED.md).
+- **Project handoff (central entry)**: [docs/PROJECT_HANDOFF.md](docs/PROJECT_HANDOFF.md)
