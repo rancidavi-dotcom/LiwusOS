@@ -13,6 +13,7 @@ import shutil
 import struct
 import sys
 import tempfile
+import time
 import zlib
 
 BLOCK = 4096
@@ -280,7 +281,7 @@ class SDFS:
             block = bytearray(self.read_block(found[0]))
             struct.pack_into("<II", block, found[1] + 2 + len(name.encode()), first, len(data))
             # Preserve created time, uid, gid and permissions; update modified time.
-            struct.pack_into("<I", block, found[1] + 2 + len(name.encode()) + 12, int(__import__("time").time()))
+            struct.pack_into("<I", block, found[1] + 2 + len(name.encode()) + 12, int(time.time()))
             self.write_block(found[0], block)
             for old in old_chain:
                 self.set_used(old, False)
@@ -288,7 +289,7 @@ class SDFS:
         else:
             encoded = name.encode("utf-8")
             entry = struct.pack("<BB", ENTRY_FILE, len(encoded)) + encoded + struct.pack(
-                "<IIIIHHHH", first, len(data), 0, int(__import__("time").time()), 0, 0, 0x31C, 0)
+                "<IIIIHHHH", first, len(data), 0, int(time.time()), 0, 0, 0x314, 0)
             cur = parent
             while True:
                 block = bytearray(self.read_block(cur))

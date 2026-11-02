@@ -97,6 +97,9 @@ class InstallerTests(unittest.TestCase):
         bin_block = installed.resolve_dir("/bin")
         demo = installed.find_dir(bin_block, "demo.lxe")
         self.assertIsNotNone(demo)
+        self.assertEqual(INSTALLER.u16(installed.read_block(demo[0]),
+                                      demo[1] + 2 + len("demo.lxe") + 20),
+                         0x314)
         old_size = demo[4]
         neighbor = static_elf(b"neighbor")
         installed.install("neighbor.lxe", neighbor, False)
