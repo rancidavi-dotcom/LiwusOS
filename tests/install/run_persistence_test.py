@@ -160,7 +160,7 @@ def main():
             if busy.returncode == 0 or "open by PID" not in busy.stderr:
                 raise RuntimeError("installer did not refuse an image open by QEMU")
             vm.send(b"persistent-demo.lxe\n")
-            vm.expect(b"liwsh: executable not found or invalid: persistent-demo.lxe\n")
+            vm.expect(b"liwsh: command not found: persistent-demo.lxe\n")
             vm.expect(b"[liwsh] exit status 127\n")
             vm.expect(b"liwus> ")
             vm.send(b"native-hello.lxe\n")
@@ -179,14 +179,14 @@ def main():
         run(["make", "app-install", f"APP={app_a}", f"DISK={disk}"])
         log_a = boot_run(iso, disk, temp, "persistent-demo.lxe", [
             "LIWUS persistent demo — version A\n".encode(), b"[liwsh] exit status 17\n"], 2)
-        if b"Installing 8 files to disk" in log_a:
+        if b"First boot: copying initrd files to SDFS..." in log_a:
             raise RuntimeError("second boot unexpectedly ran first-boot initrd installation")
 
         run(["make", "app-install", f"APP={app_b}", f"DISK={disk}", "REPLACE=1"])
         for number in (3, 4):
             log_b = boot_run(iso, disk, temp, "persistent-demo.lxe", [
                 "LIWUS persistent demo — version B\n".encode(), b"[liwsh] exit status 19\n"], number)
-            if b"Installing 8 files to disk" in log_b:
+            if b"First boot: copying initrd files to SDFS..." in log_b:
                 raise RuntimeError("updated image unexpectedly reran initrd installation")
         print("PERSISTENT APP INSTALL PASS: same SDFS image across four boots; A->B update persisted")
         print("PERSISTENT APP SAFETY PASS: installer refused image while QEMU held it open")

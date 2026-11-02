@@ -116,6 +116,23 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(final.find_dir(final.resolve_dir("/bin"), "demo.lxe")[4],
                          len(static_elf(b"C")))
 
+    def test_install_regular_data_at_absolute_destination(self):
+        fs = INSTALLER.SDFS(empty_sdfs())
+        payload = b"Welcome to LIWUS OS!\n"
+        fs.install("readme.txt", payload, False, "/")
+        checked = INSTALLER.SDFS(fs.image)
+        item = checked.find_dir(checked.root, "readme.txt")
+        self.assertIsNotNone(item)
+        self.assertEqual(item[2], INSTALLER.ENTRY_FILE)
+        chain = checked.read_block(item[3])
+        self.assertEqual(chain[4:4 + len(payload)], payload)
+        with self.assertRaises(INSTALLER.InstallError):
+            checked.install("readme.txt", b"replace", False, "/")
+        checked.install("readme.txt", b"updated", True, "/")
+        final = INSTALLER.SDFS(checked.image)
+        item = final.find_dir(final.root, "readme.txt")
+        self.assertEqual(item[4], len(b"updated"))
+
     def test_rejects_no_replace_and_corrupt_superblock(self):
         fs = INSTALLER.SDFS(add_bin(empty_sdfs()))
         fs.install("demo.lxe", static_elf(), False)

@@ -53,11 +53,25 @@ important images. V1 images are currently refused. The tool does not create a
 disk, format SDFS, recover corrupt filesystems, or repair a bitmap.
 
 The kernel's first-boot `/.system_installed` marker causes initrd files to be
-copied only once. Later boots retain the SDFS contents and do not reinstall
-the initrd over applications. If the marker is absent, the existing boot code
-copies the initrd contents, which can replace same-named files; a failed SDFS
-mount can also trigger format. Do not remove the marker or use a damaged image
-as an install target.
+considered only once. Later boots retain SDFS contents and do not install the
+initrd over applications. The initrd seeding path skips existing names, so a
+lost marker or interrupted initial copy does not replace files already in the
+image. A recognized damaged SDFS is refused and is not reformatted. Unknown or
+unsupported media may still take the existing first-use format path; keep a
+backup before booting unfamiliar disk images.
+
+For a regular data file such as `/readme.txt`, use the same offline image
+staging and validation path without ELF validation:
+
+```sh
+make sdfs-put FILE=assets/readme.txt DEST=/readme.txt \
+  DISK=/path/to/liwus.img REPLACE=1
+```
+
+The destination must be an absolute SDFS path whose parent directory already
+exists. Existing destinations require `REPLACE=1`. This imports one regular
+file; it is not a package manager. Fresh SDFS images receive `/readme.txt` from
+the initrd, while existing images require an explicit update.
 
 ## Reproduce install, update, and persistence
 

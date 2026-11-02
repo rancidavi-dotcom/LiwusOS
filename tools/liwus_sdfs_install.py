@@ -260,10 +260,12 @@ class SDFS:
             self.write_block(block, struct.pack("<I", nxt) + chunk + bytes(DATA - len(chunk)))
         return blocks[0], blocks
 
-    def install(self, name, data, replace):
+    def install(self, name, data, replace, directory="/bin"):
         if not name or len(name.encode("utf-8")) > 255 or name in (".", ".."):
             raise InstallError("application filename exceeds SDFS name constraints")
-        parent = self.resolve_dir("/bin")
+        if "/" in name:
+            raise InstallError("target filename must be one path component")
+        parent = self.resolve_dir(directory)
         found = self.find_dir(parent, name)
         if found and found[2] != ENTRY_FILE:
             raise InstallError(f"/bin/{name} exists and is not a regular file")
@@ -360,17 +362,30 @@ def reject_open_image(path, source_stat):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--app", required=True, type=Path, help="input static LIWUS .lxe")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--app", type=Path, help="input static LIWUS .lxe")
+    source.add_argument("--file", type=Path, help="input regular file data")
+    parser.add_argument("--path", help="absolute SDFS destination for --file")
     parser.add_argument("--disk", required=True, type=Path, help="existing offline SDFS V2 raw image")
     parser.add_argument("--replace", action="store_true", help="replace existing /bin executable")
     args = parser.parse_args()
-    if args.app.suffix != ".lxe" or not args.app.is_file():
-        raise InstallError("APP must name an existing .lxe file")
+    if args.app:
+        if args.app.suffix != ".lxe" or not args.app.is_file():
+            raise InstallError("APP must name an existing .lxe file")
+        destination = f"/bin/{args.app.name}"
+    else:
+        if not args.file.is_file() or not args.path or not args.path.startswith("/"):
+            raise InstallError("FILE must be regular data and PATH an absolute SDFS path")
+        components = args.path.rstrip("/").split("/")
+        if len(components) < 2 or any(part in ("", ".", "..") for part in components[1:]):
+            raise InstallError("PATH must name a file without empty, . or .. components")
+        destination = args.path.rstrip("/")
     disk = args.disk.resolve(strict=True)
     if not disk.is_file():
         raise InstallError("DISK must be a regular disk image file")
-    app_data = args.app.read_bytes()
-    validate_elf(app_data)
+    file_data = (args.app or args.file).read_bytes()
+    if args.app:
+        validate_elf(file_data)
     st = disk.stat()
     reject_open_image(disk, st)
     with disk.open("r+b", buffering=0) as source:
@@ -381,7 +396,9 @@ def main():
         reject_open_image(disk, st)
         original = source.read()
         sdfs = SDFS(original)
-        blocks, updated = sdfs.install(args.app.name, app_data, args.replace)
+        parent, name = destination.rsplit("/", 1)
+        parent = parent or "/"
+        blocks, updated = sdfs.install(name, file_data, args.replace, parent)
         temp_fd, temp_name = tempfile.mkstemp(prefix=f".{disk.name}.install-", dir=disk.parent)
         try:
             with os.fdopen(temp_fd, "wb") as target:
@@ -404,7 +421,7 @@ def main():
             if os.path.exists(temp_name):
                 os.unlink(temp_name)
     action = "updated" if updated else "installed"
-    print(f"SDFS {action}: /bin/{args.app.name} ({len(app_data)} bytes, {blocks} blocks)")
+    print(f"SDFS {action}: {destination} ({len(file_data)} bytes, {blocks} blocks)")
     print("Disk image published from a validated temporary copy; crash safety of SDFS metadata is not implied.")
 
 

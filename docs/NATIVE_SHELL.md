@@ -26,16 +26,27 @@ Example commands:
 
 ```text
 liwus> help
-liwus> native-hello.lxe
+liwus> native-hello
 Hello from LIWUS OS SDK v0.1!
 [liwsh] exit status 0
-liwus> external-test.lxe demo
+liwus> external-test demo
 ```
 
-The shell provides `help`, `version`, and `exit`. A bare executable name is
-tried relative to the current directory, then under `/bin/`; a path containing
-`/` is passed as written. `.lxe` is not used to select an ABI or loader: the
-normal ELF64 loader decides from the file header.
+The shell provides `help`, `version`, and `exit`. For a bare name without a
+suffix, it tries `name`, `name.lxe`, `/bin/name`, and `/bin/name.lxe`, in that
+order. A name already ending in `.lxe` is tried as-is in the current directory
+and then under `/bin`, without adding another suffix. A path containing `/`
+is tried as written, followed by the same path with `.lxe` only when the suffix
+is absent; it is never searched under `/bin`. Only `-ENOENT` advances to the
+next candidate. An invalid executable or another execution error is reported
+and stops resolution. The original `argv[0]` and all arguments are passed
+unchanged. `.lxe` is not used to select an ABI or loader: the ELF header does.
+
+`ls.lxe` and `cat.lxe` are independent SDK applications. `ls` enumerates a
+directory through `liw_open`/`liw_getdents`; without a path it uses the
+process's current directory. `cat` copies file bytes through bounded
+`liw_read` and `liw_write_all` buffers. Neither command is built into the
+shell or kernel.
 
 ## Command language
 
@@ -48,8 +59,8 @@ that text as a command line.
 
 Quotes, escapes, pipes, redirection, environment expansion, globbing, scripts,
 background jobs, and job control are not implemented. Quote, escape, and
-operator characters are rejected explicitly. No `PATH`, `cd`, `ls`, or other
-filesystem utility is implied.
+operator characters are rejected explicitly. There is no configurable `PATH`;
+`ls` and `cat` are ordinary programs installed in `/bin`, not shell built-ins.
 
 ## Add an application
 
@@ -76,6 +87,7 @@ per-application kernel or shell registry.
 make test-unit       # parser boundary and syntax cases (host ASan/UBSan)
 make external-sdk-build
 make shell-test      # scripted bytes sent through QEMU's real serial console
+make app-install-test # persistent SDFS install/update across boots
 make test-all
 make test-stress
 ```

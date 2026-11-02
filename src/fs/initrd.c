@@ -315,6 +315,16 @@ void initrd_copy_to_sdfs(copy_progress_cb cb) {
             }
         }
 
+        /* The initrd is a seed for newly absent paths, not an implicit
+         * upgrade mechanism. Preserve files already present in a persistent
+         * image, even if the installation marker was lost or an earlier
+         * first-boot copy stopped partway through. */
+        if (sdfs_path_info(sdfs_path, NULL, NULL) == 0) {
+            copied++;
+            address += 512 + ((filesize + 511) & ~511);
+            continue;
+        }
+
         // Cria o arquivo (start block + entrada no diretório pai).
         // sdfs_write_file() já cria a entrada, então só criamos explicitamente
         // arquivos vazios (evita alocar+liberar um bloco à toa).

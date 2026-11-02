@@ -93,7 +93,7 @@ make test-stress  # 50,000 fixed-seed host VMA model operations
 make ring3-test   # same QEMU suite, validating its ring-3 cases
 make smap-test    # same suite with SMAP and 4 vCPUs initialized
 make test-all     # all listed quick and QEMU gates, serially
-make sdk          # package SDK headers/library/CRT/linker and native-hello.lxe
+make sdk          # package SDK and build liwsh, ls.lxe, cat.lxe, native-hello.lxe
 make sdk-install SDK_PREFIX=/tmp/liwus-sdk  # install public SDK to a chosen prefix
 make shell-test   # real QEMU serial input through shell and external SDK app
 ```
@@ -142,6 +142,7 @@ it into an existing SDFS disk image:
 ```sh
 make sdk-install SDK_PREFIX=/tmp/liwus-sdk
 make app-install APP=/path/to/app.lxe DISK=/path/to/liwus.img
+make sdfs-put FILE=assets/readme.txt DEST=/readme.txt DISK=/path/to/liwus.img REPLACE=1
 make run
 ```
 
@@ -149,6 +150,12 @@ Use `REPLACE=1` to update an existing `/bin` entry. The installer is a host
 tool and requires the disk image to be offline. See
 [`docs/SDFS_INSTALL.md`](docs/SDFS_INSTALL.md) for ELF checks, persistence
 behavior, safety limits, and `make app-install-test`.
+
+The native shell resolves exact executable names first, then tries the `.lxe`
+suffix and `/bin` candidates. `ls` and `cat` are separate ring-3 SDK programs;
+directory enumeration uses the native `getdents` VFS interface. A fresh SDFS
+receives `/readme.txt` from the initrd. Persistent disks are not overwritten
+from later initrds; use `make sdfs-put` for an explicit data-file update.
 
 The kernel's replacement and journal protocol is documented in
 [`docs/SDFS_TRANSACTIONS.md`](docs/SDFS_TRANSACTIONS.md).

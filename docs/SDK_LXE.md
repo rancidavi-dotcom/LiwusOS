@@ -55,8 +55,9 @@ ld -m elf_x86_64 -nostdlib -static --build-id=none \
 
 Include `liwus/liwus.h` for the SDK umbrella API. The v0.1 surface includes
 `liw_syscall0` through `liw_syscall6`, wrappers for common process, file,
-memory, directory, and pipe calls, `liw_write_all`, basic string helpers, and
-the native `liw_stat`/`liw_timeval` payloads. Public names are prefixed with
+memory, directory, and pipe calls, including `liw_getdents()` and the fixed
+`struct liw_dirent`, `liw_write_all`, basic string helpers, and the native
+`liw_stat`/`liw_timeval` payloads. Public names are prefixed with
 `liw_`; the SDK does not claim to provide POSIX or Linux headers.
 
 Syscall wrappers return the native syscall result without translating it into
@@ -100,6 +101,13 @@ The second command is needed only when `/bin/my-app.lxe` already exists.
 Details, validation rules, safety limits, and a multi-boot persistence test
 are documented in [SDFS_INSTALL.md](SDFS_INSTALL.md). The installer is a host
 tool; it does not add a shell command or run in ring 3.
+
+The default ISO initrd contains `assets/readme.txt`, `ls.lxe`, and `cat.lxe`.
+On a fresh SDFS, first boot copies them into `/readme.txt` and `/bin`. Existing
+installed SDFS images are not overwritten from the initrd. Update a data file
+explicitly while the image is offline with `make sdfs-put FILE=assets/readme.txt
+DEST=/readme.txt DISK=/path/to/liwus.img REPLACE=1`; executables continue to use
+`make app-install`.
 
 The automated regression checks runtime behavior and ELF loading. Inspect the
 generated headers, archive, linker script, and `readelf -h -l

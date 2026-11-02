@@ -29,25 +29,75 @@ static int has_path_separator(const char *name) {
     return 0;
 }
 
+static int has_lxe_suffix(const char *name) {
+    size_t length = text_length(name);
+    return length >= 4 && name[length - 4] == '.' &&
+           name[length - 3] == 'l' && name[length - 2] == 'x' &&
+           name[length - 1] == 'e';
+}
+
+static void report_exec_error(const char *name, int error) {
+    write_text("liwsh: cannot execute ");
+    write_text(name);
+    write_text(": ");
+    if (error == -LIW_ENOEXEC) write_text("invalid executable\n");
+    else if (error == -LIW_EACCES) write_text("permission denied\n");
+    else if (error == -LIW_ENOMEM) write_text("out of memory\n");
+    else write_text("execution failed\n");
+}
+
+static int try_exec(const char *path, char **argv, char **envp) {
+    int result = liw_execve(path, argv, envp);
+    if (result == -LIW_ENOENT) return 0;
+    report_exec_error(argv[0], result);
+    liw_exit(126);
+}
+
 static void child_exec(char **argv, char **envp) {
     const char *name = argv[0];
-    (void)liw_execve(name, argv, envp);
+    size_t name_length = text_length(name);
+    int slash = has_path_separator(name);
+    int has_suffix = has_lxe_suffix(name);
+    int overflow = 0;
+    char candidate[LIWSH_LINE_MAX];
 
-    /* Bare names are searched in the one conventional application directory
-     * currently provided by the image; paths containing '/' are exact. */
-    if (!has_path_separator(name)) {
-        char path[LIWSH_LINE_MAX];
-        static const char prefix[] = "/bin/";
-        size_t prefix_length = sizeof(prefix) - 1;
-        size_t name_length = text_length(name);
-        if (prefix_length + name_length < sizeof(path)) {
-            liw_memcpy(path, prefix, prefix_length);
-            liw_memcpy(path + prefix_length, name, name_length + 1);
-            (void)liw_execve(path, argv, envp);
+    if (try_exec(name, argv, envp)) return;
+    if (!has_suffix) {
+        if (name_length + 4 >= LIWSH_LINE_MAX) {
+            overflow = 1;
+        } else {
+            liw_memcpy(candidate, name, name_length);
+            liw_memcpy(candidate + name_length, ".lxe", 5);
+            if (try_exec(candidate, argv, envp)) return;
         }
     }
-
-    write_text("liwsh: executable not found or invalid: ");
+    if (!slash) {
+        static const char prefix[] = "/bin/";
+        size_t prefix_length = sizeof(prefix) - 1;
+        if (prefix_length + name_length >= LIWSH_LINE_MAX) {
+            overflow = 1;
+        } else {
+            liw_memcpy(candidate, prefix, prefix_length);
+            liw_memcpy(candidate + prefix_length, name, name_length + 1);
+            if (try_exec(candidate, argv, envp)) return;
+        }
+        if (!has_suffix) {
+            if (prefix_length + name_length + 4 >= LIWSH_LINE_MAX) {
+                overflow = 1;
+            } else {
+                liw_memcpy(candidate, prefix, prefix_length);
+                liw_memcpy(candidate + prefix_length, name, name_length);
+                liw_memcpy(candidate + prefix_length + name_length,
+                           ".lxe", 5);
+                if (try_exec(candidate, argv, envp)) return;
+            }
+        }
+    }
+    if (overflow) {
+        write_text("liwsh: executable path is too long\n");
+        liw_exit(126);
+    }
+    write_text("liwsh: command not found: ");
     write_text(name);
     write_text("\n");
     liw_exit(127);
@@ -143,8 +193,9 @@ int main(int argc, char **argv, char **envp) {
         }
         if (same(args[0], "help")) {
             write_text("Built-ins: help, version, exit\n");
-            write_text("Run an application as: program.lxe [arguments]\n");
-            write_text("Bare names are resolved under /bin; paths are exact.\n");
+            write_text("Run an application as: program [arguments]\n");
+            write_text("Exact paths are tried first; .lxe is the default suffix.\n");
+            write_text("Bare names are also searched under /bin.\n");
             write_text("Quotes, escapes, pipes, redirection, and background jobs are unsupported.\n");
         } else if (same(args[0], "version")) {
             write_text("LIWUS Native Shell v0.1 (Native SDK v0.1)\n");

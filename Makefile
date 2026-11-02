@@ -103,19 +103,22 @@ USER_INIT_ELF = $(OBJ_DIR)/programs/user_init.elf
 USER_EDITOR_ELF = $(OBJ_DIR)/programs/user_editor.elf
 NATIVE_HELLO_LXE = build/liwus-sdk/bin/native-hello.lxe
 LIWSH_LXE = build/liwus-sdk/bin/liwsh.lxe
+LS_LXE = build/liwus-sdk/bin/ls.lxe
+CAT_LXE = build/liwus-sdk/bin/cat.lxe
 EXTERNAL_SDK_TEST_LXE = build/external-test.lxe
 SDK_LIBRARY = build/liwus-sdk/lib/libliwus.a
 SDK_CRT0 = build/liwus-sdk/lib/crt0.o
 SDK_LINKER_SCRIPT = build/liwus-sdk/share/liwus/elf64.ld
 SDK_HEADERS_STAMP = build/liwus-sdk/include/.headers-installed
 
-.PHONY: all run run-log test test-build ring3-test smap-test user-c-example sdk sdk-install liwsh external-sdk-build shell-test app-install clean
+.PHONY: all run run-log test test-build ring3-test smap-test user-c-example sdk sdk-install liwsh external-sdk-build shell-test app-install sdfs-put clean
 .PHONY: test-harness test-unit test-stress test-all app-install-test
 .NOTPARALLEL: test-all sdk shell-test app-install-test
 
 user-c-example: $(RING3_C_APP_ELF)
 
-sdk: $(NATIVE_HELLO_LXE) $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_HEADERS_STAMP) $(SDK_LINKER_SCRIPT)
+sdk: $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) \
+	$(SDK_LIBRARY) $(SDK_CRT0) $(SDK_HEADERS_STAMP) $(SDK_LINKER_SCRIPT)
 
 # Install only the public SDK artifacts. SDK_PREFIX is deliberately explicit
 # so callers can use an isolated prefix (including one outside this checkout).
@@ -130,9 +133,17 @@ sdk-install: sdk
 
 liwsh: sdk $(LIWSH_LXE)
 
+$(LS_LXE): programs/ls/main.c programs/ls/Makefile $(SDK_LIBRARY) \
+		$(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
+	$(MAKE) -C programs/ls all
+
+$(CAT_LXE): programs/cat/main.c programs/cat/Makefile $(SDK_LIBRARY) \
+		$(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
+	$(MAKE) -C programs/cat all
+
 $(LIWSH_LXE): programs/liwsh/main.c programs/liwsh/parser.c \
 		programs/liwsh/parser.h programs/liwsh/Makefile $(SDK_LIBRARY) \
-		$(SDK_CRT0) $(SDK_LINKER_SCRIPT)
+		$(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
 	$(MAKE) -C programs/liwsh all
 
 external-sdk-build: $(EXTERNAL_SDK_TEST_LXE)
@@ -152,14 +163,18 @@ app-install: sdk
 	@test -n "$(DISK)" || { echo "DISK must name an existing offline SDFS image" >&2; exit 2; }
 	python3 tools/liwus_sdfs_install.py --app "$(APP)" --disk "$(DISK)" $(if $(filter 1 yes true,$(REPLACE)),--replace,)
 
+# Explicit offline import for regular data files (for example README updates).
+sdfs-put:
+	@test -n "$(FILE)" -a -n "$(DEST)" -a -n "$(DISK)" || { echo "usage: make sdfs-put FILE=... DEST=/absolute/destination DISK=existing-sdfs.img [REPLACE=1]" >&2; exit 2; }
+	python3 tools/liwus_sdfs_install.py --file "$(FILE)" --path "$(DEST)" --disk "$(DISK)" $(if $(filter 1 yes true,$(REPLACE)),--replace,)
+
 $(EXTERNAL_SDK_TEST_LXE): tests/external_sdk/build_external.py \
 		$(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
 	python3 tests/external_sdk/build_external.py --output $@
 
 lib/liwus/libliwus.a: lib/liwus/Makefile lib/liwus/syscall.c \
 		lib/liwus/crt.c lib/liwus/string.c \
-		include/liwus/syscall.h include/liwus/stat.h \
-		include/liwus/string.h include/uapi/syscall_nums.h
+		$(wildcard include/liwus/*.h) include/uapi/syscall_nums.h
 	$(MAKE) -C lib/liwus all
 
 lib/liwus/crt0.o: lib/liwus/Makefile lib/liwus/crt0.S
@@ -391,15 +406,18 @@ $(USER_EDITOR_ELF): $(OBJ_DIR)/programs/user_editor/main.o $(OBJ_DIR)/programs/u
 		-Wl,-T,programs/user_editor/linker.ld -o $@ \
 		$(OBJ_DIR)/programs/user_editor/start.o $(OBJ_DIR)/programs/user_editor/runtime.o $(OBJ_DIR)/programs/user_editor/main.o
 
-$(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE) $(LIWSH_LXE)
+$(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) assets/readme.txt
 	@mkdir -p repo
 	tar -cf initrd.tar -C repo . --format=ustar
+	tar -rf initrd.tar --format=ustar -C assets readme.txt
 	tar -rf initrd.tar --format=ustar --transform='s|user_init.elf|liwus_init|' -C $(OBJ_DIR)/programs user_init.elf
 	tar -rf initrd.tar --format=ustar --transform='s|user_editor.elf|edit|' -C $(OBJ_DIR)/programs user_editor.elf
 	tar -rf initrd.tar --format=ustar --transform='s|user_editor.elf|bin/edit|' -C $(OBJ_DIR)/programs user_editor.elf
 	tar -rf initrd.tar --format=ustar --transform='s|native-hello.lxe|bin/native-hello.lxe|' -C build/liwus-sdk/bin native-hello.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|liwsh.lxe|liwsh.lxe|' -C build/liwus-sdk/bin liwsh.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|liwsh.lxe|bin/liwsh.lxe|' -C build/liwus-sdk/bin liwsh.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|ls.lxe|bin/ls.lxe|' -C build/liwus-sdk/bin ls.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|cat.lxe|bin/cat.lxe|' -C build/liwus-sdk/bin cat.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|c_example.elf|c_example|' -C $(TEST_OBJ_DIR)/ring3 c_example.elf
 	tar -rf initrd.tar --format=ustar --transform='s|c_example.elf|bin/c_example|' -C $(TEST_OBJ_DIR)/ring3 c_example.elf
 	cp initrd.tar isodir/boot/initrd.tar
