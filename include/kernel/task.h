@@ -45,6 +45,8 @@ typedef struct {
   uint32_t offset;
   uint32_t size;
   int references;
+  uint8_t access;
+  uint8_t opened;
 } file_description_t;
 
 typedef struct {

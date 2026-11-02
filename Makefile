@@ -94,6 +94,7 @@ RING3_C_APP_ELF = $(TEST_OBJ_DIR)/ring3/c_example.elf
 RING3_PIE_ELF = $(TEST_OBJ_DIR)/ring3/pie_probe.elf
 RING3_LINUX_SYSCALL_ELF = $(TEST_OBJ_DIR)/ring3/linux_syscall_probe.elf
 RING3_LINUX_CLONE_ELF = $(TEST_OBJ_DIR)/ring3/linux_clone_probe.elf
+RING3_PERMISSION_ELF = $(TEST_OBJ_DIR)/ring3/permission_probe.elf
 RING3_USER_CFLAGS = -std=gnu99 -O2 -ffreestanding -fno-pie -fno-pic \
 	-fno-stack-protector -fno-asynchronous-unwind-tables -m64 -mno-red-zone \
 	-Iinclude/uapi
@@ -105,6 +106,14 @@ NATIVE_HELLO_LXE = build/liwus-sdk/bin/native-hello.lxe
 LIWSH_LXE = build/liwus-sdk/bin/liwsh.lxe
 LS_LXE = build/liwus-sdk/bin/ls.lxe
 CAT_LXE = build/liwus-sdk/bin/cat.lxe
+MKDIR_LXE = build/liwus-sdk/bin/mkdir.lxe
+RM_LXE = build/liwus-sdk/bin/rm.lxe
+MV_LXE = build/liwus-sdk/bin/mv.lxe
+CP_LXE = build/liwus-sdk/bin/cp.lxe
+TOUCH_LXE = build/liwus-sdk/bin/touch.lxe
+ECHO_LXE = build/liwus-sdk/bin/echo.lxe
+NATIVE_UTIL_LXES = $(MKDIR_LXE) $(RM_LXE) $(MV_LXE) $(CP_LXE) \
+	$(TOUCH_LXE) $(ECHO_LXE)
 EXTERNAL_SDK_TEST_LXE = build/external-test.lxe
 SDK_LIBRARY = build/liwus-sdk/lib/libliwus.a
 SDK_CRT0 = build/liwus-sdk/lib/crt0.o
@@ -118,7 +127,8 @@ SDK_HEADERS_STAMP = build/liwus-sdk/include/.headers-installed
 user-c-example: $(RING3_C_APP_ELF)
 
 sdk: $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) \
-	$(SDK_LIBRARY) $(SDK_CRT0) $(SDK_HEADERS_STAMP) $(SDK_LINKER_SCRIPT)
+	$(NATIVE_UTIL_LXES) $(SDK_LIBRARY) $(SDK_CRT0) \
+	$(SDK_HEADERS_STAMP) $(SDK_LINKER_SCRIPT)
 
 # Install only the public SDK artifacts. SDK_PREFIX is deliberately explicit
 # so callers can use an isolated prefix (including one outside this checkout).
@@ -140,6 +150,24 @@ $(LS_LXE): programs/ls/main.c programs/ls/Makefile $(SDK_LIBRARY) \
 $(CAT_LXE): programs/cat/main.c programs/cat/Makefile $(SDK_LIBRARY) \
 		$(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
 	$(MAKE) -C programs/cat all
+
+$(MKDIR_LXE): programs/mkdir/main.c programs/mkdir/Makefile programs/native-app.mk $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
+	$(MAKE) -C programs/mkdir all
+
+$(RM_LXE): programs/rm/main.c programs/rm/Makefile programs/native-app.mk $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
+	$(MAKE) -C programs/rm all
+
+$(MV_LXE): programs/mv/main.c programs/mv/Makefile programs/native-app.mk $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
+	$(MAKE) -C programs/mv all
+
+$(CP_LXE): programs/cp/main.c programs/cp/Makefile programs/native-app.mk $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
+	$(MAKE) -C programs/cp all
+
+$(TOUCH_LXE): programs/touch/main.c programs/touch/Makefile programs/native-app.mk $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
+	$(MAKE) -C programs/touch all
+
+$(ECHO_LXE): programs/echo/main.c programs/echo/Makefile programs/native-app.mk $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
+	$(MAKE) -C programs/echo all
 
 $(LIWSH_LXE): programs/liwsh/main.c programs/liwsh/parser.c \
 		programs/liwsh/parser.h programs/liwsh/Makefile $(SDK_LIBRARY) \
@@ -310,6 +338,17 @@ $(RING3_LINUX_CLONE_ELF): $(TEST_OBJ_DIR)/ring3/linux_clone_probe.o tests/ring3/
 	$(LD) -nostdlib -static -no-pie -Wl,--build-id=none \
 		-Wl,-T,tests/ring3/suite.ld -o $@ $<
 
+$(TEST_OBJ_DIR)/ring3/permission_probe.o: tests/ring3/permission_probe.c $(SDK_HEADERS_STAMP)
+	@mkdir -p $(dir $@)
+	$(CC) -std=gnu99 -O2 -ffreestanding -fno-builtin -fno-pie -fno-pic \
+		-fno-stack-protector -fno-asynchronous-unwind-tables -m64 -mno-red-zone \
+		-Ibuild/liwus-sdk/include -c $< -o $@
+
+$(RING3_PERMISSION_ELF): $(TEST_OBJ_DIR)/ring3/permission_probe.o $(SDK_CRT0) $(SDK_LIBRARY) $(SDK_LINKER_SCRIPT)
+	$(LD) -nostdlib -static -no-pie -Wl,--build-id=none \
+		-Wl,-T,$(SDK_LINKER_SCRIPT) -o $@ $(SDK_CRT0) \
+		$(TEST_OBJ_DIR)/ring3/permission_probe.o $(SDK_LIBRARY)
+
 $(TEST_OBJ_DIR)/ring3/exec_target.o: tests/ring3/exec_target.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $< -o $@ $(RING3_USER_CFLAGS)
@@ -406,7 +445,7 @@ $(USER_EDITOR_ELF): $(OBJ_DIR)/programs/user_editor/main.o $(OBJ_DIR)/programs/u
 		-Wl,-T,programs/user_editor/linker.ld -o $@ \
 		$(OBJ_DIR)/programs/user_editor/start.o $(OBJ_DIR)/programs/user_editor/runtime.o $(OBJ_DIR)/programs/user_editor/main.o
 
-$(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) assets/readme.txt
+$(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) $(NATIVE_UTIL_LXES) assets/readme.txt
 	@mkdir -p repo
 	tar -cf initrd.tar -C repo . --format=ustar
 	tar -rf initrd.tar --format=ustar -C assets readme.txt
@@ -418,6 +457,12 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 	tar -rf initrd.tar --format=ustar --transform='s|liwsh.lxe|bin/liwsh.lxe|' -C build/liwus-sdk/bin liwsh.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|ls.lxe|bin/ls.lxe|' -C build/liwus-sdk/bin ls.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|cat.lxe|bin/cat.lxe|' -C build/liwus-sdk/bin cat.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|mkdir.lxe|bin/mkdir.lxe|' -C build/liwus-sdk/bin mkdir.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|rm.lxe|bin/rm.lxe|' -C build/liwus-sdk/bin rm.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|mv.lxe|bin/mv.lxe|' -C build/liwus-sdk/bin mv.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|cp.lxe|bin/cp.lxe|' -C build/liwus-sdk/bin cp.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|touch.lxe|bin/touch.lxe|' -C build/liwus-sdk/bin touch.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|echo.lxe|bin/echo.lxe|' -C build/liwus-sdk/bin echo.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|c_example.elf|c_example|' -C $(TEST_OBJ_DIR)/ring3 c_example.elf
 	tar -rf initrd.tar --format=ustar --transform='s|c_example.elf|bin/c_example|' -C $(TEST_OBJ_DIR)/ring3 c_example.elf
 	cp initrd.tar isodir/boot/initrd.tar
@@ -458,7 +503,7 @@ $(TEST_OBJ_DIR)/host/test_vma_host: tests/host/test_vma_host.c src/kernel/mm/vma
 
 test-build: $(TEST_ISO_IMAGE)
 
-$(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF) $(RING3_PIE_ELF) $(RING3_LINUX_SYSCALL_ELF) $(RING3_LINUX_CLONE_ELF) $(LINUX_STATIC_TEST_DEP) $(NATIVE_HELLO_LXE) $(EXTERNAL_SDK_TEST_LXE)
+$(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF) $(RING3_PIE_ELF) $(RING3_LINUX_SYSCALL_ELF) $(RING3_LINUX_CLONE_ELF) $(RING3_PERMISSION_ELF) $(LINUX_STATIC_TEST_DEP) $(NATIVE_HELLO_LXE) $(NATIVE_UTIL_LXES) $(EXTERNAL_SDK_TEST_LXE)
 	@mkdir -p repo-test
 	: > repo-test/test_mode
 	@mkdir -p isodir-test/boot/grub
@@ -470,16 +515,19 @@ $(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE
 	cp -f $(RING3_PIE_ELF) repo-test/pie_probe
 	cp -f $(RING3_LINUX_SYSCALL_ELF) repo-test/linux_syscall_probe
 	cp -f $(RING3_LINUX_CLONE_ELF) repo-test/linux_clone_probe
+	cp -f $(RING3_PERMISSION_ELF) repo-test/permission_probe
 	cp -f $(NATIVE_HELLO_LXE) repo-test/native-hello.lxe
 	mkdir -p repo-test/bin
 	cp -f $(NATIVE_HELLO_LXE) repo-test/bin/native-hello.lxe
+	cp -f $(NATIVE_UTIL_LXES) repo-test/bin/
 	cp -f $(EXTERNAL_SDK_TEST_LXE) repo-test/external-test.lxe
 	rm -f repo-test/linux_glibc_hello
 	if test -n "$(LINUX_STATIC_ELF)"; then cp -f "$(LINUX_STATIC_ELF)" repo-test/linux_glibc_hello; fi
 	cp -f tests/ring3/invalid_elf repo-test/invalid_elf
+	chmod 0755 repo-test/invalid_elf
 	tar -cf initrd-test.tar -C repo-test . --format=ustar
 	rm -f repo-test/ring3_suite
-	rm -f repo-test/exec_target repo-test/c_example repo-test/pie_probe repo-test/linux_syscall_probe repo-test/linux_clone_probe repo-test/native_hello repo-test/native-hello.lxe repo-test/bin/native-hello.lxe repo-test/invalid_elf
+	rm -f repo-test/exec_target repo-test/c_example repo-test/pie_probe repo-test/linux_syscall_probe repo-test/linux_clone_probe repo-test/permission_probe repo-test/native_hello repo-test/native-hello.lxe repo-test/bin/native-hello.lxe repo-test/invalid_elf
 	cp -f initrd-test.tar isodir-test/boot/initrd.tar
 	$(GRUB) -o $@ isodir-test
 

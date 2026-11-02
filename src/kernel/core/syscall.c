@@ -359,6 +359,9 @@ void sys_fd_put(kfile_t *file) {
     file_description_t *description = file->description;
     file->description = NULL;
     if (--description->references == 0) {
+      if (description->opened && description->node &&
+          !description->node->vfs_owned && description->node->close)
+        description->node->close(description->node);
       vfs_node_put(description->node);
       kfree(description);
       if (live_file_descriptions) live_file_descriptions--;
@@ -469,9 +472,48 @@ static uint32_t file_size(kfile_t *file) {
   return file->description ? file->description->size : file->size;
 }
 
-#define O_CREAT 0x0200 // Definido conforme padrão comum, ajuste se necessário
-#define O_TRUNC 0x0400
+#define O_WRONLY 0x0001
+#define O_RDWR   0x0002
+#define O_RDONLY 0x0000
+#define O_ACCMODE 0x0003
+#define O_CREAT  0x0200
+#define O_TRUNC  0x0400
 #define O_APPEND 0x0008
+#define O_EXCL   0x0800
+#define EMFILE 24
+#define EISDIR 21
+#define ENOTEMPTY 39
+#define FD_ACCESS_READ  0x01
+#define FD_ACCESS_WRITE 0x02
+
+static process_t *syscall_process(void) {
+  return current_task ? current_task->process : NULL;
+}
+
+static int syscall_parent_access(const char *path, uint32_t requested) {
+  if (!path || path[0] != '/') return -EINVAL;
+  size_t length = strlen(path);
+  if (length == 0 || length >= 512 || path[length - 1] == '/') return -EINVAL;
+  char parent_path[512];
+  size_t parent_length = length;
+  while (parent_length && path[parent_length - 1] != '/') parent_length--;
+  if (parent_length == 0) return -EINVAL;
+  if (parent_length == 1) {
+    parent_path[0] = '/';
+    parent_path[1] = '\0';
+  } else {
+    parent_length--;
+    memcpy(parent_path, path, parent_length);
+    parent_path[parent_length] = '\0';
+  }
+  process_t *process = syscall_process();
+  uint32_t uid = process ? process->euid : 0;
+  uint32_t gid = process ? process->egid : 0;
+  fs_node_t *parent = NULL;
+  int rc = vfs_open_access(parent_path, uid, gid, requested, &parent);
+  if (parent) vfs_node_put(parent);
+  return rc;
+}
 
 int sys_open(const char *filename, int flags) {
   kfile_t *fd_table = get_fd_table();
@@ -482,39 +524,100 @@ int sys_open(const char *filename, int flags) {
       break;
     }
   }
-  if (fd == -1) return -1;
+  if (fd == -1) return -EMFILE;
 
   char fname[256];
   if (!filename) return -EFAULT;
   if (strncpy_from_user(fname, filename, 255) < 0) return -EFAULT;
   fname[255] = '\0';
 
-  const char *resolved = resolve_path(fname);
-  if (!resolved) return -1;
+  if ((flags & ~(O_ACCMODE | O_CREAT | O_TRUNC | O_APPEND | O_EXCL)) != 0 ||
+      (flags & O_ACCMODE) == O_ACCMODE ||
+      ((flags & O_EXCL) && !(flags & O_CREAT)))
+    return -EINVAL;
 
-  // Try VFS
-  fs_node_t *node = vfs_open(resolved);
-  
-  if (!node && (flags & O_CREAT)) {
-      node = vfs_create(resolved, flags);
+  const char *resolved = resolve_path(fname);
+  if (!resolved) return -EINVAL;
+  char resolved_path[512];
+  strncpy(resolved_path, resolved, sizeof(resolved_path) - 1);
+  resolved_path[sizeof(resolved_path) - 1] = '\0';
+
+  process_t *process = syscall_process();
+  uint32_t uid = process ? process->euid : 0;
+  uint32_t gid = process ? process->egid : 0;
+  int access_mode = flags & O_ACCMODE;
+  /* Existing SDK v0.1 callers used O_CREAT to create a writable descriptor
+   * before access-mode bits were documented. Keep that contract: create-only
+   * defaults to read/write; a bare open remains read-only. */
+  if (access_mode == O_RDONLY && (flags & O_CREAT)) access_mode = O_RDWR;
+  if (access_mode == O_RDONLY && (flags & (O_TRUNC | O_APPEND)))
+    access_mode = O_WRONLY;
+  uint32_t requested = 0;
+  if (access_mode != O_WRONLY) requested |= VFS_ACCESS_READ;
+  if (access_mode != O_RDONLY) requested |= VFS_ACCESS_WRITE;
+
+  fs_node_t *node = NULL;
+  int lookup = vfs_open_access(resolved_path, uid, gid, requested, &node);
+  if (lookup == 0 && (flags & (O_CREAT | O_EXCL)) ==
+                     (O_CREAT | O_EXCL)) {
+      vfs_node_put(node);
+      return -EEXIST;
+  }
+  if (lookup == -2 && (flags & O_CREAT)) {
+      int parent_rc = syscall_parent_access(resolved_path,
+                            VFS_ACCESS_WRITE | VFS_ACCESS_EXEC);
+      if (parent_rc < 0) return parent_rc;
+      uint16_t mode = (uint16_t)(0666u & ~(process ? process->umask : 0));
+      node = vfs_create_as(resolved_path, flags, (uint16_t)uid,
+                           (uint16_t)gid, mode);
+      if (!node) return -EEXIST;
+      lookup = vfs_node_access(node, uid, gid, requested);
+  }
+  if (!node && lookup < 0) return lookup;
+  if (lookup < 0) {
+      vfs_node_put(node);
+      return lookup;
   }
 
   if (node) {
-    if (flags & O_TRUNC) {
-      vfs_truncate(node);
+    if (node->flags & FS_DIRECTORY) {
+      int dir_access = vfs_node_access(node, uid, gid,
+                              VFS_ACCESS_READ | VFS_ACCESS_EXEC);
+      if (dir_access < 0) { vfs_node_put(node); return dir_access; }
+    }
+    if ((node->flags & FS_DIRECTORY) &&
+        ((flags & (O_TRUNC | O_APPEND)) ||
+         (access_mode != O_RDONLY && (flags & O_CREAT)))) {
+      vfs_node_put(node);
+      return -EISDIR;
     }
     file_description_t *description = (file_description_t *)kmalloc(sizeof(*description));
     if (!description) {
       vfs_node_put(node);
       return -1;
     }
+    if ((flags & O_TRUNC) && node->length) {
+      int truncate_rc = vfs_truncate(node);
+      if (truncate_rc < 0) {
+        kfree(description);
+        vfs_node_put(node);
+        return truncate_rc;
+      }
+    }
     memset(description, 0, sizeof(*description));
     description->node = node;
     description->offset = (flags & O_APPEND) ? node->length : 0;
     description->size = node->length;
     description->references = 1;
+    description->access = (requested & VFS_ACCESS_READ ? FD_ACCESS_READ : 0) |
+                          (requested & VFS_ACCESS_WRITE ? FD_ACCESS_WRITE : 0);
+    if (node->open && node->open(node) < 0) {
+      kfree(description);
+      vfs_node_put(node);
+      return -ENOMEM;
+    }
+    description->opened = node->open != NULL;
     live_file_descriptions++;
-    if (node->open) node->open(node);
     memset(&fd_table[fd], 0, sizeof(fd_table[fd]));
     fd_table[fd].type = FD_TYPE_FILE;
     fd_table[fd].socket_ptr = (void *)node;
@@ -688,6 +791,8 @@ int sys_read(int fd, void *buf, uint32_t count) {
   }
   if (fd < 0 || fd >= 32 || fd_table[fd].type != FD_TYPE_FILE) return -1;
   kfile_t *f = &fd_table[fd];
+  if (f->description &&
+      !(f->description->access & FD_ACCESS_READ)) return -EBADF;
   uint32_t *offset = file_offset(f);
   uint32_t size = file_size(f);
   if (f->socket_ptr) {
@@ -786,6 +891,8 @@ int sys_write(int fd, const void *buf, uint32_t count) {
     return (int)written;
   }
   if (f->type == FD_TYPE_FILE && f->socket_ptr) {
+    if (f->description &&
+        !(f->description->access & FD_ACCESS_WRITE)) return -EBADF;
     fs_node_t *node = (fs_node_t *)f->socket_ptr;
     uint32_t *offset = file_offset(f);
     while (done < count) {
@@ -1043,11 +1150,42 @@ static int do_execve(registers_t *regs, const char *filename,
   strncpy(sdfs_path, resolved, sizeof(sdfs_path) - 1);
   sdfs_path[sizeof(sdfs_path) - 1] = '\0';
 
+  process_t *process = syscall_process();
+  fs_node_t *exec_node = NULL;
+  int access_rc = vfs_open_access(sdfs_path,
+                                  process ? process->euid : 0,
+                                  process ? process->egid : 0,
+                                  VFS_ACCESS_EXEC, &exec_node);
+  if (exec_node) vfs_node_put(exec_node);
+  uint16_t initrd_mode = 0, initrd_uid = 0, initrd_gid = 0;
+  int initrd_rc = -1;
+  if (access_rc == -2) {
+    initrd_rc = initrd_get_metadata(fname, &initrd_uid, &initrd_gid,
+                                    &initrd_mode);
+    if (initrd_rc < 0 && fname[0] == '/')
+      initrd_rc = initrd_get_metadata(fname + 1, &initrd_uid, &initrd_gid,
+                                      &initrd_mode);
+    if (initrd_rc == 0 && process && process->euid != 0) {
+      uint32_t selected = process->euid == initrd_uid
+          ? ((initrd_mode >> 6) & 7u)
+          : process->egid == initrd_gid
+              ? ((initrd_mode >> 3) & 7u) : (initrd_mode & 7u);
+      if (!(selected & 1u)) { kfree(storage); return -EACCES; }
+    }
+  } else if (access_rc < 0) {
+    kfree(storage);
+    return access_rc;
+  }
+
   uint32_t file_size = 0;
   int owned_file = 0;
   void *file = sdfs_read_file(sdfs_path, &file_size);
   if (file) owned_file = 1;
   else {
+    if (initrd_rc < 0 && process && process->euid != 0) {
+      kfree(storage);
+      return -ENOENT;
+    }
     file_size = 0;
     file = initrd_get_file(fname, &file_size);
     if (!file && fname[0] == '/') file = initrd_get_file(fname + 1, &file_size);
@@ -1157,30 +1295,29 @@ int sys_stat(const char *path, struct kernel_stat *st) {
   kpath[255] = '\0';
   const char *resolved = resolve_path(kpath);
   if (!resolved) return -1;
-  
+  char resolved_path[512];
+  strncpy(resolved_path, resolved, sizeof(resolved_path) - 1);
+  resolved_path[sizeof(resolved_path) - 1] = '\0';
+  process_t *process = syscall_process();
+  fs_node_t *node = NULL;
+  int open_rc = vfs_open_access(resolved_path, process ? process->euid : 0,
+                                process ? process->egid : 0, 0, &node);
+  if (open_rc < 0) return open_rc;
   struct kernel_stat ks;
   memset(&ks, 0, sizeof(ks));
-  
-  fs_node_t *node = vfs_open(resolved);
-  if (!node) return -1;
   
   ks.st_dev = 1;
   ks.st_ino = node->inode;
   ks.st_nlink = 1;
-  ks.st_uid = 0;
-  ks.st_gid = 0;
+  ks.st_uid = node->uid;
+  ks.st_gid = node->gid;
   ks.st_rdev = 0;
   ks.st_size = node->length;
   ks.st_blksize = 4096;
   ks.st_blocks = (node->length + 511) / 512;
   
-  if (node->flags & FS_DIRECTORY) {
-    ks.st_mode = K_S_IFDIR | K_S_IRUSR | K_S_IWUSR | K_S_IXUSR
-               | K_S_IRGRP | K_S_IXGRP | K_S_IROTH | K_S_IXOTH;
-  } else {
-    ks.st_mode = K_S_IFREG | K_S_IRUSR | K_S_IWUSR
-               | K_S_IRGRP | K_S_IWGRP | K_S_IROTH | K_S_IWOTH;
-  }
+  ks.st_mode = (node->flags & FS_DIRECTORY ? K_S_IFDIR : K_S_IFREG) |
+               (node->mask & 0777u);
   
   ks.st_atime = (int64_t)(timer_ticks / 100);
   ks.st_mtime = ks.st_atime;
@@ -1222,19 +1359,18 @@ int sys_fstat(int fd, struct kernel_stat *st) {
   ks.st_dev = 1;
   ks.st_ino = fd + 1;
   ks.st_nlink = 1;
-  ks.st_uid = 0;
-  ks.st_gid = 0;
+  fs_node_t *node = f->description ? f->description->node : NULL;
+  ks.st_uid = node ? node->uid : 0;
+  ks.st_gid = node ? node->gid : 0;
   ks.st_rdev = 0;
   ks.st_size = file_size(f);
   ks.st_blksize = 4096;
   ks.st_blocks = (file_size(f) + 511) / 512;
   
   if (f->socket_ptr) {
-    fs_node_t *node = (fs_node_t *)f->socket_ptr;
-    if (node->flags & FS_DIRECTORY)
-      ks.st_mode = K_S_IFDIR | K_S_IRUSR | K_S_IWUSR | K_S_IXUSR;
-    else
-      ks.st_mode = K_S_IFREG | K_S_IRUSR | K_S_IWUSR;
+    node = (fs_node_t *)f->socket_ptr;
+    ks.st_mode = (node->flags & FS_DIRECTORY ? K_S_IFDIR : K_S_IFREG) |
+                 (node->mask & 0777u);
   }
   
   ks.st_atime = (int64_t)(timer_ticks / 100);
@@ -1252,18 +1388,40 @@ int sys_unlink(const char *path) {
   kpath[255] = '\0';
   const char *resolved = resolve_path(kpath);
   if (!resolved) return -1;
-  return sdfs_delete(resolved);
+  char resolved_copy[512];
+  strncpy(resolved_copy, resolved, sizeof(resolved_copy) - 1);
+  resolved_copy[sizeof(resolved_copy) - 1] = '\0';
+  int rc = syscall_parent_access(resolved_copy,
+                                 VFS_ACCESS_WRITE | VFS_ACCESS_EXEC);
+  if (rc < 0) return rc;
+  int is_dir = 0;
+  if (sdfs_path_info(resolved_copy, &is_dir, NULL) < 0) return -ENOENT;
+  if (is_dir) return -EISDIR;
+  int delete_rc = vfs_unlink(resolved_copy);
+  return delete_rc == 0 ? 0 : (delete_rc == -2 ? -ENOENT : -EIO);
 }
 
 int sys_mkdir(const char *path, uint32_t mode) {
-  (void)mode;
   if (!path) return -EFAULT;
   char kpath[256];
   if (strncpy_from_user(kpath, path, 255) < 0) return -EFAULT;
   kpath[255] = '\0';
   const char *resolved = resolve_path(kpath);
   if (!resolved) return -1;
-  return sdfs_create_dir(resolved);
+  char resolved_copy[512];
+  strncpy(resolved_copy, resolved, sizeof(resolved_copy) - 1);
+  resolved_copy[sizeof(resolved_copy) - 1] = '\0';
+  int rc = syscall_parent_access(resolved_copy,
+                                 VFS_ACCESS_WRITE | VFS_ACCESS_EXEC);
+  if (rc < 0) return rc;
+  fs_node_t *existing = vfs_open(resolved_copy);
+  if (existing) { vfs_node_put(existing); return -EEXIST; }
+  process_t *process = syscall_process();
+  uint16_t create_mode = (uint16_t)(mode & 0777u &
+                             ~(process ? process->umask : 0));
+  return vfs_mkdir(resolved_copy,
+                   (uint16_t)(process ? process->euid : 0),
+                   (uint16_t)(process ? process->egid : 0), create_mode);
 }
 
 int sys_rmdir(const char *path) {
@@ -1273,7 +1431,17 @@ int sys_rmdir(const char *path) {
   kpath[255] = '\0';
   const char *resolved = resolve_path(kpath);
   if (!resolved) return -1;
-  return sdfs_delete(resolved);
+  char resolved_copy[512];
+  strncpy(resolved_copy, resolved, sizeof(resolved_copy) - 1);
+  resolved_copy[sizeof(resolved_copy) - 1] = '\0';
+  int rc = syscall_parent_access(resolved_copy,
+                                 VFS_ACCESS_WRITE | VFS_ACCESS_EXEC);
+  if (rc < 0) return rc;
+  int is_dir = 0;
+  if (sdfs_path_info(resolved_copy, &is_dir, NULL) < 0) return -ENOENT;
+  if (!is_dir) return -ENOTDIR;
+  int delete_rc = vfs_rmdir(resolved_copy);
+  return delete_rc == 0 ? 0 : -ENOTEMPTY;
 }
 
 int sys_rename(const char *old_path, const char *new_path) {
@@ -1295,7 +1463,18 @@ int sys_rename(const char *old_path, const char *new_path) {
   if (!resolved) return -1;
   strncpy(new_resolved_path, resolved, sizeof(new_resolved_path) - 1);
   new_resolved_path[sizeof(new_resolved_path) - 1] = '\0';
-  return sdfs_rename(old_resolved_path, new_resolved_path);
+  int rc = syscall_parent_access(old_resolved_path,
+                                 VFS_ACCESS_WRITE | VFS_ACCESS_EXEC);
+  if (rc < 0) return rc;
+  rc = syscall_parent_access(new_resolved_path,
+                             VFS_ACCESS_WRITE | VFS_ACCESS_EXEC);
+  if (rc < 0) return rc;
+  int is_dir = 0;
+  if (sdfs_path_info(old_resolved_path, &is_dir, NULL) < 0) return -ENOENT;
+  if (is_dir) return -EINVAL; /* Directory moves are not crash-atomic yet. */
+  if (sdfs_path_info(new_resolved_path, NULL, NULL) == 0) return -EEXIST;
+  rc = vfs_rename(old_resolved_path, new_resolved_path);
+  return rc == 0 ? 0 : (rc == -18 ? -18 : -EIO);
 }
 
 int sys_chdir(const char *path) {
@@ -1307,8 +1486,12 @@ int sys_chdir(const char *path) {
   if (!resolved) return -1;
   
   // Verify the path is a directory
-  fs_node_t *node = vfs_open(resolved);
-  if (!node) return -1;
+  process_t *process = syscall_process();
+  fs_node_t *node = NULL;
+  int access_rc = vfs_open_access(resolved, process ? process->euid : 0,
+                                  process ? process->egid : 0,
+                                  VFS_ACCESS_EXEC, &node);
+  if (access_rc < 0) return access_rc;
   if (!(node->flags & FS_DIRECTORY)) {
     vfs_node_put(node);
     return -1;

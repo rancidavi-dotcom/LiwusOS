@@ -26,6 +26,7 @@ This creates an ignored, reproducible package tree:
 ```text
 build/liwus-sdk/
   bin/native-hello.lxe
+  bin/{ls,cat,mkdir,rm,mv,cp,touch,echo}.lxe
   include/liwus/       # public SDK headers
   lib/crt0.o           # ELF entry and C runtime handoff
   lib/libliwus.a       # syscall wrappers, CRT, small string helpers
@@ -103,11 +104,21 @@ are documented in [SDFS_INSTALL.md](SDFS_INSTALL.md). The installer is a host
 tool; it does not add a shell command or run in ring 3.
 
 The default ISO initrd contains `assets/readme.txt`, `ls.lxe`, and `cat.lxe`.
-On a fresh SDFS, first boot copies them into `/readme.txt` and `/bin`. Existing
-installed SDFS images are not overwritten from the initrd. Update a data file
+The native utility set also includes `mkdir`, `rm`, `mv`, `cp`, `touch`, and
+`echo`; all are separately linked `.lxe` ELF64 applications. On a fresh SDFS,
+first boot copies the initrd programs into `/bin` and the readme to
+`/readme.txt`. Existing installed SDFS images are not overwritten from the initrd. Update a data file
 explicitly while the image is offline with `make sdfs-put FILE=assets/readme.txt
 DEST=/readme.txt DISK=/path/to/liwus.img REPLACE=1`; executables continue to use
 `make app-install`.
+
+The native VFS checks SDFS DAC permissions for path search, file open, directory
+enumeration, create/remove/rename, and executable loading. Current ring-3
+processes share uid/gid 1000; uid 0 is reserved for kernel-created contexts.
+There is no `chmod`, `chown`, account management, or multi-user login in v0.1.
+The utility programs intentionally expose a small contract: `cp` does not
+overwrite, `mv` only renames regular files to absent destinations, `rm` removes
+regular files, and `touch` leaves existing regular files unchanged.
 
 The automated regression checks runtime behavior and ELF loading. Inspect the
 generated headers, archive, linker script, and `readelf -h -l

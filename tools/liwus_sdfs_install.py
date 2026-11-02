@@ -291,7 +291,7 @@ class SDFS:
         else:
             encoded = name.encode("utf-8")
             entry = struct.pack("<BB", ENTRY_FILE, len(encoded)) + encoded + struct.pack(
-                "<IIIIHHHH", first, len(data), 0, int(time.time()), 0, 0, 0x314, 0)
+                "<IIIIHHHH", first, len(data), 0, int(time.time()), 0, 0, 0o755, 0)
             cur = parent
             while True:
                 block = bytearray(self.read_block(cur))

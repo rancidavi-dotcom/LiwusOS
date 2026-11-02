@@ -44,6 +44,11 @@ transaction manager for arbitrary sequences.
 - `sdfs_delete()` now removes the directory entry before releasing its data
   blocks, so an interruption can leak space instead of leaving a live name for
   blocks already returned to the allocator.
+- Open SDFS nodes are tracked by inode/start block. Unlink removes the name but
+  defers freeing a file's chain until the final close; an open descriptor keeps
+  reading the original bytes. An open directory similarly keeps its block
+  allocated after empty-directory removal. This is a runtime lifetime rule,
+  not a multi-operation transaction.
 
 There is no SDFS garbage collector or bitmap reconstruction yet. Leaked blocks
 remain allocated. The block-level fault injection covers returned read/write
@@ -53,11 +58,14 @@ errors and remount replay; it is not a physical power-cut simulator.
 
 This guarantee applies to the kernel's whole-file `sdfs_write_file()` path and
 single-block metadata writes through the journal. It does not make arbitrary
-in-place VFS writes, `rename()` across directory entries, or multiple
-filesystem calls atomic. Concurrent filesystem mutations are not yet covered
-by a global filesystem lock. Device flush completion has been implemented for
-the AHCI path and exercised in QEMU; real-device power-loss behavior still
-depends on the controller and drive honoring FLUSH CACHE EXT.
+in-place VFS writes, `rename()`, or multiple filesystem calls atomic. Rename
+removes the source entry and adds the destination in separate metadata writes;
+it attempts an in-memory rollback if the addition fails, but a power loss
+between writes can leave the source name missing. Concurrent filesystem
+mutations are not yet covered by a global filesystem lock. Device flush
+completion has been implemented for the AHCI path and exercised in QEMU;
+real-device power-loss behavior still depends on the controller and drive
+honoring FLUSH CACHE EXT.
 
 The offline host installer in [SDFS_INSTALL.md](SDFS_INSTALL.md) edits a
 temporary image copy and publishes the complete file by host rename. It does

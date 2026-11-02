@@ -6,6 +6,9 @@
 
 #define FS_FILE        0x01
 #define FS_DIRECTORY   0x02
+#define VFS_ACCESS_READ  0x01
+#define VFS_ACCESS_WRITE 0x02
+#define VFS_ACCESS_EXEC  0x04
 
 struct fs_node;
 struct dirent {
@@ -15,12 +18,20 @@ struct dirent {
 
 typedef uint32_t (*read_type_t)(struct fs_node*, uint32_t, uint32_t, uint8_t*);
 typedef uint32_t (*write_type_t)(struct fs_node*, uint32_t, uint32_t, uint8_t*);
-typedef void (*open_type_t)(struct fs_node*);
+typedef int (*open_type_t)(struct fs_node*);
 typedef void (*close_type_t)(struct fs_node*);
 typedef struct dirent* (*readdir_type_t)(struct fs_node*, uint32_t);
 typedef struct fs_node* (*finddir_type_t)(struct fs_node*, const char* name);
 typedef struct fs_node* (*create_type_t)(struct fs_node*, const char* name, uint32_t flags);
-typedef void (*truncate_type_t)(struct fs_node*);
+typedef struct fs_node* (*create_as_type_t)(struct fs_node*, const char*,
+                                             uint32_t, uint16_t, uint16_t,
+                                             uint16_t);
+typedef struct fs_node* (*mkdir_type_t)(struct fs_node*, const char*,
+                                        uint16_t, uint16_t, uint16_t);
+typedef int (*remove_type_t)(struct fs_node*, const char*);
+typedef int (*rename_type_t)(struct fs_node*, const char*,
+                             struct fs_node*, const char*);
+typedef int (*truncate_type_t)(struct fs_node*);
 typedef struct fs_node {
     char name[128];
     uint32_t mask;
@@ -38,6 +49,11 @@ typedef struct fs_node {
     readdir_type_t readdir;
     finddir_type_t finddir;
     create_type_t create;
+    create_as_type_t create_as;
+    mkdir_type_t mkdir;
+    remove_type_t unlink;
+    remove_type_t rmdir;
+    rename_type_t rename;
     truncate_type_t truncate;
     struct fs_node* ptr; /* Para diretórios */
     uint32_t vfs_owned; /* Nonzero when this lookup allocated the node. */
@@ -54,14 +70,26 @@ extern fs_node_t* fs_root;
 void vfs_init();
 int vfs_mount(const char* path, fs_node_t* root);
 fs_node_t* vfs_open(const char* path);
+/* User-facing lookup. Checks execute permission on every parent directory,
+ * then the requested rights on the final node. Returns -errno on failure. */
+int vfs_open_access(const char *path, uint32_t uid, uint32_t gid,
+                    uint32_t requested, fs_node_t **out);
+int vfs_node_access(const fs_node_t *node, uint32_t uid, uint32_t gid,
+                    uint32_t requested);
 fs_node_t* vfs_create(const char* path, uint32_t flags);
+fs_node_t* vfs_create_as(const char *path, uint32_t flags, uint16_t uid,
+                         uint16_t gid, uint16_t mode);
+int vfs_mkdir(const char *path, uint16_t uid, uint16_t gid, uint16_t mode);
+int vfs_unlink(const char *path);
+int vfs_rmdir(const char *path);
+int vfs_rename(const char *old_path, const char *new_path);
 void vfs_node_put(fs_node_t *node);
 void vfs_node_take_ownership(fs_node_t *node);
 uint64_t vfs_live_owned_nodes(void);
 
 struct dirent *readdir_fs(fs_node_t *node, uint32_t index);
 fs_node_t *finddir_fs(fs_node_t *node, const char *name);
-void vfs_truncate(fs_node_t *node);
+int vfs_truncate(fs_node_t *node);
 
 uint32_t read_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
 uint32_t write_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);

@@ -193,6 +193,25 @@ void* initrd_get_file(const char* name, uint32_t* size) {
     return NULL;
 }
 
+int initrd_get_metadata(const char *name, uint16_t *uid, uint16_t *gid,
+                        uint16_t *mode) {
+    if (!name || !mode) return -1;
+    uintptr_t address = initrd_location;
+    while (1) {
+        struct tar_header *header = (struct tar_header *)address;
+        if (header->filename[0] == '\0') break;
+        uint32_t filesize = get_size(header->size);
+        if (initrd_name_equals(header->filename, name)) {
+            if (uid) *uid = (uint16_t)get_size(header->uid);
+            if (gid) *gid = (uint16_t)get_size(header->gid);
+            *mode = (uint16_t)(get_size(header->mode) & 0777u);
+            return 0;
+        }
+        address += 512 + ((filesize + 511) & ~511);
+    }
+    return -1;
+}
+
 /*
  * initrd_copy_to_sdfs: Copia todos os arquivos do initrd (tar) para o SDFS.
  *
@@ -330,9 +349,13 @@ void initrd_copy_to_sdfs(copy_progress_cb cb) {
         // arquivos vazios (evita alocar+liberar um bloco à toa).
         if (filesize > 0) {
             if (sdfs_write_file(sdfs_path, (uint8_t *)data, filesize) > 0) {
+                uint16_t mode = (uint16_t)(get_size(header->mode) & 0777u);
+                if (mode) sdfs_set_permissions(sdfs_path, mode);
                 copied++;
             }
         } else if (sdfs_create_file(sdfs_path) == 0) {
+            uint16_t mode = (uint16_t)(get_size(header->mode) & 0777u);
+            if (mode) sdfs_set_permissions(sdfs_path, mode);
             copied++;
         }
 

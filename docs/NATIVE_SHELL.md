@@ -41,16 +41,20 @@ is absent; it is never searched under `/bin`. Only `-ENOENT` advances to the
 next candidate. An invalid executable or another execution error is reported
 and stops resolution. The original `argv[0]` and all arguments are passed
 unchanged. `.lxe` is not used to select an ABI or loader: the ELF header does.
-SDFS stores permission metadata, but the current native open/exec path does not
-yet enforce Unix-style access bits. `ls` and `cat` report syscall failures;
-they cannot reliably distinguish a denied path from a missing path until
-native permission enforcement is implemented.
+The native VFS enforces SDFS owner/group/other read, write, and execute bits on
+path traversal, open, creation, removal, rename, and execution. User processes
+share uid/gid 1000; uid 0 is reserved for kernel-created contexts. This is a
+single-user DAC model without credential-changing calls or multi-user login.
 
-`ls.lxe` and `cat.lxe` are independent SDK applications. `ls` enumerates a
-directory through `liw_open`/`liw_getdents`; without a path it uses the
-process's current directory. `cat` copies file bytes through bounded
-`liw_read` and `liw_write_all` buffers. Neither command is built into the
-shell or kernel.
+`ls.lxe`, `cat.lxe`, `mkdir.lxe`, `rm.lxe`, `mv.lxe`, `cp.lxe`, `touch.lxe`,
+and `echo.lxe` are independent SDK applications. `ls` enumerates a directory
+through `liw_getdents`; without a path it uses the current directory. `cat` and
+`cp` copy file bytes through bounded buffers. `mv` handles regular files when
+the destination is absent; directory moves are unsupported. `cp` refuses to
+overwrite an existing destination. `touch` creates a file or leaves an
+existing regular file unchanged. `rm` removes regular files; `mkdir` creates
+one directory; `echo` writes its arguments and a newline. None are shell or
+kernel built-ins.
 
 ## Command language
 
@@ -103,7 +107,14 @@ normal userspace init path, sends multiple commands through QEMU COM1, and
 checks child output/status, invalid-command recovery, and shell restart after
 `exit` and Ctrl-D. It also measures QEMU CPU time during one idle second at the
 prompt and requires less than 0.75 CPU seconds. Its serial transcript is written to the ignored
-`test-logs/shell-integration.serial`.
+`test-logs/shell-integration.serial`. The intended utility sequence covers a
+temporary SDFS disk, including multi-block and empty-file copies, rename,
+removal, no-overwrite behavior, and preservation when touching an existing
+file. The current full run times out after `mkdir /toolbox-test`: the prompt is
+printed, but the following `touch` input is not echoed. See
+[`NATIVE_UTILITIES_HANDOFF.md`](NATIVE_UTILITIES_HANDOFF.md) for the current
+validation record; the shell integration must pass before this sequence is
+considered validated.
 
 This is a minimal interactive process launcher, not a general-purpose shell.
 The kernel's current serial input is polled at a bounded 10 ms sleep cadence;

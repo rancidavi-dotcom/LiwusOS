@@ -37,7 +37,6 @@ perms_default
 timestamp_created
 timestamp_remount
 v1_compat_read
-sdfs_diskfull
 vma_intervals
 kernel_stack_guard
 pmm_high_memory
@@ -48,3 +47,4 @@ sched_sleep
 sched_priority
 sched_wait_queue
 ring3_processes
+sdfs_diskfull

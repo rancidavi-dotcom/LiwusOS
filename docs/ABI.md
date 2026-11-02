@@ -95,6 +95,13 @@ as failure. Standardizing internal helper error returns is tracked as part of
 roadmap step 36 and must not silently change the native ABI without updating
 this document.
 
+The native filesystem paths added for the utilities milestone return negative
+errno values for access denial (`-EACCES`), missing paths (`-ENOENT`), existing
+targets (`-EEXIST`), wrong file type (`-EISDIR`/`-ENOTDIR`), bad descriptors
+(`-EBADF`), and invalid arguments (`-EINVAL`). Other older syscalls still use
+generic `-1`; this table is not a promise that every native syscall now has a
+uniform errno contract.
+
 ## 4. Current address space and kernel layout
 
 | Range | Use |
@@ -169,12 +176,41 @@ this document.
 
 | Flag | Native value |
 |---|---|
+| `O_RDONLY` | `0x0000` |
+| `O_WRONLY` | `0x0001` |
+| `O_RDWR` | `0x0002` |
+| `O_ACCMODE` | `0x0003` |
 | `O_CREAT` | `0x0200` |
 | `O_TRUNC` | `0x0400` |
 | `O_APPEND` | `0x0008` |
+| `O_EXCL` | `0x0800` |
 
-Access mode bits are not interpreted; these values differ from Linux and are
-translated only at the Linux boundary.
+The kernel enforces the requested access mode when opening a file and rejects
+read/write operations that the descriptor did not request. For compatibility
+with SDK v0.1 callers predating the documented access mode, `O_CREAT` with no
+explicit access bits opens read/write; a bare open is read-only. `O_TRUNC` and
+`O_APPEND` require write access. `O_EXCL` is valid only with `O_CREAT`.
+Descriptors retain the rights granted at open time if the mode later changes.
+These values differ from Linux and are translated only at the Linux boundary.
+
+### Native SDFS permissions
+
+SDFS mode bits use the conventional POSIX `0777` owner/group/other layout.
+Processes created for ring 3 run as uid/gid 1000; kernel-created contexts use
+uid 0, which is reserved as the DAC bypass. There is no credential-changing
+syscall or multi-user login model, so current user processes share one
+unprivileged identity. The SDFS root is `0777` for this single-user v0.1
+environment; `/bin` is `0755`. New regular files use `0666 & ~umask` (default
+umask `0022`) and new directories use the requested mode masked by umask.
+
+Lookup requires execute/search permission on each directory in the path.
+Opening a regular file checks read/write mode; opening a directory for
+enumeration requires read and execute. Creation, unlink, rmdir, and rename
+require write and execute on the containing directory. `stat`/`fstat` report
+stored SDFS uid/gid/mode, and `execve` checks execute permission. Permissions
+are checked at open/exec time; an already-open descriptor keeps its granted
+read/write rights. `chmod`, `chown`, ACLs, setuid/setgid/sticky bits, symlinks,
+device nodes, and per-user account management are not implemented.
 
 ### `mmap` flags and protections
 

@@ -95,9 +95,20 @@ test; no production allocator behavior is changed.
 
 The SDFS tests share one RAM disk formatted at runner startup and execute in a
 fixed order. Most use distinct paths; remount, journal, permissions, and
-disk-full cases deliberately change shared filesystem state. They are not
-isolated per test. The QEMU timeout is suite-wide, not an individual per-case
-deadline.
+disk-full cases deliberately change shared filesystem state. The ring-3
+integration runs before the disk-full stress case because that case leaves the
+RAM disk almost full after exercising exhaustion. Tests are not isolated per
+case. The QEMU timeout is suite-wide, not an individual per-case deadline.
+
+`ring3_processes` also prepares SDFS fixtures and runs a native SDK probe as an
+unprivileged user. It checks owner/group/other permission decisions, path search
+permissions, descriptor read/write rights, parent-directory mutation rules,
+open-file lifetime after unlink, and allowed/denied executable modes. The
+full shell integration is intended to exercise utilities on a temporary SDFS
+disk, but the current run times out after `mkdir` without the next `touch`
+line reaching the guest. The persistent install integration did run `mkdir`,
+`cp`, `mv`, `touch`, and `echo` across four boots of the same temporary SDFS
+image.
 
 ## Current limits
 

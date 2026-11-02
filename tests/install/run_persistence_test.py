@@ -19,7 +19,17 @@ def run(command, cwd=ROOT):
     subprocess.run(command, cwd=cwd, check=True)
 
 
-def compile_app(prefix, output, version, status, filler):
+def compile_app(prefix, output, version, status, filler, verify_permissions=False):
+    verify = """
+    struct liw_stat directory, copied, empty;
+    if (liw_stat("/persistent-tools", &directory) < 0 ||
+        liw_stat("/persistent-tools/readme.txt", &copied) < 0 ||
+        liw_stat("/persistent-tools/empty", &empty) < 0 ||
+        (directory.st_mode & 0777u) != 0755u || directory.st_uid != 1000 ||
+        (copied.st_mode & 0777u) != 0644u || copied.st_uid != 1000 ||
+        (empty.st_mode & 0777u) != 0644u || empty.st_uid != 1000)
+        return 83;
+""" if verify_permissions else ""
     source = output.parent / f"{version}.c"
     source.write_text(f'''#include <liwus/liwus.h>
 int main(int argc, char **argv, char **envp) {{
@@ -30,6 +40,7 @@ int main(int argc, char **argv, char **envp) {{
     unsigned int checksum = 0;
     for (unsigned int i = 0; i < sizeof(payload); ++i) checksum += payload[i];
     if (checksum != 7) return 81;
+{verify}
     if (liw_write_all(1, message, sizeof(message) - 1) < 0) return 82;
     return {status};
 }}
@@ -83,8 +94,11 @@ class QemuShell:
         del self.pending[:end]
 
     def send(self, data):
-        self.proc.stdin.write(data)
-        self.proc.stdin.flush()
+        time.sleep(0.15)
+        for offset in range(0, len(data), 4):
+            self.proc.stdin.write(data[offset:offset + 4])
+            self.proc.stdin.flush()
+            time.sleep(0.1)
 
     def quit(self, qmp_path):
         deadline = time.monotonic() + 20
@@ -104,16 +118,17 @@ class QemuShell:
             raise RuntimeError(f"QEMU clean quit returned status {rc}")
 
 
-def boot_run(iso, disk, temp, command, markers, boot_number):
+def boot_run(iso, disk, temp, commands, boot_number):
     qmp = temp / f"qmp-{boot_number}.sock"
     vm = QemuShell(iso, disk, qmp)
     try:
         vm.expect(b"SDFS: system already installed.\n")
         vm.expect(b"liwus> ")
-        vm.send(command.encode() + b"\n")
-        for marker in markers:
-            vm.expect(marker)
-        vm.expect(b"liwus> ")
+        for command, markers in commands:
+            vm.send(command.encode() + b"\n")
+            for marker in markers:
+                vm.expect(marker)
+            vm.expect(b"liwus> ")
         vm.quit(qmp)
         result = bytes(vm.log)
         LOG_DIR.mkdir(exist_ok=True)
@@ -140,7 +155,7 @@ def main():
         variant_b.mkdir()
         app_b = variant_b / "persistent-demo.lxe"
         compile_app(prefix, app_a, "A", 17, 64)
-        compile_app(prefix, app_b, "B", 19, 12000)
+        compile_app(prefix, app_b, "B", 19, 12000, verify_permissions=True)
         disk = temp / "persistent-disk.img"
         with disk.open("wb") as image:
             image.truncate(64 * 1024 * 1024)
@@ -177,23 +192,45 @@ def main():
             raise
 
         run(["make", "app-install", f"APP={app_a}", f"DISK={disk}"])
-        log_a = boot_run(iso, disk, temp, "persistent-demo.lxe", [
-            "LIWUS persistent demo — version A\n".encode(), b"[liwsh] exit status 17\n"], 2)
+        log_a = boot_run(iso, disk, temp, [
+            ("persistent-demo.lxe", [
+                "LIWUS persistent demo — version A\n".encode(),
+                b"[liwsh] exit status 17\n"]),
+            ("mkdir /persistent-tools", [b"[liwsh] exit status 0\n"]),
+            ("cp /readme.txt /persistent-tools/readme.copy",
+             [b"[liwsh] exit status 0\n"]),
+            ("mv /persistent-tools/readme.copy /persistent-tools/readme.txt",
+             [b"[liwsh] exit status 0\n"]),
+            ("touch /persistent-tools/empty", [b"[liwsh] exit status 0\n"]),
+            ("echo persistent native tools", [b"persistent native tools\n",
+                                                b"[liwsh] exit status 0\n"]),
+            ("ls /persistent-tools", [b"readme.txt\n", b"empty\n",
+                                       b"[liwsh] exit status 0\n"]),
+            ("cat /persistent-tools/readme.txt", [b"Welcome to LIWUS OS!\n",
+                                                   b"[liwsh] exit status 0\n"]),
+        ], 2)
         if b"First boot: copying initrd files to SDFS..." in log_a:
             raise RuntimeError("second boot unexpectedly ran first-boot initrd installation")
 
         run(["make", "app-install", f"APP={app_b}", f"DISK={disk}", "REPLACE=1"])
         for number in (3, 4):
-            log_b = boot_run(iso, disk, temp, "persistent-demo.lxe", [
-                "LIWUS persistent demo — version B\n".encode(), b"[liwsh] exit status 19\n"], number)
+            log_b = boot_run(iso, disk, temp, [
+                ("persistent-demo.lxe", [
+                    "LIWUS persistent demo — version B\n".encode(),
+                    b"[liwsh] exit status 19\n"]),
+                ("ls /persistent-tools", [b"readme.txt\n", b"empty\n",
+                                           b"[liwsh] exit status 0\n"]),
+                ("cat /persistent-tools/readme.txt", [b"Welcome to LIWUS OS!\n",
+                                                       b"[liwsh] exit status 0\n"]),
+            ], number)
             if b"First boot: copying initrd files to SDFS..." in log_b:
                 raise RuntimeError("updated image unexpectedly reran initrd installation")
-        print("PERSISTENT APP INSTALL PASS: same SDFS image across four boots; A->B update persisted")
+        print("PERSISTENT APP INSTALL PASS: same SDFS image across four boots; A->B update, native utility files and their uid/modes persisted")
         print("PERSISTENT APP SAFETY PASS: installer refused image while QEMU held it open")
         (LOG_DIR / "persistent-install.summary").write_text(
-            "PERSISTENT APP INSTALL PASS: same SDFS image across four boots; A->B update persisted\n"
+            "PERSISTENT APP INSTALL PASS: same SDFS image across four boots; A->B update, native utility files and their uid/modes persisted\n"
             "PERSISTENT APP SAFETY PASS: installer refused image while QEMU held it open\n"
-            "Boot 2: version A, status 17. Boots 3 and 4: larger version B, status 19.\n"
+            "Boot 2: version A, status 17. Boots 3 and 4: larger version B, status 19; B verifies persistent tool paths, uid 1000, directory mode 0755 and file modes 0644.\n"
         )
 
 

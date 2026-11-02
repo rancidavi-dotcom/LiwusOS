@@ -31,21 +31,22 @@
  * and first-boot install stay fast and memory-bounded on real disks. */
 #define SDFS_MAX_BLOCKS (4u * 1024u * 1024u)
 
-/* Permission bits (POSIX-style) */
-#define SDFS_PERM_READ   0x004
-#define SDFS_PERM_WRITE  0x002
-#define SDFS_PERM_EXEC   0x001
-#define SDFS_PERM_RUSR   0x100
-#define SDFS_PERM_WUSR   0x200
-#define SDFS_PERM_XUSR   0x400
-#define SDFS_PERM_RGRP   0x010
-#define SDFS_PERM_WGRP   0x020
-#define SDFS_PERM_XGRP   0x040
-#define SDFS_PERM_ROTH   0x004
-#define SDFS_PERM_WOTH   0x002
-#define SDFS_PERM_XOTH   0x001
+/* Permission bits use the conventional 9-bit owner/group/other layout. */
+#define SDFS_PERM_READ   0004
+#define SDFS_PERM_WRITE  0002
+#define SDFS_PERM_EXEC   0001
+#define SDFS_PERM_RUSR   0400
+#define SDFS_PERM_WUSR   0200
+#define SDFS_PERM_XUSR   0100
+#define SDFS_PERM_RGRP   0040
+#define SDFS_PERM_WGRP   0020
+#define SDFS_PERM_XGRP   0010
+#define SDFS_PERM_ROTH   0004
+#define SDFS_PERM_WOTH   0002
+#define SDFS_PERM_XOTH   0001
 
-#define SDFS_DEFAULT_PERM (SDFS_PERM_RUSR | SDFS_PERM_WUSR | SDFS_PERM_RGRP | SDFS_PERM_ROTH)
+#define SDFS_DEFAULT_PERM 0644
+#define SDFS_DEFAULT_DIR_PERM 0755
 
 /* Superblock V2 layout (block 0) */
 typedef struct {
@@ -138,9 +139,13 @@ int sdfs_is_mounted(void);
 
 /* Path-based operations */
 int sdfs_create_file(const char *path);
+int sdfs_create_file_as(const char *path, uint16_t uid, uint16_t gid,
+                        uint16_t permissions);
 uint32_t sdfs_write_file(const char *path, uint8_t *buffer, uint32_t size);
 void *sdfs_read_file(const char *path, uint32_t *size_out);
 int sdfs_create_dir(const char *path);
+int sdfs_create_dir_as(const char *path, uint16_t uid, uint16_t gid,
+                       uint16_t permissions);
 int sdfs_delete(const char *path);
 int sdfs_rename(const char *old_path, const char *new_path);
 int sdfs_path_info(const char *path, int *is_dir_out, uint32_t *size_out);
@@ -151,6 +156,8 @@ void sdfs_get_usage(uint32_t *total_blocks, uint32_t *used_blocks);
 /* V2: permissions */
 int sdfs_set_permissions(const char *path, uint16_t perm);
 int sdfs_get_permissions(const char *path, uint16_t *perm);
+int sdfs_get_metadata(const char *path, uint16_t *uid, uint16_t *gid,
+                      uint16_t *permissions);
 
 /* V2: fsck */
 int sdfs_fsck(void);

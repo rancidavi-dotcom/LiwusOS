@@ -505,6 +505,8 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
       current_directory);
   if (!process) { kfree(new_task); return -1; }
   new_task->user_mode = true;
+  process->uid = process->euid = 1000;
+  process->gid = process->egid = 1000;
   process->job_id = pid;
   strcpy(process->cwd, current_task ? current_task->process->cwd : "/");
   task_assign_name(new_task, name, true);
@@ -580,6 +582,8 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
       current_directory);
   if (!process) { kfree(new_task); return -1; }
   new_task->user_mode = true;
+  process->uid = process->euid = 1000;
+  process->gid = process->egid = 1000;
   process->job_id = pid;
   strcpy(process->cwd, current_task ? current_task->process->cwd : "/");
   task_assign_name(new_task, name, true);

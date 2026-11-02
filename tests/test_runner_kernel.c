@@ -195,9 +195,6 @@ void test_runner_task(void) {
     /* ---- V2: Compat ---- */
     run_test(test_v1_compat_read,       "v1_compat_read");
 
-    /* ---- Disk full test ---- */
-    run_test(test_sdfs_diskfull, "sdfs_diskfull");
-
     serial_print("\n[runner] Scheduler tests...\n");
     run_test(test_vma_intervals, "vma_intervals");
     run_test(test_kernel_stack_guard, "kernel_stack_guard");
@@ -211,6 +208,12 @@ void test_runner_task(void) {
 
     serial_print("\n[runner] Ring-3 integration tests...\n");
     run_test(test_ring3_processes, "ring3_processes");
+
+    /* This stress case leaves its isolated filesystem nearly full after
+     * exhausting the allocator. Run it last so integration fixtures can use
+     * the same SDFS instance without depending on post-exhaustion space. */
+    serial_print("\n[runner] SDFS disk-full test...\n");
+    run_test(test_sdfs_diskfull, "sdfs_diskfull");
 
     serial_print("\n");
     TEST_RESULT(test_pass, test_fail);

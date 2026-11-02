@@ -1,6 +1,7 @@
 .section .text
 .global _start
 _start:
+  movl $1, fail_stage(%rip)       /* argument and futex ABI validation */
   /* Invalid flag combinations must fail before creating a task. */
   mov $56, %rax
   mov $0x100, %rdi                 /* CLONE_VM without the thread contract */
@@ -69,6 +70,7 @@ _start:
 
   /* Give the parent and the child distinct, ordinary user memory as TLS. */
   mov $158, %rax                   /* arch_prctl(ARCH_SET_FS, parent_tls) */
+  movl $2, fail_stage(%rip)       /* parent TLS and child-stack setup */
   mov $0x1002, %rdi
   lea parent_tls(%rip), %rsi
   syscall
@@ -90,6 +92,7 @@ _start:
 
   /* CLONE_VM|FS|FILES|SIGHAND|THREAD|SETTLS. */
   mov $56, %rax
+  movl $3, fail_stage(%rip)       /* clone creation and parent TLS */
   mov $0x90f00, %rdi
   xor %rdx, %rdx
   xor %r10, %r10
@@ -106,6 +109,7 @@ parent:
   cmp %r11, %rax
   jne fail
 parent_futex_ready:
+  movl $4, fail_stage(%rip)       /* parent/child futex handshake */
   cmpl $1, futex_ready(%rip)
   je parent_futex_release
   mov $202, %rax
@@ -126,8 +130,10 @@ parent_futex_release:
   mov $129, %rsi                   /* FUTEX_WAKE_PRIVATE */
   mov $1, %rdx
   syscall
-  cmp $1, %rax                     /* child must be blocked in FUTEX_WAIT */
-  jne fail
+  test %rax, %rax
+  js fail                          /* no error; zero is legal if WAIT has not queued */
+  cmp $1, %rax
+  ja fail
 parent_wait:
   cmpl $1, futex_done(%rip)
   je parent_done
@@ -155,6 +161,7 @@ parent_done:
   syscall
 
 child:
+  movl $5, fail_stage(%rip)       /* child TLS and thread-only exit */
   mov %fs:0, %rax
   movabs $0x4348494c44544c53, %r11
   cmp %r11, %rax
@@ -171,8 +178,11 @@ child:
   xor %rdx, %rdx
   xor %r10, %r10
   syscall
-  test %rax, %rax                  /* must return from the parent's wake */
+  test %rax, %rax
+  jz child_wait_complete           /* woken after it queued */
+  cmp $-11, %rax                   /* value changed before queue insertion */
   jne child_fail
+child_wait_complete:
   cmpl $1, futex_word(%rip)
   jne child_fail
   movq $1, child_ok(%rip)
@@ -196,13 +206,13 @@ child_fail:
   mov $1, %rdx
   syscall
   mov $60, %rax
-  mov $1, %rdi
+  mov $6, %rdi
   syscall
   ud2
 
 fail:
   mov $231, %rax
-  mov $1, %rdi
+  mov fail_stage(%rip), %rdi
   syscall
   ud2
 
@@ -217,6 +227,9 @@ futex_timeout:
   .quad 1
 .section .bss
 .align 8
+fail_stage:
+  .long 0
+  .align 8
 done:
   .quad 0
 child_ok:

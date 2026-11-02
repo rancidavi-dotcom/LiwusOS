@@ -82,7 +82,7 @@ asserts; shared SDFS state is formatted once and then reused in this order.
 | `timestamp_created` | same | Creates a 5-byte file and checks path info; timestamp range/clock accuracy is not asserted. |
 | `timestamp_remount` | same | Checks data and size after remount for the timestamp fixture. |
 | `v1_compat_read` | `tests/test_sdfs_v2.c` | Reads the `compat` fixture through current V2 filesystem behavior; does not construct a legacy V1 disk image. |
-| `sdfs_diskfull` | `tests/test_sdfs_diskfull.c` | Creates/writes files until storage reports failure; requires at least one but fewer than 10,000 files. It runs last on the shared RAM disk. |
+| `sdfs_diskfull` | `tests/test_sdfs_diskfull.c` | Creates/writes files until storage reports failure; requires at least one but fewer than 10,000 files. It runs after ring-3 integration because it leaves the shared RAM disk nearly full. |
 | `vma_intervals` | `tests/test_vma.c` | Tests ordered insert, overlap/invalid rejection, half-open lookup, split remove, top-down gap, heap resize, clone and destroy on metadata-only directories. |
 | `kernel_stack_guard` | `tests/test_kstack.c` | Verifies stack/IRQ separation and guard PTEs; deliberately faults on the guard, checks IST/#PF and confirms freed mappings disappear. |
 | `pmm_high_memory` | `tests/test_pmm_high.c` | Requires RAM above 1 GiB; allocates one high frame, checks direct-map read/write and restored free-memory count. |
@@ -92,7 +92,7 @@ asserts; shared SDFS state is formatted once and then reused in this order.
 | `sched_sleep` | `tests/test_sched.c` | Sleeps approximately 200 ms and checks elapsed timer ticks within a tolerance. |
 | `sched_priority` | same | Runs three priority workers and compares scheduler ticks/loop progress; timing is relative and QEMU-dependent. |
 | `sched_wait_queue` | same | Eight waiters block through four rounds; checks exact partial/all/empty wake counts, bounded completion, and unchanged waiter ticks while a monitor runs. |
-| `ring3_processes` | `tests/test_runner_ring3.c` | Runs the ring-3 suite and native/Linux ELF probes, then checks VFS/file/pipe counters and that PMM free bytes did not decrease. See the 23 nested cases below. |
+| `ring3_processes` | `tests/test_runner_ring3.c` | Runs the ring-3 suite, native/Linux ELF probes, and a native DAC probe; checks VFS/file/pipe counters and that PMM free bytes did not decrease. See the 23 nested cases below and the additional native permission result. |
 
 ## Ring-3 nested cases (23; under `ring3_processes`)
 
@@ -124,6 +124,22 @@ Markers are defined in `tests/harness/ring3_cases.txt` and emitted by
 | `12 repeated execve image replacements complete` | Repeated image replacement completes in a child and is reaped. |
 | `write to read-only ELF segment kills only child` | Write protection on a read-only segment terminates the child. |
 | `supervisor page access kills only child` | Ring-3 supervisor-only access faults and leaves the parent alive. |
+
+The separate native permission probe (`tests/ring3/permission_probe.c`) checks
+SDFS DAC decisions, `stat` metadata, access-mode enforcement on descriptors,
+directory search/enumeration, create/unlink/rename authorization, reading an
+unlinked open file until close, truncate behavior, invalid operation pointers,
+and execute-bit enforcement. It is run inside `ring3_processes` and does not
+change the 23 nested-suite marker count.
+
+The shell integration is intended to exercise the six native utilities
+(`mkdir`, `rm`, `mv`, `cp`, `touch`, `echo`) plus `ls`/`cat` against a temporary
+SDFS disk, including empty and multi-block copy, no-overwrite behavior, and
+preservation of an existing file when touched. The current full run stops
+after `mkdir /toolbox-test` because the next command is not echoed by the guest.
+The persistent install integration did exercise `mkdir`, `cp`, `mv`, `touch`,
+`echo`, `ls`, and `cat` across later boots. A separate reduced QEMU smoke
+sequence passed all six utilities, including `rm`.
 
 The same integration group also executes an ET_DYN PIE probe, a freestanding
 Linux SYSCALL probe, a Linux clone/private-futex probe, and native

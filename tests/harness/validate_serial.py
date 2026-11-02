@@ -25,6 +25,7 @@ RING3_RESULTS = [
     "Linux clone, private futex WAIT/WAKE, shared-mm, independent FS TLS, thread exit PASS",
     "native LIWUS .lxe ELF via crt0+SDK wrappers executed",
     "external SDK application output and exit 23 PASS",
+    "native SDFS permissions, syscall rights, unlink lifetime and exec checks PASS",
     "kernel observed clean user exit",
 ]
 

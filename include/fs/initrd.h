@@ -29,6 +29,8 @@ typedef void (*copy_progress_cb)(int percent, const char *filename);
 
 fs_node_t* init_initrd(uintptr_t location, uint32_t size);
 void* initrd_get_file(const char* name, uint32_t* size);
+int initrd_get_metadata(const char *name, uint16_t *uid, uint16_t *gid,
+                        uint16_t *mode);
 char* initrd_list_files(int index);
 void initrd_copy_to_sdfs(copy_progress_cb cb);
 

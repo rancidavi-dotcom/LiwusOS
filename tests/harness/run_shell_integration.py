@@ -4,6 +4,7 @@
 from pathlib import Path
 import os
 import select
+import socket
 import shutil
 import subprocess
 import sys
@@ -52,6 +53,7 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="liwus-shell-files-") as files:
             files_path = Path(files)
             (files_path / "collision").write_bytes(b"not an ELF executable")
+            (files_path / "collision").chmod(0o755)
             (files_path / "empty.txt").write_bytes(b"")
             payload = bytes(range(256)) * 3
             (files_path / "binary.bin").write_bytes(payload)
@@ -67,15 +69,39 @@ def main() -> int:
         iso = temp_path / "liwus-shell-test.iso"
         subprocess.run(["grub-mkrescue", "-o", str(iso), str(image_tree)],
                        check=True, stdout=subprocess.DEVNULL)
+        disk = temp_path / "shell-test-disk.img"
+        with disk.open("wb") as image:
+            image.truncate(64 * 1024 * 1024)
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            serial_port = probe.getsockname()[1]
 
         command = [
             "qemu-system-x86_64", "-machine", "q35", "-m", "2048",
-            "-display", "none", "-monitor", "none", "-serial", "stdio",
-            "-no-reboot", "-cdrom", str(iso),
+            "-display", "none", "-monitor", "none", "-serial",
+            f"tcp:127.0.0.1:{serial_port},server=on,wait=off",
+            "-no-reboot", "-drive", f"file={disk},format=raw,if=none,id=disk",
+            "-device", "ahci,id=ahci", "-device", "ide-hd,drive=disk,bus=ahci.0",
+            "-cdrom", str(iso),
         ]
-        process = subprocess.Popen(command, stdin=subprocess.PIPE,
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    bufsize=0)
+        serial = None
+        connect_deadline = time.monotonic() + 10.0
+        while serial is None and time.monotonic() < connect_deadline:
+            if process.poll() is not None:
+                raise RuntimeError("QEMU exited before serial socket connected")
+            try:
+                serial = socket.create_connection(("127.0.0.1", serial_port), timeout=0.2)
+            except OSError:
+                time.sleep(0.05)
+        if serial is None:
+            process.terminate()
+            process.wait(timeout=5)
+            raise TimeoutError("QEMU serial socket did not become available")
+        serial.setblocking(False)
 
         def expect(marker: bytes, timeout: float = 90.0) -> None:
             deadline = time.monotonic() + timeout
@@ -83,20 +109,28 @@ def main() -> int:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError(f"timed out waiting for {marker!r}")
-                ready, _, _ = select.select([process.stdout], [], [], remaining)
+                ready, _, _ = select.select([serial], [], [], remaining)
                 if not ready:
                     continue
-                chunk = os.read(process.stdout.fileno(), 4096)
+                try:
+                    chunk = serial.recv(4096)
+                except BlockingIOError:
+                    continue
                 if not chunk:
-                    raise RuntimeError("QEMU closed the serial console")
+                    raise RuntimeError("QEMU closed the serial socket")
                 transcript.extend(chunk)
                 pending.extend(chunk)
             end = pending.index(marker) + len(marker)
             del pending[:end]
 
         def send(command_bytes: bytes) -> None:
-            process.stdin.write(command_bytes)
-            process.stdin.flush()
+            # Let the guest reach its blocking input path after each prompt.
+            time.sleep(0.15)
+            for offset in range(0, len(command_bytes), 4):
+                # Small groups keep each UART FIFO well below its capacity,
+                # while the pause lets the guest's polling reader drain it.
+                serial.sendall(command_bytes[offset:offset + 4])
+                time.sleep(0.2)
 
         def process_cpu_ticks() -> int:
             stat = Path(f"/proc/{process.pid}/stat").read_text()
@@ -148,7 +182,9 @@ def main() -> int:
                 expect(b"liwus> ")
 
             send(b"ls /bin\n")
-            for name in (b"liwsh.lxe", b"native-hello.lxe", b"ls.lxe", b"cat.lxe"):
+            for name in (b"native-hello.lxe", b"liwsh.lxe", b"ls.lxe",
+                         b"cat.lxe", b"mkdir.lxe", b"rm.lxe", b"mv.lxe",
+                         b"cp.lxe", b"touch.lxe", b"echo.lxe"):
                 expect(name + b"\n")
             expect(b"[liwsh] exit status 0\n")
             expect(b"liwus> ")
@@ -211,6 +247,39 @@ def main() -> int:
             expect(b"[liwsh] exit status 91\n")
             expect(b"liwus> ")
 
+            utility_commands = (
+                (b"echo Native tools ready", b"Native tools ready\n"),
+                (b"mkdir /toolbox-test", b"[liwsh] exit status 0\n"),
+                (b"touch /toolbox-test/empty", b"[liwsh] exit status 0\n"),
+                (b"cp /readme.txt /toolbox-test/readme.copy", b"[liwsh] exit status 0\n"),
+                (b"mv /toolbox-test/readme.copy /toolbox-test/readme.txt", b"[liwsh] exit status 0\n"),
+                (b"cp /empty.txt /toolbox-test/empty.copy", b"[liwsh] exit status 0\n"),
+                (b"cp /binary.bin /toolbox-test/binary.copy", b"[liwsh] exit status 0\n"),
+                (b"cat /toolbox-test/readme.txt", readme),
+                (b"cat /toolbox-test/binary.copy", binary_payload),
+                (b"rm /toolbox-test/readme.txt", b"[liwsh] exit status 0\n"),
+                (b"ls /toolbox-test", b"binary.copy\n"),
+            )
+            for shell_command, output in utility_commands:
+                send(shell_command + b"\n")
+                expect(output)
+                expect(b"[liwsh] exit status 0\n")
+                expect(b"liwus> ")
+
+            # Existing-file touch must preserve content, and cp must refuse
+            # replacing an existing destination instead of truncating it.
+            send(b"touch /toolbox-test/binary.copy\n")
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
+            send(b"cp /empty.txt /toolbox-test/binary.copy\n")
+            expect(b"cp: cannot create destination (it may exist)\n")
+            expect(b"[liwsh] exit status 1\n")
+            expect(b"liwus> ")
+            send(b"cat /toolbox-test/binary.copy\n")
+            expect(binary_payload)
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
+
             send(b"missing-program.lxe\n")
             expect(b"liwsh: command not found: missing-program.lxe\n")
             expect(b"[liwsh] exit status 127\n")
@@ -242,6 +311,7 @@ def main() -> int:
                   file=sys.stderr)
             return 1
         finally:
+            serial.close()
             if process.poll() is None:
                 process.terminate()
                 try:

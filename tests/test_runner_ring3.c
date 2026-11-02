@@ -1,6 +1,7 @@
 #ifdef KERNEL_TEST
 #include "framework.h"
 #include "initrd.h"
+#include "sdfs.h"
 #include "pmm.h"
 #include "serial.h"
 #include "syscall.h"
@@ -8,6 +9,41 @@
 #include "vfs.h"
 
 extern task_t *task_list;
+
+static int prepare_permission_fixture(void) {
+    static uint8_t read_allow[] = { 'R' };
+    static uint8_t read_deny[] = { 'r' };
+    static uint8_t write_allow[] = { 'w' };
+    static uint8_t write_deny[] = { 'd' };
+    static uint8_t protected_entry[] = { 'p' };
+    static uint8_t rename_source[] = { 'm' };
+    uint32_t exec_size = 0;
+    void *exec_data;
+
+    if (sdfs_create_dir_as("/perm_probe", 0, 0, 0777) != 0 ||
+        sdfs_create_dir_as("/perm_probe/allow-dir", 0, 0, 0777) != 0 ||
+        sdfs_create_dir_as("/perm_probe/deny-dir", 0, 0, 0700) != 0)
+        return -1;
+#define PERM_FILE(path, bytes, mode) \
+    (sdfs_create_file_as((path), 0, 0, (mode)) == 0 && \
+     sdfs_write_file((path), (bytes), sizeof(bytes)) == sizeof(bytes))
+    if (!PERM_FILE("/perm_probe/read-allow", read_allow, 0644) ||
+        !PERM_FILE("/perm_probe/read-deny", read_deny, 0600) ||
+        !PERM_FILE("/perm_probe/write-allow", write_allow, 0666) ||
+        !PERM_FILE("/perm_probe/write-deny", write_deny, 0444) ||
+        !PERM_FILE("/perm_probe/deny-dir/entry", protected_entry, 0600) ||
+        !PERM_FILE("/perm_probe/allow-dir/rename-src", rename_source, 0644))
+        return -1;
+#undef PERM_FILE
+
+    exec_data = initrd_get_file("exec_target", &exec_size);
+    if (!exec_data || !exec_size) return -2;
+    if (sdfs_create_file_as("/perm_probe/exec-allow.lxe", 0, 0, 0755) != 0)
+        return -3;
+    if (sdfs_write_file("/perm_probe/exec-allow.lxe", exec_data, exec_size) != exec_size)
+        return -4;
+    return 0;
+}
 
 static int run_linux_elf(const char *name) {
     uint64_t irq_flags;
@@ -39,6 +75,13 @@ static int run_linux_elf(const char *name) {
 }
 
 int test_ring3_processes(void) {
+    int fixture_rc = prepare_permission_fixture();
+    if (fixture_rc < 0) {
+        serial_print("[RING3 DIAG] permission fixture rc=");
+        serial_print_hex((uint64_t)(int64_t)fixture_rc);
+        serial_print("\n");
+        FAIL("ring3_processes", "could not prepare native VFS permission fixtures");
+    }
     uint64_t free_before = pmm_get_free_memory();
     uint64_t nodes_before = vfs_live_owned_nodes();
     uint64_t files_before = sys_io_live_file_descriptions();
@@ -63,8 +106,13 @@ int test_ring3_processes(void) {
         FAIL("ring3_processes", "Linux SYSCALL ABI probe failed");
     serial_print("[RING3 RESULT] Linux x86-64 SYSCALL getpid/fstat/openat/mmap/munmap/FS-TLS/write PASS\n");
 
-    if (run_linux_elf("linux_clone_probe") != 0)
+    int clone_status = run_linux_elf("linux_clone_probe");
+    if (clone_status != 0) {
+        serial_print("[RING3 DIAG] Linux clone probe exit status=");
+        serial_print_hex((uint64_t)(int64_t)clone_status);
+        serial_print("\n");
         FAIL("ring3_processes", "Linux clone/TLS/thread-exit probe failed");
+    }
     serial_print("[RING3 RESULT] Linux clone, private futex WAIT/WAKE, shared-mm, independent FS TLS, thread exit PASS\n");
 
     uint32_t static_elf_size = 0;
@@ -108,6 +156,15 @@ int test_ring3_processes(void) {
             external_status != 23)
             FAIL("ring3_processes", "external SDK ELF output/exit status failed");
         serial_print("[RING3 RESULT] external SDK application output and exit 23 PASS\n");
+
+    int permission_pid = launch_initrd_program_argv("permission_probe", NULL);
+    if (permission_pid < 0)
+        FAIL("ring3_processes", "native permission probe ELF did not launch");
+    int permission_status = -1;
+    if (sys_waitpid(permission_pid, &permission_status, 0) != permission_pid ||
+        permission_status != 0)
+        FAIL("ring3_processes", "native VFS permission probe failed");
+    serial_print("[RING3 RESULT] native SDFS permissions, syscall rights, unlink lifetime and exec checks PASS\n");
     }
 
     if (vfs_live_owned_nodes() != nodes_before)

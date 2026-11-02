@@ -12,6 +12,7 @@
 #define LIW_EFAULT  14
 #define LIW_EBUSY   16
 #define LIW_EEXIST  17
+#define LIW_ENOTEMPTY 39
 #define LIW_ENOTDIR 20
 #define LIW_EISDIR  21
 #define LIW_EINVAL  22

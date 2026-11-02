@@ -154,9 +154,9 @@ static void sched_wait_monitor(void) {
   for (;;) task_sleep_ms(1000);
 }
 
-static int waitq_workers_ready(uint32_t expected) {
+static int waitq_ready(wait_queue_t *queue, uint32_t expected) {
   for (uint32_t tick = 0; tick < 100; tick++) {
-    if (wait_queue_count(&sched_waitq) == expected) return 1;
+    if (wait_queue_count(queue) == expected) return 1;
     task_sleep_ms(10);
   }
   return 0;
@@ -181,7 +181,7 @@ int test_sched_wait_queue(void) {
     ids[i] = create_task_named(sched_waitq_worker, "waitq-worker");
     if (ids[i] < 0) FAIL("sched_wait_queue", "worker creation failed");
   }
-  if (!waitq_workers_ready(WAITQ_WORKERS))
+  if (!waitq_ready(&sched_waitq, WAITQ_WORKERS))
     FAIL("sched_wait_queue", "workers did not all block");
 
   for (int round = 0; round < WAITQ_ROUNDS; round++) {
@@ -199,7 +199,7 @@ int test_sched_wait_queue(void) {
         ASSERT(task_ticks_for(ids[i]) == ticks[i],
                "blocked waiters consumed scheduler ticks");
     }
-    if (!waitq_workers_ready(WAITQ_WORKERS))
+    if (!waitq_ready(&sched_waitq, WAITQ_WORKERS))
       FAIL("sched_wait_queue", "workers failed to requeue");
     if (round == 0) {
       ASSERT(wait_queue_wake(&sched_waitq, 3) == 3,
@@ -217,6 +217,8 @@ int test_sched_wait_queue(void) {
            "workers failed bounded round completion");
     if (round + 1 < WAITQ_ROUNDS) {
       sched_wait_round_done = 0;
+      if (!waitq_ready(&sched_wait_gate, WAITQ_WORKERS))
+        FAIL("sched_wait_queue", "workers failed to block on round gate");
       ASSERT(wait_queue_wake(&sched_wait_gate, UINT32_MAX) == WAITQ_WORKERS,
              "round gate did not release all workers");
     }
