@@ -42,6 +42,7 @@ vma_intervals
 kernel_stack_guard
 pmm_high_memory
 pmm_contract
+kheap_contract
 process_thread_ownership
 sched_sleep
 sched_priority

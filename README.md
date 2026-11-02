@@ -87,7 +87,7 @@ The build is warning-free and uses `-Werror`.
 ## Tests
 
 ```sh
-make test         # host checks + 48 top-level QEMU cases and ring-3 integration
+make test         # host checks + 49 top-level QEMU cases and ring-3 integration
 make test-unit    # harness sensitivity checks + production VMA code on host
 make test-stress  # 50,000 fixed-seed host VMA model operations
 make ring3-test   # same QEMU suite, validating its ring-3 cases

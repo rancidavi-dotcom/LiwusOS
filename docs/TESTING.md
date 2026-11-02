@@ -11,14 +11,14 @@ does not prove that the kernel is free of bugs.
 | `make test-harness` | Synthetic serial-log checks for missing/duplicate cases, missing PASS, failure/panic markers, and wrong QEMU status | Fast runner changes |
 | `make test-unit` | Harness self-checks plus the actual `src/kernel/mm/vma.c` compiled on the host with ASan/UBSan; 5,000 fixed-seed model operations | Fast development gate |
 | `make test-stress` | Same VMA source and reference model for 50,000 operations with seed `0x4c495755` | Explicit host stress |
-| `make test` | Host checks, then the 48 top-level kernel cases and the ring-3 integration group in QEMU with 2 GiB RAM | Main regression gate |
+| `make test` | Host checks, then the 49 top-level kernel cases and the ring-3 integration group in QEMU with 2 GiB RAM | Main regression gate |
 | `make ring3-test` | Repeats that same 47-case test image and ring-3 group in QEMU | Ring-3 focused reproduction |
 | `make smap-test` | Repeats the same suite with `-cpu max -smp 4 -m 4096`, checking SMAP and AP startup | Protection/SMP bring-up regression |
 | `make test-all` | Runs host, standard QEMU, ring-3, and SMAP modes serially | Pre-checkpoint validation |
 
 `make test`, `make ring3-test`, and `make smap-test` use the same test ISO and
 runner. They are three environment runs, not three independent counts of the
-same test cases. The runner reports 48 top-level cases: 47 kernel-side cases
+same test cases. The runner reports 49 top-level cases: 48 kernel-side cases
 and one `ring3_processes` integration case. That integration case emits 22
 separate `[RING3 PASS]` markers and runs PIE, Linux ABI, Linux clone/futex, and
 native C ELF probes. Those subcases are not added to the 47 count.

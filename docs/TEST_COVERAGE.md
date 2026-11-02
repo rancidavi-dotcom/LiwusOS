@@ -2,8 +2,8 @@
 
 Snapshot: 2026-11-02, branch `lean-kernel`, base commit `6afc34f` before this
 verification-framework change. The original kernel runner had 47 top-level
-cases. The current runner has 48 top-level cases after adding `pmm_contract`;
-47 are kernel-side functions and one is the `ring3_processes`
+cases. The current runner has 49 top-level cases after adding `pmm_contract`
+and `kheap_contract`; 48 are kernel-side functions and one is the `ring3_processes`
 aggregator. Its 22 ring-3 pass markers are nested subcases, not extra members
 of the 47-case denominator. `make test`, `make ring3-test`, and `make smap-test`
 repeat this same inventory with different QEMU settings.
@@ -20,7 +20,7 @@ percentage or a claim of completeness. BSP means the bootstrap processor.
 | PMM | ✓ | ✓ | ✓ | — | — | ~ | High. `pmm_high_memory` and `pmm_contract` cover high-frame allocation/access/free, distinct aligned frames, invalid/double-free accounting, contiguous claim/release, and invalid claim arguments. No exhaustion, reserved-map sweep, or allocation churn. |
 | VMM/page tables | ~ | ~ | ~ | ~ | — | ~ | High. `kernel_stack_guard` checks mappings/guard and `ring3_processes` checks user protections. No systematic map/unmap/CR3/TLB API matrix or two-mm same-VA test. |
 | VMA | ✓ | ✓ | ✓ | ~ | N/A | ✓ | Medium. `vma_intervals` plus host VMA test cover order, overlap, split, clone, heap, gaps, failure rollback and fixed-seed model stress. Host test does not exercise PTEs. |
-| Kernel heap | — | — | — | — | — | — | High. Used indirectly by kernel tests; no direct allocator invariant or failure test. |
+| Kernel heap | ✓ | ~ | ✓ | — | — | ~ | High. `kheap_contract` covers reuse, shrink/grow `krealloc`, byte preservation and page-aligned allocation. No exhaustion, invalid-free validation, allocator fault injection, or concurrent allocation stress. |
 | Exceptions/IST/stacks | ~ | ✓ | ✓ | ~ | — | ~ | High. `kernel_stack_guard` provokes a real guard #PF on IST and checks unmap; ring-3 tests expect child faults. No double-fault fixture or broad exception matrix. |
 | Scheduler | ✓ | ~ | ~ | — | ~ | ~ | High. `sched_priority`, `sched_sleep`, `sched_wait_queue`; 8 waiters/4 wake cycles and stable CPU ticks while blocked. Tests interleaving on BSP, not SMP. |
 | Processes | ✓ | ~ | ~ | ✓ | ~ | ~ | High. `process_thread_ownership` and ring-3 fork/exec/waitpid/exit tests. No systematic allocation-failure rollback, parent death, orphan lifecycle, or high-count churn. |
@@ -36,7 +36,7 @@ percentage or a claim of completeness. BSP means the bootstrap processor.
 | Memory protection/usercopy | ✓ | ✓ | ✓ | ✓ | — | ~ | High. Ring-3 tests cover NX, supervisor/read-only pages, cross-permission ranges, syscall output pointers, SMAP and stack guard. Not exhaustive for all syscalls or wraparound lengths. |
 | Fault injection/fuzz/soak | — | ~ | — | — | — | ~ | High. Host VMA test injects one allocator failure and runs fixed-seed model operations. No kernel-wide allocator fault injection, ELF/syscall fuzzing, coverage counters or soak. |
 
-## Active kernel cases (48 top-level)
+## Active kernel cases (49 top-level)
 
 The `name` is the stable test identifier used in serial output and in
 `tests/harness/kernel_cases.txt`. The listed expected result is what the case
@@ -87,6 +87,7 @@ asserts; shared SDFS state is formatted once and then reused in this order.
 | `kernel_stack_guard` | `tests/test_kstack.c` | Verifies stack/IRQ separation and guard PTEs; deliberately faults on the guard, checks IST/#PF and confirms freed mappings disappear. |
 | `pmm_high_memory` | `tests/test_pmm_high.c` | Requires RAM above 1 GiB; allocates one high frame, checks direct-map read/write and restored free-memory count. |
 | `pmm_contract` | `tests/test_pmm_contract.c` | Allocates three distinct aligned high frames, checks direct-map access and cleanup; verifies double/invalid frees do not change free count; claims/releases a contiguous range and rejects invalid claim arguments. It does not test PMM exhaustion, reserved firmware-map construction, or concurrent allocation. |
+| `kheap_contract` | `tests/test_kheap.c` | Checks free-list reuse, `krealloc` shrink/grow contents, `kmalloc_a` page alignment, null/zero `krealloc` behavior and cleanup. It does not test exhaustion, invalid frees, allocation failure or concurrency. |
 | `process_thread_ownership` | `tests/test_process_model.c` | Attaches/detaches a thread and checks process references and ownership balance. |
 | `sched_sleep` | `tests/test_sched.c` | Sleeps approximately 200 ms and checks elapsed timer ticks within a tolerance. |
 | `sched_priority` | same | Runs three priority workers and compares scheduler ticks/loop progress; timing is relative and QEMU-dependent. |
@@ -126,7 +127,7 @@ Markers are defined in `tests/harness/ring3_cases.txt` and emitted by
 The same integration group also executes an ET_DYN PIE probe, a freestanding
 Linux SYSCALL probe, a Linux clone/private-futex probe, and native `native-hello`
 through crt0 and wrappers. They have separate `[RING3 RESULT]` markers but do
-not add to the 22 `suite.c` cases or the 48 top-level count.
+not add to the 22 `suite.c` cases or the 49 top-level count.
 
 ## Known coverage holes
 

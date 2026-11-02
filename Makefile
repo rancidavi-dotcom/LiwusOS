@@ -73,6 +73,7 @@ TEST_SRCS = tests/test_runner_kernel.c \
             tests/test_vma.c \
             tests/test_pmm_high.c \
             tests/test_pmm_contract.c \
+            tests/test_kheap.c \
             tests/test_kstack.c \
             tests/test_process_model.c \
             tests/test_runner_ring3.c
