@@ -70,6 +70,7 @@ int test_ring3_processes(void);
 int test_vma_intervals(void);
 int test_kernel_stack_guard(void);
 int test_pmm_high_memory(void);
+int test_pmm_contract(void);
 int test_process_thread_ownership(void);
 
 /* ---- Global flag so kernel.c knows tests finished ---- */
@@ -200,6 +201,7 @@ void test_runner_task(void) {
     run_test(test_vma_intervals, "vma_intervals");
     run_test(test_kernel_stack_guard, "kernel_stack_guard");
     run_test(test_pmm_high_memory, "pmm_high_memory");
+    run_test(test_pmm_contract, "pmm_contract");
     run_test(test_process_thread_ownership, "process_thread_ownership");
     run_test(test_sched_sleep,    "sched_sleep");
     run_test(test_sched_priority, "sched_priority");
