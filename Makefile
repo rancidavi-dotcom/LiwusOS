@@ -321,7 +321,7 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 
 test-build: $(TEST_ISO_IMAGE)
 
-$(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF) $(RING3_PIE_ELF) $(RING3_LINUX_SYSCALL_ELF) $(RING3_LINUX_CLONE_ELF) $(LINUX_STATIC_TEST_DEP)
+$(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF) $(RING3_PIE_ELF) $(RING3_LINUX_SYSCALL_ELF) $(RING3_LINUX_CLONE_ELF) $(LINUX_STATIC_TEST_DEP) programs/native-hello/native-hello.elf
 	@mkdir -p repo-test
 	: > repo-test/test_mode
 	@mkdir -p isodir-test/boot/grub
@@ -333,12 +333,13 @@ $(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE
 	cp -f $(RING3_PIE_ELF) repo-test/pie_probe
 	cp -f $(RING3_LINUX_SYSCALL_ELF) repo-test/linux_syscall_probe
 	cp -f $(RING3_LINUX_CLONE_ELF) repo-test/linux_clone_probe
+	cp -f programs/native-hello/native-hello.elf repo-test/native_hello
 	rm -f repo-test/linux_glibc_hello
 	if test -n "$(LINUX_STATIC_ELF)"; then cp -f "$(LINUX_STATIC_ELF)" repo-test/linux_glibc_hello; fi
 	cp -f tests/ring3/invalid_elf repo-test/invalid_elf
 	tar -cf initrd-test.tar -C repo-test . --format=ustar
 	rm -f repo-test/ring3_suite
-	rm -f repo-test/exec_target repo-test/c_example repo-test/pie_probe repo-test/linux_syscall_probe repo-test/linux_clone_probe repo-test/invalid_elf
+	rm -f repo-test/exec_target repo-test/c_example repo-test/pie_probe repo-test/linux_syscall_probe repo-test/linux_clone_probe repo-test/native_hello repo-test/invalid_elf
 	cp -f initrd-test.tar isodir-test/boot/initrd.tar
 	$(GRUB) -o $@ isodir-test
 

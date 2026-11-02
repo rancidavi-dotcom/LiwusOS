@@ -83,6 +83,22 @@ int test_ring3_processes(void) {
     if (sys_io_live_pipe_objects() != pipes_before)
         FAIL("ring3_processes", "pipe objects leaked across user exit");
 
+    /* Native LiwusOS C program using crt0 + public wrappers */
+    {
+        uint64_t irq_flags;
+        asm volatile("pushfq; popq %0; cli" : "=r"(irq_flags) :: "memory");
+        int pid = launch_initrd_program_argv("native_hello", NULL);
+        if (irq_flags & (1ULL << 9)) asm volatile("sti" ::: "memory");
+        if (pid < 0)
+            FAIL("ring3_processes", "native LiwusOS ELF not launched/executed");
+        int native_status = -1;
+        if (sys_waitpid(pid, &native_status, 0) != pid)
+            FAIL("ring3_processes", "native LiwusOS ELF not reaped");
+        if (native_status != 0)
+            FAIL("ring3_processes", "native LiwusOS ELF exited with non-zero status");
+        serial_print("[RING3 RESULT] native LiwusOS crt0+wrappers+main executed\n");
+    }
+
     uint64_t free_after = pmm_get_free_memory();
     serial_print("[RING3 MEMORY] PMM free before=");
     serial_print_hex(free_before);
@@ -96,3 +112,4 @@ int test_ring3_processes(void) {
     PASS("ring3_processes");
 }
 #endif
+

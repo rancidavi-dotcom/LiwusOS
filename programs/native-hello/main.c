@@ -7,10 +7,11 @@ static size_t strlen(const char *s) {
     return n;
 }
 
-void _start(void) {
-    const char *msg = "Hello from native LiwusOS ABI!\n";
+int main(int argc, char **argv, char **envp) {
+    (void)argc;
+    (void)argv;
+    (void)envp;
+    const char *msg = "Hello from LIWUS OS!\n";
     liw_write(1, msg, strlen(msg));
-    int pid = liw_getpid();
-    (void)pid;
-    liw_exit(0);
+    return 0;
 }
