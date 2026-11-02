@@ -78,6 +78,15 @@ volatile int test_runner_done = 0;
 static int test_pass = 0;
 static int test_fail = 0;
 
+/* QEMU's isa-debug-exit device turns this into a reliable process result.
+ * It is reached only in the KERNEL_TEST image, never in production builds. */
+static void qemu_test_exit(int failed) {
+    uint8_t code = failed ? 1 : 0;
+    serial_print("[TEST HARNESS] QEMU debug-exit ");
+    serial_print(failed ? "FAIL\n" : "PASS\n");
+    asm volatile("outb %0, $0xf4" : : "a"(code));
+}
+
 static void run_test(int (*fn)(void), const char *name) {
     TEST_BEGIN(name);
     if (fn() == 0) {
@@ -104,6 +113,7 @@ void test_runner_task(void) {
         TEST_RESULT(0, 1);
         TEST_RUNNER_END;
         test_runner_done = 1;
+        qemu_test_exit(1);
         return;
     }
 
@@ -114,6 +124,7 @@ void test_runner_task(void) {
         TEST_RESULT(0, 1);
         TEST_RUNNER_END;
         test_runner_done = 1;
+        qemu_test_exit(1);
         return;
     }
 
@@ -202,6 +213,7 @@ void test_runner_task(void) {
     TEST_RUNNER_END;
 
     test_runner_done = 1;
+    qemu_test_exit(test_fail != 0);
     while (1) { asm volatile("hlt"); }
 }
 

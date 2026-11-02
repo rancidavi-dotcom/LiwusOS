@@ -99,41 +99,39 @@ USER_INIT_ELF = $(OBJ_DIR)/programs/user_init.elf
 USER_EDITOR_ELF = $(OBJ_DIR)/programs/user_editor.elf
 
 .PHONY: all run run-log test test-build ring3-test smap-test user-c-example clean
+.PHONY: test-harness test-unit test-stress test-all
+.NOTPARALLEL: test-all
 
 user-c-example: $(RING3_C_APP_ELF)
 
-ring3-test: $(TEST_ISO_IMAGE)
+ring3-test: test-unit $(TEST_ISO_IMAGE)
+	@mkdir -p test-logs
+	@serial_log=$$(mktemp test-logs/ring3-XXXXXX.serial); \
 	timeout 90 $(QEMU) -machine q35 -m 2048 -display none -monitor none \
-		-serial file:/tmp/liwusos-ring3-integration.serial -no-reboot \
-		-cdrom $(TEST_ISO_IMAGE) || test $$? -eq 124
-	@grep -E 'RING3 (PASS|FAIL|RESULT)|RESULT:|KERNEL PANIC|LIWUS_BOOT_READY' \
-		/tmp/liwusos-ring3-integration.serial || true
-	@grep -q '\[RING3 RESULT\] ALL PASS' /tmp/liwusos-ring3-integration.serial
-	@grep -q 'RESULT: ALL PASS' /tmp/liwusos-ring3-integration.serial
+		-serial file:$$serial_log -no-reboot \
+		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+		-cdrom $(TEST_ISO_IMAGE); qemu_rc=$$?; \
+	python3 tests/harness/validate_serial.py --mode ring3 \
+		--qemu-exit $$qemu_rc --log $$serial_log; check_rc=$$?; \
+	cp -f $$serial_log /tmp/liwusos-ring3-integration.serial; \
+	exit $$check_rc
 
 # Exercise usercopy, stack guards, and high physical RAM on SMEP/SMAP CPUs.
-smap-test: $(TEST_ISO_IMAGE)
-	: > /tmp/liwusos-smap-integration.serial
+smap-test: test-unit $(TEST_ISO_IMAGE)
+	@mkdir -p test-logs
+	@serial_log=$$(mktemp test-logs/smap-XXXXXX.serial); \
 	timeout 90 $(QEMU) -machine q35 -cpu max -smp 4 -m 4096 \
 		-display none -monitor none \
-		-serial file:/tmp/liwusos-smap-integration.serial \
-		-no-reboot -no-shutdown \
+		-serial file:$$serial_log \
+		-no-reboot \
+		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 		-drive file=$(DISK_IMAGE),format=raw,if=none,id=disk \
 		-device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 \
-		-cdrom $(TEST_ISO_IMAGE) || test $$? -eq 124
-	@grep -E 'CR4.SMAP enabled|AP core|Linux x86-64 SYSCALL|RESULT:|KERNEL PANIC|LIWUS_BOOT_READY' \
-		/tmp/liwusos-smap-integration.serial || true
-	@grep -q 'VMM: CR4.SMAP enabled' /tmp/liwusos-smap-integration.serial
-	@grep -q 'APIC: AP core (APIC ID 3) booted and initialized successfully!' \
-		/tmp/liwusos-smap-integration.serial
-	@grep -q 'RESULT: 47/47 PASS' /tmp/liwusos-smap-integration.serial
-	@grep -q 'RESULT: ALL PASS' /tmp/liwusos-smap-integration.serial
-	@grep -q 'Linux x86-64 SYSCALL getpid/fstat/openat/mmap/munmap/FS-TLS/write PASS' \
-		/tmp/liwusos-smap-integration.serial
-	@if test -n "$(LINUX_STATIC_ELF)"; then \
-		grep -q 'unmodified static GNU/Linux ELF PASS' \
-			/tmp/liwusos-smap-integration.serial; \
-	fi
+		-cdrom $(TEST_ISO_IMAGE); qemu_rc=$$?; \
+	python3 tests/harness/validate_serial.py --mode smap \
+		--qemu-exit $$qemu_rc --log $$serial_log; check_rc=$$?; \
+	cp -f $$serial_log /tmp/liwusos-smap-integration.serial; \
+	exit $$check_rc
 
 all: $(KERNEL_BIN) $(ISO_IMAGE)
 
@@ -319,6 +317,26 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 # Testes (kernel-side)
 # ------------------------------------------------------------
 
+test-harness:
+	python3 tests/harness/validate_serial.py --self-test
+
+test-unit: test-harness $(TEST_OBJ_DIR)/host/test_vma_host
+	$(TEST_OBJ_DIR)/host/test_vma_host
+
+test-stress: $(TEST_OBJ_DIR)/host/test_vma_host
+	$(TEST_OBJ_DIR)/host/test_vma_host --stress
+
+test-all: test-unit test ring3-test smap-test
+
+$(TEST_OBJ_DIR)/host/test_vma_host: tests/host/test_vma_host.c src/kernel/mm/vma.c \
+		include/kernel/vma.h include/kernel/vmm.h include/kernel/kheap.h \
+		include/kernel/usercopy.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O1 -g -Wall -Wextra -Werror \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		-Iinclude/kernel -Iinclude -o $@ tests/host/test_vma_host.c \
+		src/kernel/mm/vma.c
+
 test-build: $(TEST_ISO_IMAGE)
 
 $(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE) $(RING3_USER_ELF) $(RING3_EXEC_ELF) $(RING3_C_APP_ELF) $(RING3_PIE_ELF) $(RING3_LINUX_SYSCALL_ELF) $(RING3_LINUX_CLONE_ELF) $(LINUX_STATIC_TEST_DEP) programs/native-hello/native-hello.elf
@@ -343,17 +361,19 @@ $(TEST_ISO_IMAGE): Makefile $(TEST_KERNEL_BIN) $(BOOT_DIR)/grub.cfg $(DISK_IMAGE
 	cp -f initrd-test.tar isodir-test/boot/initrd.tar
 	$(GRUB) -o $@ isodir-test
 
-test: $(TEST_ISO_IMAGE)
-	rm -f test_serial.log
+test: test-unit $(TEST_ISO_IMAGE)
+	@mkdir -p test-logs
+	@serial_log=$$(mktemp test-logs/test-XXXXXX.serial); \
 	timeout 90 $(QEMU) -machine q35 -m 2048 -display none -monitor none \
-		-serial file:test_serial.log -no-reboot \
+		-serial file:$$serial_log -no-reboot \
+		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 		-drive file=$(DISK_IMAGE),format=raw,if=none,id=disk \
 		-device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 \
-		-cdrom $(TEST_ISO_IMAGE) || true
-	@echo "---- serial ----"
-	@grep -E '=== TEST RUNNER|RESULT:|FAIL|KERNEL PANIC|LIWUS_BOOT_READY' test_serial.log || true
-	@if grep -q 'RESULT: ALL PASS' test_serial.log; then echo "TESTES OK"; \
-	 else echo "TESTES FALHARAM"; exit 1; fi
+		-cdrom $(TEST_ISO_IMAGE); qemu_rc=$$?; \
+	python3 tests/harness/validate_serial.py --mode test \
+		--qemu-exit $$qemu_rc --log $$serial_log; check_rc=$$?; \
+	cp -f $$serial_log test_serial.log; \
+	exit $$check_rc
 
 # ------------------------------------------------------------
 # Execucao

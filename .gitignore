@@ -33,6 +33,7 @@ liwus_disk.img
 test_serial.log
 qemu_serial.log
 qemu_debug.log
+test-logs/
 
 # Editor / OS
 .DS_Store
