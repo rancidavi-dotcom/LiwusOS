@@ -72,6 +72,67 @@ cleanup:
     return result;
 }
 
+static int exercise_directory_wrapper(void) {
+    static const char directory[] = "/sdk_enum_dir";
+    static const char file_path[] = "/sdk_enum_dir/entry";
+    static const char empty_path[] = "/sdk_empty_dir";
+    struct liw_dirent entry;
+    int dirfd = -1, filefd = -1, emptyfd = -1;
+    int made_dir = 0, made_file = 0, made_empty = 0;
+    int result = 1;
+
+    if (liw_mkdir(directory, 0700) < 0) goto cleanup;
+    made_dir = 1;
+    filefd = liw_open(file_path, LIW_O_CREAT | LIW_O_TRUNC);
+    if (filefd < 0) goto cleanup;
+    made_file = 1;
+    if (liw_write_all(filefd, "x", 1) < 0 ||
+        liw_getdents((unsigned int)filefd, &entry, sizeof(entry)) != -LIW_ENOTDIR ||
+        liw_close(filefd) < 0) goto cleanup;
+    filefd = -1;
+    dirfd = liw_open(directory, 0);
+    if (dirfd < 0 || liw_getdents(31, &entry, sizeof(entry)) != -LIW_EBADF ||
+        liw_getdents((unsigned int)dirfd, NULL, sizeof(entry)) != -LIW_EFAULT ||
+        liw_getdents((unsigned int)dirfd, &entry, 1) != -LIW_EINVAL)
+        goto cleanup;
+
+    void *readonly = liw_mmap(NULL, 4096, LIW_PROT_READ,
+        LIW_MAP_PRIVATE | LIW_MAP_ANONYMOUS, -1, 0);
+    if (readonly == LIW_MAP_FAILED) goto cleanup;
+    int readonly_result = (int)liw_getdents((unsigned int)dirfd, readonly,
+                                             sizeof(entry));
+    liw_munmap(readonly, 4096);
+    if (readonly_result != -LIW_EFAULT) goto cleanup;
+
+    long bytes = liw_getdents((unsigned int)dirfd, &entry, sizeof(entry));
+    if (bytes != (long)sizeof(entry) || entry.d_reclen != sizeof(entry) ||
+        entry.d_off != 1 || liw_strcmp(entry.d_name, "entry") != 0 ||
+        entry.d_type != LIW_DT_REG ||
+        liw_getdents((unsigned int)dirfd, &entry, sizeof(entry)) != 0)
+        goto cleanup;
+    if (liw_close(dirfd) < 0) goto cleanup;
+    dirfd = -1;
+
+    if (liw_getdents(31, &entry, sizeof(entry)) != -LIW_EBADF ||
+        liw_mkdir(empty_path, 0700) < 0)
+        goto cleanup;
+    made_empty = 1;
+    emptyfd = liw_open(empty_path, 0);
+    if (emptyfd < 0 || liw_getdents((unsigned int)emptyfd, &entry,
+                                     sizeof(entry)) != 0)
+        goto cleanup;
+    result = 0;
+
+cleanup:
+    if (filefd >= 0) liw_close(filefd);
+    if (dirfd >= 0) liw_close(dirfd);
+    if (emptyfd >= 0) liw_close(emptyfd);
+    if (made_file) liw_unlink(file_path);
+    if (made_dir) liw_rmdir(directory);
+    if (made_empty) liw_rmdir(empty_path);
+    return result;
+}
+
 int main(int argc, char **argv, char **envp) {
     if (argc == 2 && argv && same(argv[1], "--sdk-child")) {
         if (!same(argv[0], "native-hello.lxe") || !has_sdk_environment(envp) ||
@@ -115,6 +176,7 @@ int main(int argc, char **argv, char **envp) {
         if (!pipe_ok || close_duplicate < 0 || close_writer < 0 || close_reader < 0)
             return 88;
         if (exercise_file_wrappers() != 0) return 89;
+        if (exercise_directory_wrapper() != 0) return 93;
 
         long child = liw_fork();
         if (child < 0) return 90;

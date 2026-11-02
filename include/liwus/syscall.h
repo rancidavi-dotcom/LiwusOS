@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "liwus/dirent.h"
 #include "liwus/stat.h"
 
 #ifdef __cplusplus
@@ -36,6 +37,7 @@ int liw_munmap(void *addr, size_t len);
 long liw_lseek(int fd, int32_t offset, int whence);
 long liw_stat(const char *path, struct liw_stat *out);
 long liw_fstat(int fd, struct liw_stat *out);
+long liw_getdents(unsigned int fd, struct liw_dirent *buffer, size_t count);
 long liw_gettimeofday(struct liw_timeval *out, void *timezone);
 long liw_unlink(const char *path);
 long liw_mkdir(const char *path, uint32_t mode);

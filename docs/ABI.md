@@ -70,6 +70,16 @@ selector.
 Numbers 9, 12 and 13 are unused. Numbers and semantics are LiwusOS-specific:
 they are not Linux syscall numbers and must not be interpreted as such.
 
+`getdents` uses the fixed native `struct liw_dirent` from
+`include/liwus/dirent.h` and the SDK wrapper `liw_getdents()`. Each returned
+record is 280 bytes, includes a NUL-terminated 256-byte name field, and sets
+`d_off` to the next directory index. `d_type` is `LIW_DT_DIR` or `LIW_DT_REG`
+when the VFS can resolve the entry, and `LIW_DT_UNKNOWN` otherwise. A zero
+return means end of directory; an undersized buffer returns `-EINVAL` when an
+entry remains. Invalid descriptors, non-directories, and invalid output memory
+return `-EBADF`, `-ENOTDIR`, and `-EFAULT` respectively. Descriptors retain
+their VFS node through the open file description until the final close.
+
 ## 3. Return values and errno (current state)
 
 The native ABI is **not uniform** today. It mixes:

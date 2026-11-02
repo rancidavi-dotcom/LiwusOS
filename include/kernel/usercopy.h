@@ -20,7 +20,9 @@
 #define USER_PIE_BASE   0x0000555555554000ULL
 
 #define EFAULT  14
+#define EBADF    9
 #define E2BIG    7
+#define EIO      5
 #define ENOEXEC  8
 #define EINVAL  22
 #define ENOMEM  12

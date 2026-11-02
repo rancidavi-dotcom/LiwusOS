@@ -8,7 +8,7 @@ libliwus.a: syscall.o crt.o string.o
 	rm -f $@
 	$(AR) rcs $@ $^
 
-syscall.o: syscall.c ../../include/liwus/syscall.h ../../include/liwus/stat.h ../../include/uapi/syscall_nums.h
+syscall.o: syscall.c $(wildcard ../../include/liwus/*.h) ../../include/uapi/syscall_nums.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 crt0.o: crt0.S

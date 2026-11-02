@@ -1362,8 +1362,8 @@ int sys_gettimeofday(void *tv, void *tz) {
   return 0;
 }
 
-// Minimal getdents: returns buffer filled with struct dirent entries
-// struct dirent from newlib (64-bit):
+// Native fixed-record directory enumeration. The public layout is
+// include/liwus/dirent.h; records contain no kernel pointers.
 struct kernel_dirent {
   uint64_t d_ino;
   int64_t  d_off;
@@ -1378,37 +1378,51 @@ struct kernel_dirent {
 
 int sys_getdents(uint32_t fd, void *buf, uint32_t count) {
   kfile_t *fd_table = get_fd_table();
-  if (fd >= 32 || fd_table[fd].type != FD_TYPE_FILE) {
-    return -1;
-  }
-  if (count && validate_user_write(buf, count) < 0) return -EFAULT;
+  if (fd >= 32 || fd_table[fd].type == FD_TYPE_FREE) return -EBADF;
+  if (fd_table[fd].type != FD_TYPE_FILE) return -ENOTDIR;
+  if (count == 0) return 0;
+  if (!buf || validate_user_write(buf, count) < 0) return -EFAULT;
 
   kfile_t *f = &fd_table[fd];
-  if (!f->socket_ptr) return -1;
+  if (!f->socket_ptr) return -EBADF;
   
   fs_node_t *node = (fs_node_t *)f->socket_ptr;
-  if (!(node->flags & FS_DIRECTORY)) return -1;
+  if (!(node->flags & FS_DIRECTORY) || !node->readdir) return -ENOTDIR;
   
   // Use f->offset as directory entry index
   uint32_t *offset = file_offset(f);
   uint32_t index = *offset;
   uint32_t pos = 0;
   
-  while (pos + (uint32_t)sizeof(struct kernel_dirent) <= count) {
+  while (pos <= count && count - pos >= sizeof(struct kernel_dirent)) {
     struct dirent *vfs_dirent = readdir_fs(node, index);
     if (!vfs_dirent) break;
+
+    size_t name_length = 0;
+    while (name_length < sizeof(vfs_dirent->name) &&
+           vfs_dirent->name[name_length]) name_length++;
+    if (name_length == 0 || name_length == sizeof(vfs_dirent->name)) {
+      *offset = index;
+      return pos ? (int)pos : -EIO;
+    }
     
     struct kernel_dirent kd;
     memset(&kd, 0, sizeof(kd));
     
-    kd.d_ino = index + 1;
-    kd.d_off = sizeof(struct kernel_dirent);
+    kd.d_ino = vfs_dirent->ino;
+    kd.d_off = (int64_t)index + 1;
     kd.d_reclen = sizeof(struct kernel_dirent);
+    fs_node_t *child = finddir_fs(node, vfs_dirent->name);
+    if (child) {
+      kd.d_type = (child->flags & FS_DIRECTORY) ? K_DT_DIR : K_DT_REG;
+      vfs_node_put(child);
+    }
+    memcpy(kd.d_name, vfs_dirent->name, name_length);
     
-    strncpy(kd.d_name, vfs_dirent->name, 255);
-    kd.d_name[255] = '\0';
-    
-    if (copy_to_user((char *)buf + pos, &kd, sizeof(kd)) < 0) return -EFAULT;
+    if (copy_to_user((char *)buf + pos, &kd, sizeof(kd)) < 0) {
+      *offset = index;
+      return pos ? (int)pos : -EFAULT;
+    }
     
     pos += sizeof(struct kernel_dirent);
     index++;
@@ -1416,8 +1430,10 @@ int sys_getdents(uint32_t fd, void *buf, uint32_t count) {
   
   // Update offset with how many entries we read
   *offset = index;
-  f->offset = index;
   
+  if (pos == 0 && index < UINT32_MAX &&
+      readdir_fs(node, index) != NULL && count < sizeof(struct kernel_dirent))
+    return -EINVAL;
   return (int)pos;
 }
 

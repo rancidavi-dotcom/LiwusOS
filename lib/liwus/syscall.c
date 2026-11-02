@@ -110,6 +110,10 @@ long liw_fstat(int fd, struct liw_stat *out) {
     return liw_syscall2(SYS_FSTAT, fd, (long)out);
 }
 
+long liw_getdents(unsigned int fd, struct liw_dirent *buffer, size_t count) {
+    return liw_syscall3(SYS_GETDENTS, fd, (long)buffer, (long)count);
+}
+
 long liw_gettimeofday(struct liw_timeval *out, void *timezone) {
     return liw_syscall2(SYS_GETTIMEOFDAY, (long)out, (long)timezone);
 }
