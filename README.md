@@ -134,3 +134,18 @@ MIT. See [LICENSE](LICENSE).
 - **Linux x86-64 compatibility (PAUSED)**: The isolated Linux personality implements a limited, tested subset. The current probes are regression evidence, not general Linux application compatibility. Expansion is paused to prioritize the native Liwus ABI. Documentation for resuming: [docs/linux-compat/HANDOFF.md](docs/linux-compat/HANDOFF.md), [docs/linux-compat/IMPLEMENTATION_STATUS.md](docs/linux-compat/IMPLEMENTATION_STATUS.md), [docs/linux-compat/RESUME_PLAN.md](docs/linux-compat/RESUME_PLAN.md), [docs/linux-compat/KNOWN_ISSUES.md](docs/linux-compat/KNOWN_ISSUES.md), [docs/linux-compat/REPRODUCIBILITY.md](docs/linux-compat/REPRODUCIBILITY.md). See also [docs/ABI_LINUX.md](docs/ABI_LINUX.md).
 - **Native Liwus ABI**: Native ABI is primary. Development docs: [docs/native-abi/ARCHITECTURE.md](docs/native-abi/ARCHITECTURE.md), [docs/native-abi/SYSCALL_REFERENCE.md](docs/native-abi/SYSCALL_REFERENCE.md), [docs/native-abi/DEVELOPMENT_PLAN.md](docs/native-abi/DEVELOPMENT_PLAN.md), [docs/native-abi/GETTING_STARTED.md](docs/native-abi/GETTING_STARTED.md).
 - **Project handoff (central entry)**: [docs/PROJECT_HANDOFF.md](docs/PROJECT_HANDOFF.md)
+# Install native applications
+
+Compile an external static `.lxe` with the Native SDK, stop QEMU, and install
+it into an existing SDFS disk image:
+
+```sh
+make sdk-install SDK_PREFIX=/tmp/liwus-sdk
+make app-install APP=/path/to/app.lxe DISK=/path/to/liwus.img
+make run
+```
+
+Use `REPLACE=1` to update an existing `/bin` entry. The installer is a host
+tool and requires the disk image to be offline. See
+[`docs/SDFS_INSTALL.md`](docs/SDFS_INSTALL.md) for ELF checks, persistence
+behavior, safety limits, and `make app-install-test`.

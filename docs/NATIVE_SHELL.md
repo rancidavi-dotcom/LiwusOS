@@ -54,13 +54,21 @@ filesystem utility is implied.
 ## Add an application
 
 Build a static LIWUS ELF64 executable with the installed SDK as described in
-[SDK_LXE.md](SDK_LXE.md). Add the resulting file to the initrd under
-`bin/<name>.lxe` (and, if desired, at the initrd root for the current-directory
-lookup). The shell has no per-application registry or name table. On a fresh
-filesystem the normal first-boot installer copies initrd files into SDFS. An
-already-installed persistent SDFS is not automatically updated when an ISO is
-rebuilt; use a fresh test disk or install the file through a later filesystem
-utility milestone.
+[SDK_LXE.md](SDK_LXE.md). For a new app, install it into the existing SDFS
+image with the host-side offline installer, then boot that same image and run
+the bare name through `/bin` lookup:
+
+```sh
+make app-install APP=/path/to/my-app.lxe DISK=/path/to/liwus.img
+make run
+# At liwus>:
+my-app.lxe
+```
+
+Stop QEMU before installation. Use `REPLACE=1` to update a name already in
+`/bin`. See [SDFS_INSTALL.md](SDFS_INSTALL.md) for image validation and the
+filesystem's actual replacement and crash-safety limits. There is no
+per-application kernel or shell registry.
 
 ## Regression coverage
 

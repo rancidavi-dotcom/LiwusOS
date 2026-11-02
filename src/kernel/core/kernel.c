@@ -388,11 +388,14 @@ static void init_filesystem(int kernel_test_mode) {
                 if (mb2_mods_count > 0) {
                     initrd_copy_to_sdfs(NULL);
                 }
+                /* The installed marker allocates its own data block. Persist
+                 * it before declaring the first-boot copy complete, otherwise
+                 * a reboot can leave a referenced marker block marked free. */
+                sdfs_create_file("/.system_installed");
+                sdfs_write_file("/.system_installed", (uint8_t *)"1", 1);
                 sdfs_flush_bitmap();
                 ata_flush_cache();
                 ata_set_writeback(0);
-                sdfs_create_file("/.system_installed");
-                sdfs_write_file("/.system_installed", (uint8_t *)"1", 1);
                 serial_print("System installed to disk.\n");
             } else {
                 kfree(flag);
@@ -419,6 +422,7 @@ static void init_filesystem(int kernel_test_mode) {
     }
     sdfs_create_file("/.system_installed");
     sdfs_write_file("/.system_installed", (uint8_t *)"1", 1);
+    sdfs_flush_bitmap();
 }
 
 /* The kernel starts only the user-mode init process. Init owns shell restart

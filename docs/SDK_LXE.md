@@ -32,8 +32,10 @@ build/liwus-sdk/
   share/liwus/elf64.ld # static x86-64 ELF linker script
 ```
 
-`make all` also puts the sample at `/bin/native-hello.lxe` in the initrd. The
-shell's existing `/bin` lookup lets it be run as `native-hello.lxe`.
+`make all` also puts the sample at `/bin/native-hello.lxe` in the initrd. On
+the first normal boot, those initrd files are copied into SDFS and the
+`/.system_installed` marker prevents copying them again on later boots. The
+shell's existing `/bin` lookup lets the sample be run as `native-hello.lxe`.
 
 ## Build another program
 
@@ -85,6 +87,19 @@ Run the SDK build and regression with:
 make sdk
 make test
 ```
+
+Install an application built outside the kernel tree into an existing SDFS
+V2 image while that image is offline:
+
+```sh
+make app-install APP=/path/to/my-app.lxe DISK=/path/to/liwus.img
+make app-install APP=/path/to/my-app.lxe DISK=/path/to/liwus.img REPLACE=1
+```
+
+The second command is needed only when `/bin/my-app.lxe` already exists.
+Details, validation rules, safety limits, and a multi-boot persistence test
+are documented in [SDFS_INSTALL.md](SDFS_INSTALL.md). The installer is a host
+tool; it does not add a shell command or run in ring 3.
 
 The automated regression checks runtime behavior and ELF loading. Inspect the
 generated headers, archive, linker script, and `readelf -h -l

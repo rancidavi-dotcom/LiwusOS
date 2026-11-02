@@ -107,9 +107,9 @@ SDK_CRT0 = build/liwus-sdk/lib/crt0.o
 SDK_LINKER_SCRIPT = build/liwus-sdk/share/liwus/elf64.ld
 SDK_HEADERS_STAMP = build/liwus-sdk/include/.headers-installed
 
-.PHONY: all run run-log test test-build ring3-test smap-test user-c-example sdk sdk-install liwsh external-sdk-build shell-test clean
-.PHONY: test-harness test-unit test-stress test-all
-.NOTPARALLEL: test-all sdk shell-test
+.PHONY: all run run-log test test-build ring3-test smap-test user-c-example sdk sdk-install liwsh external-sdk-build shell-test app-install clean
+.PHONY: test-harness test-unit test-stress test-all app-install-test
+.NOTPARALLEL: test-all sdk shell-test app-install-test
 
 user-c-example: $(RING3_C_APP_ELF)
 
@@ -137,6 +137,18 @@ external-sdk-build: $(EXTERNAL_SDK_TEST_LXE)
 
 shell-test: all external-sdk-build test-unit
 	python3 tests/harness/run_shell_integration.py
+
+# Offline installer regressions: host SDFS/ELF cases plus one temporary disk
+# reused across first boot, install, update, and later boots. Never touches
+# liwus_disk.img.
+app-install-test: all test-unit
+	python3 tests/install/test_sdfs_installer.py
+	python3 tests/install/run_persistence_test.py
+
+app-install: sdk
+	@test -n "$(APP)" || { echo "usage: make app-install APP=program.lxe DISK=existing-sdfs.img [REPLACE=1]" >&2; exit 2; }
+	@test -n "$(DISK)" || { echo "DISK must name an existing offline SDFS image" >&2; exit 2; }
+	python3 tools/liwus_sdfs_install.py --app "$(APP)" --disk "$(DISK)" $(if $(filter 1 yes true,$(REPLACE)),--replace,)
 
 $(EXTERNAL_SDK_TEST_LXE): tests/external_sdk/build_external.py \
 		$(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
