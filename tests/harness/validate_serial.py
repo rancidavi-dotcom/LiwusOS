@@ -24,6 +24,7 @@ RING3_RESULTS = [
     "Linux x86-64 SYSCALL getpid/fstat/openat/mmap/munmap/FS-TLS/write PASS",
     "Linux clone, private futex WAIT/WAKE, shared-mm, independent FS TLS, thread exit PASS",
     "native LIWUS .lxe ELF via crt0+SDK wrappers executed",
+    "external SDK application output and exit 23 PASS",
     "kernel observed clean user exit",
 ]
 
@@ -89,6 +90,11 @@ def validate(log: str, mode: str, qemu_exit: int) -> list[str]:
         count = log.count(marker)
         if count != 1:
             errors.append(f"expected exactly one {marker!r}, found {count}")
+    for marker in ("[EXTERNAL SDK] running; pid=",
+                   "External LIWUS application running."):
+        count = log.count(marker)
+        if count != 1:
+            errors.append(f"expected external application output {marker!r} once, found {count}")
     for marker in ("[RING3 RESULT] ALL PASS", "[RING3 RESULT] ET_DYN PIE executed at USER_PIE_BASE"):
         count = log.count(marker)
         if count != 1:
@@ -107,6 +113,8 @@ def _synthetic_log(mode: str) -> str:
     for name in KERNEL_CASES:
         lines.extend((f"[TEST] {name}", f"  PASS: {name}"))
     lines.extend(f"[RING3 PASS] {case}" for case in RING3_CASES)
+    lines.extend(("[EXTERNAL SDK] running; pid=123",
+                  "External LIWUS application running."))
     lines.extend(f"[RING3 RESULT] {result}" for result in RING3_RESULTS)
     lines.extend(("[RING3 RESULT] ALL PASS",
                   f"RESULT: {len(KERNEL_CASES)}/{len(KERNEL_CASES)} PASS",

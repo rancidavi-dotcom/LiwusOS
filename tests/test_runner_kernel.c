@@ -84,8 +84,8 @@ static int test_fail = 0;
  * It is reached only in the KERNEL_TEST image, never in production builds. */
 static void qemu_test_exit(int failed) {
     uint8_t code = failed ? 1 : 0;
-    serial_print("[TEST HARNESS] QEMU debug-exit ");
-    serial_print(failed ? "FAIL\n" : "PASS\n");
+    serial_print(failed ? "[TEST HARNESS] QEMU debug-exit FAIL\n"
+                        : "[TEST HARNESS] QEMU debug-exit PASS\n");
     asm volatile("outb %0, $0xf4" : : "a"(code));
 }
 

@@ -129,7 +129,11 @@ The same integration group also executes an ET_DYN PIE probe, a freestanding
 Linux SYSCALL probe, a Linux clone/private-futex probe, and native
 `native-hello.lxe` through crt0 and SDK wrappers. They have separate
 `[RING3 RESULT]` markers but do not add to the 23 `suite.c` cases or the 49
-top-level count.
+top-level count. It also runs an external SDK-built ELF64 app and checks its
+stdout and raw status 23; that result is separately validated by the serial
+harness. The independent `make shell-test` drives the booted ring-3 shell over
+QEMU COM1 and is not part of the 49/23 baseline manifests. `make test-unit`
+also runs the bounded shell parser cases under ASan/UBSan.
 
 ## Known coverage holes
 

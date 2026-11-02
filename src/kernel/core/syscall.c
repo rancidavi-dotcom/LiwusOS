@@ -607,11 +607,11 @@ int sys_read(int fd, void *buf, uint32_t count) {
             if ((int)(timer_ticks - start) >= timeout_ticks) {
                 return 0; // timeout
             }
-            switch_task();
+            task_sleep_ms(10);
         }
     } else {
         while (!keyboard_pop_char(&c) && !serial_pop_char(&c)) {
-            switch_task();
+            task_sleep_ms(10);
         }
     }
 

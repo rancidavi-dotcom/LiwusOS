@@ -45,8 +45,8 @@ Linux ABI compatibility layer. See [docs/ROADMAP.md](docs/ROADMAP.md).
 | Filesystem | VFS + SDFS on ATA/AHCI disks: journal, CRC32, permissions, rename |
 | Initrd | tar archive installed into SDFS on first boot |
 | Drivers | ACPI, PCI, AHCI, ATA (PIO and bus-master DMA), PS/2 keyboard and mouse, serial, VGA text |
-| Shell | Ring-3 shell with pipes, redirection and background jobs |
-| Tests | 49 named kernel/integration cases, 23 ring-3 subcases and host VMA model tests |
+| Shell | LIWUS SDK v0.1 process shell in ring 3; serial/keyboard input, built-ins and `.lxe` fork/exec/wait |
+| Tests | 49 named kernel/integration cases, 23 ring-3 subcases and host VMA/parser tests |
 
 ## Not implemented (yet)
 
@@ -94,6 +94,8 @@ make ring3-test   # same QEMU suite, validating its ring-3 cases
 make smap-test    # same suite with SMAP and 4 vCPUs initialized
 make test-all     # all listed quick and QEMU gates, serially
 make sdk          # package SDK headers/library/CRT/linker and native-hello.lxe
+make sdk-install SDK_PREFIX=/tmp/liwus-sdk  # install public SDK to a chosen prefix
+make shell-test   # real QEMU serial input through shell and external SDK app
 ```
 
 QEMU runs have a 90-second timeout and must exit through `isa-debug-exit` with
@@ -104,8 +106,9 @@ in ignored `test-logs/`; `test_serial.log` is the latest standard run. See
 for the case inventory and explicit gaps.
 
 The Native SDK v0.1 and `.lxe` ELF convention are documented in
-[docs/SDK_LXE.md](docs/SDK_LXE.md). `make all` installs the example at
-`/bin/native-hello.lxe` in the initrd.
+[docs/SDK_LXE.md](docs/SDK_LXE.md). The native userspace shell is described in
+[docs/NATIVE_SHELL.md](docs/NATIVE_SHELL.md). `make all` puts `liwsh.lxe` at
+`/bin/liwsh.lxe` and the example at `/bin/native-hello.lxe` in the initrd.
 
 ## Documentation
 

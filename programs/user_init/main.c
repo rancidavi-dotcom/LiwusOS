@@ -19,7 +19,7 @@ static void say(const char *text) {
 
 int main(int argc, char **argv, char **envp) {
     (void)argc; (void)argv; (void)envp;
-    char *shell_argv[] = { "liwus_shell", NULL };
+    char *shell_argv[] = { "liwsh.lxe", NULL };
 
     say("[init] user process supervisor started\n");
     for (;;) {
@@ -31,7 +31,7 @@ int main(int argc, char **argv, char **envp) {
             continue;
         }
         if (pid == 0) {
-            liw_execve("liwus_shell", shell_argv, NULL);
+            liw_execve("/bin/liwsh.lxe", shell_argv, envp);
             say("[init] could not load liwus_shell\n");
             liw_exit(127);
         }

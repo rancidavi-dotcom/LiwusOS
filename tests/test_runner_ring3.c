@@ -92,6 +92,24 @@ int test_ring3_processes(void) {
         serial_print("[RING3 RESULT] native LIWUS .lxe ELF via crt0+SDK wrappers executed\n");
     }
 
+    /* This ELF is compiled from a generated project in /tmp using only an
+     * isolated sdk-install prefix; its source never includes kernel headers. */
+    {
+        char *external_argv[] = { "external-test.lxe", "demo", NULL };
+        uint64_t irq_flags;
+        asm volatile("pushfq; popq %0; cli" : "=r"(irq_flags) :: "memory");
+        int external_pid = launch_initrd_program_argv("external-test.lxe",
+                                                       external_argv);
+        if (irq_flags & (1ULL << 9)) asm volatile("sti" ::: "memory");
+        if (external_pid < 0)
+            FAIL("ring3_processes", "external SDK ELF did not load");
+        int external_status = -1;
+        if (sys_waitpid(external_pid, &external_status, 0) != external_pid ||
+            external_status != 23)
+            FAIL("ring3_processes", "external SDK ELF output/exit status failed");
+        serial_print("[RING3 RESULT] external SDK application output and exit 23 PASS\n");
+    }
+
     if (vfs_live_owned_nodes() != nodes_before)
         FAIL("ring3_processes", "VFS lookup nodes leaked across native/Linux SDK probes");
     if (sys_io_live_file_descriptions() != files_before)
