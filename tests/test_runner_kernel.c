@@ -23,11 +23,13 @@ int test_sdfs_dir_create(void);
 int test_sdfs_dir_list(void);
 int test_sdfs_dir_not_empty(void);
 int test_sdfs_nested_dirs(void);
+int test_sdfs_concurrent_mutations(void);
 
 int test_sdfs_rename_file(void);
 int test_sdfs_rename_dir(void);
 int test_sdfs_rename_not_found(void);
 int test_sdfs_rename_overwrite(void);
+int test_sdfs_rename_journal_atomic(void);
 
 int test_sdfs_delete_file(void);
 int test_sdfs_delete_nonexistent(void);
@@ -168,12 +170,14 @@ void test_runner_task(void) {
     run_test(test_sdfs_dir_list,      "sdfs_dir_list");
     run_test(test_sdfs_dir_not_empty, "sdfs_dir_not_empty");
     run_test(test_sdfs_nested_dirs,   "sdfs_nested_dirs");
+    run_test(test_sdfs_concurrent_mutations, "sdfs_concurrent_mutations");
 
     /* ---- Rename tests ---- */
     run_test(test_sdfs_rename_file,         "sdfs_rename_file");
     run_test(test_sdfs_rename_dir,          "sdfs_rename_dir");
     run_test(test_sdfs_rename_not_found,    "sdfs_rename_not_found");
     run_test(test_sdfs_rename_overwrite,    "sdfs_rename_overwrite");
+    run_test(test_sdfs_rename_journal_atomic, "sdfs_rename_journal_atomic");
 
     /* ---- Delete tests ---- */
     run_test(test_sdfs_delete_file,            "sdfs_delete_file");

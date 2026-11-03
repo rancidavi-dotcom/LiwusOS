@@ -17,6 +17,7 @@
 cpu_local_t cpus_local[16];
 spinlock_t scheduler_lock = {0};
 task_t *task_list = NULL;
+static volatile int tasking_initialized;
 process_t *process_list = NULL;
 static inline int task_quantum(const task_t *t);
 
@@ -299,6 +300,13 @@ static void process_wake_parent(process_t *process) {
 
 static void task_mark_zombie_locked(thread_t *thread, int status) {
   if (!thread) return;
+  if (thread->kernel_mutex_depth != 0) {
+    /* Do not free a thread while it owns a sleepable kernel transaction. Its
+     * final unlock will deliver the deferred termination request. */
+    thread->pending_kill = 1;
+    thread->pending_kill_status = status;
+    return;
+  }
   if (thread->waiting_on)
     wait_queue_unlink_locked(thread->waiting_on, thread);
   thread->exit_status = status;
@@ -397,7 +405,10 @@ void init_tasking() {
   task_list = init_task;
 
   set_current_task(init_task);
+  tasking_initialized = 1;
 }
+
+bool tasking_is_initialized(void) { return tasking_initialized != 0; }
 
 int create_task(void (*entry_point)()) {
   return create_task_named(entry_point, NULL);

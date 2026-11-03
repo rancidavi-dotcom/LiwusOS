@@ -9,6 +9,7 @@
 #include "string.h"
 #include "timer.h"
 #include "spinlock.h"
+#include "sleep_mutex.h"
 
 static int sdfs_mounted = 0;
 static int sdfs_corrupt_mount = 0;
@@ -26,7 +27,10 @@ static uint32_t disk_format_version;
 static uint8_t *bitmap_cache = NULL;
 static uint32_t bitmap_bytes;
 static uint32_t bitmap_dirty_ops = 0;
-static spinlock_t metadata_write_lock = {0};
+static sleep_mutex_t metadata_write_lock = SLEEP_MUTEX_INITIALIZER;
+/* SDFS currently has one allocation bitmap and one journal. Serialize its
+ * metadata and data-chain mutations across sleeping block I/O. */
+static sleep_mutex_t sdfs_mutation_lock = SLEEP_MUTEX_INITIALIZER;
 
 #ifdef KERNEL_TEST
 static uint32_t sdfs_fail_write_block = UINT32_MAX;
@@ -166,6 +170,33 @@ static int sdfs_zero_block(uint32_t block) {
     return ret;
 }
 
+static int sdfs_metadata_write_blocks(uint32_t *blocks, uint8_t **buffers,
+                                      uint32_t count) {
+    if (!blocks || !buffers || count == 0 ||
+        count > SDFS_JOURNAL_MAX_ENTRIES) return -1;
+
+    if (sleep_mutex_lock(&metadata_write_lock) != 0) return -1;
+    int ret = -1;
+    if (sdfs_journal_begin() != 0) goto out;
+    for (uint32_t i = 0; i < count; i++) {
+        if (!buffers[i] ||
+            sdfs_journal_write_block(blocks[i], buffers[i]) != 0) {
+            sdfs_journal_abort();
+            goto out;
+        }
+    }
+    if (sdfs_journal_commit() != 0) goto out;
+
+    for (uint32_t i = 0; i < count; i++) {
+        if (sdfs_write_block(blocks[i], buffers[i]) != 0) goto out;
+    }
+    if (sdfs_flush_device() != 0 || sdfs_journal_clean() != 0) goto out;
+    ret = 0;
+out:
+    sleep_mutex_unlock(&metadata_write_lock);
+    return ret;
+}
+
 /*
  * Journal-aware metadata write.
  * Journal the intended block content first, then write to disk.
@@ -173,21 +204,9 @@ static int sdfs_zero_block(uint32_t block) {
  * mount does not re-apply already-persisted blocks.
  */
 static int sdfs_metadata_write(uint32_t block, uint8_t *buffer) {
-    spinlock_acquire(&metadata_write_lock);
-    int ret = -1;
-    if (sdfs_journal_begin() == 0) {
-        if (sdfs_journal_write_block(block, buffer) == 0 &&
-            sdfs_journal_commit() == 0) {
-            if (sdfs_write_block(block, buffer) == 0 &&
-                sdfs_flush_device() == 0 && sdfs_journal_clean() == 0) {
-                ret = 0;
-            }
-        } else {
-            sdfs_journal_abort();
-        }
-    }
-    spinlock_release(&metadata_write_lock);
-    return ret;
+    uint32_t blocks[1] = { block };
+    uint8_t *buffers[1] = { buffer };
+    return sdfs_metadata_write_blocks(blocks, buffers, 1);
 }
 
 /* ============================================================
@@ -715,6 +734,131 @@ static int sdfs_dir_add_entry(uint32_t dir_block, sdfs_entry_t *e) {
     }
 }
 
+/* Prepare (but do not publish) a destination directory block for rename. The
+ * source block may already contain an in-memory tombstone; reuse that buffer
+ * when both entries occupy the same block. A new directory block is fully
+ * initialized and its allocation bit flushed before its parent link is
+ * included in the rename transaction. */
+static int sdfs_dir_prepare_rename_add(uint32_t dir_block, sdfs_entry_t *entry,
+                                       uint32_t source_block,
+                                       uint8_t *source_buffer,
+                                       uint32_t *target_block_out,
+                                       uint8_t **target_buffer_out,
+                                       int *target_owned_out) {
+    uint32_t cur = dir_block;
+    uint32_t entry_size = 2u + (uint32_t)entry->name_len + 24u;
+
+    while (cur != 0) {
+        uint8_t *buf;
+        int owned = cur != source_block;
+        if (owned) {
+            buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+            if (!buf) return -1;
+            if (sdfs_read_block(cur, buf) != 0) {
+                kfree(buf);
+                return -1;
+            }
+        } else {
+            buf = source_buffer;
+        }
+
+        sdfs_dir_block_t *db = (sdfs_dir_block_t *)buf;
+        uint8_t *pos = db->data;
+        uint32_t remaining = sizeof(db->data);
+        int malformed = 0;
+        for (uint32_t i = 0; i < db->entry_count; i++) {
+            if (remaining < 2) { malformed = 1; break; }
+            uint8_t type = pos[0];
+            uint32_t slot_size;
+            if (type == SDFS_TYPE_FREE) {
+                slot_size = 2;
+            } else if (type == SDFS_TYPE_DEL) {
+                slot_size = sdfs_deleted_entry_size(pos, remaining);
+                if (slot_size < 2) { malformed = 1; break; }
+                if (slot_size == entry_size) {
+                    if (sdfs_entry_serialize(pos, remaining, entry) < 0) {
+                        malformed = 1;
+                        break;
+                    }
+                    *target_block_out = cur;
+                    *target_buffer_out = buf;
+                    *target_owned_out = owned;
+                    return 0;
+                }
+            } else {
+                sdfs_entry_t current;
+                int decoded = sdfs_entry_deserialize(pos, remaining, &current);
+                if (decoded <= 1) { malformed = 1; break; }
+                slot_size = (uint32_t)decoded;
+            }
+            if (slot_size > remaining) { malformed = 1; break; }
+            pos += slot_size;
+            remaining -= slot_size;
+        }
+
+        if (malformed) {
+            if (owned) kfree(buf);
+            return -1;
+        }
+        if (remaining >= entry_size) {
+            if (sdfs_entry_serialize(pos, remaining, entry) < 0) {
+                if (owned) kfree(buf);
+                return -1;
+            }
+            db->entry_count++;
+            *target_block_out = cur;
+            *target_buffer_out = buf;
+            *target_owned_out = owned;
+            return 0;
+        }
+
+        uint32_t next = db->next_block;
+        if (next != 0) {
+            if (owned) kfree(buf);
+            cur = next;
+            continue;
+        }
+
+        uint32_t new_block = sdfs_alloc_block();
+        if (new_block == 0 || sdfs_flush_bitmap() != 0) {
+            if (new_block != 0) {
+                sdfs_free_block(new_block);
+                (void)sdfs_flush_bitmap();
+            }
+            if (owned) kfree(buf);
+            return -1;
+        }
+
+        uint8_t *new_buffer = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+        if (!new_buffer) {
+            sdfs_free_block(new_block);
+            (void)sdfs_flush_bitmap();
+            if (owned) kfree(buf);
+            return -1;
+        }
+        memset(new_buffer, 0, SDFS_BLOCK_SIZE);
+        sdfs_dir_block_t *new_db = (sdfs_dir_block_t *)new_buffer;
+        new_db->entry_count = 1;
+        if (sdfs_entry_serialize(new_db->data, sizeof(new_db->data), entry) < 0 ||
+            sdfs_write_block(new_block, new_buffer) != 0 ||
+            sdfs_flush_device() != 0) {
+            kfree(new_buffer);
+            sdfs_free_block(new_block);
+            (void)sdfs_flush_bitmap();
+            if (owned) kfree(buf);
+            return -1;
+        }
+        kfree(new_buffer);
+
+        db->next_block = new_block;
+        *target_block_out = cur;
+        *target_buffer_out = buf;
+        *target_owned_out = owned;
+        return 0;
+    }
+    return -1;
+}
+
 static int sdfs_dir_remove_entry(uint32_t dir_block, const char *name) {
     uint32_t cur = dir_block;
     while (cur != 0) {
@@ -1233,14 +1377,21 @@ static uint16_t sdfs_permission_mode(uint16_t stored) {
 static int sdfs_create_entry_at(uint32_t parent_block, const char *name,
                                 uint8_t type, uint16_t uid, uint16_t gid,
                                 uint16_t permissions) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return -1;
     if (!name || !name[0] || strlen(name) > SDFS_MAX_NAME ||
-        (permissions & ~0777u) || sdfs_dir_name_exists(parent_block, name))
+        (permissions & ~0777u) || sdfs_dir_name_exists(parent_block, name)) {
+        sleep_mutex_unlock(&sdfs_mutation_lock);
         return -1;
+    }
     uint32_t start_block = sdfs_alloc_block();
-    if (!start_block) return -1;
+    if (!start_block) {
+        sleep_mutex_unlock(&sdfs_mutation_lock);
+        return -1;
+    }
     if (sdfs_flush_bitmap() != 0) {
         sdfs_free_block(start_block);
         sdfs_flush_bitmap();
+        sleep_mutex_unlock(&sdfs_mutation_lock);
         return -1;
     }
     uint32_t now = sdfs_now();
@@ -1258,8 +1409,10 @@ static int sdfs_create_entry_at(uint32_t parent_block, const char *name,
     if (sdfs_dir_add_entry(parent_block, &entry) != 0) {
         /* A failed metadata write can leave commit state uncertain. Keep the
          * block allocated rather than risking a live name to a freed block. */
+        sleep_mutex_unlock(&sdfs_mutation_lock);
         return -1;
     }
+    sleep_mutex_unlock(&sdfs_mutation_lock);
     return 0;
 }
 
@@ -1374,14 +1527,13 @@ static uint32_t sdfs_write_file_inner(const char *path, uint8_t *buffer,
 }
 
 uint32_t sdfs_write_file(const char *path, uint8_t *buffer, uint32_t size) {
-    static spinlock_t file_write_lock = {0};
-    spinlock_acquire(&file_write_lock);
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return 0;
     uint32_t result = sdfs_write_file_inner(path, buffer, size);
-    spinlock_release(&file_write_lock);
+    sleep_mutex_unlock(&sdfs_mutation_lock);
     return result;
 }
 
-void *sdfs_read_file(const char *path, uint32_t *size_out) {
+static void *sdfs_read_file_inner(const char *path, uint32_t *size_out) {
     if (!sdfs_mounted || !path || !size_out) return NULL;
 
     sdfs_entry_t e;
@@ -1430,6 +1582,13 @@ void *sdfs_read_file(const char *path, uint32_t *size_out) {
     return result;
 }
 
+void *sdfs_read_file(const char *path, uint32_t *size_out) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return NULL;
+    void *result = sdfs_read_file_inner(path, size_out);
+    sleep_mutex_unlock(&sdfs_mutation_lock);
+    return result;
+}
+
 int sdfs_create_dir_as(const char *path, uint16_t uid, uint16_t gid,
                        uint16_t permissions) {
     if (!sdfs_mounted || !path || path[0] != '/') return -1;
@@ -1448,20 +1607,34 @@ int sdfs_create_dir(const char *path) {
 
 static int sdfs_delete_entry(uint32_t parent_block, const char *name,
                              int expect_dir) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return -1;
     sdfs_entry_t e;
-    if (!sdfs_dir_find_entry(parent_block, name, &e)) return -1;
-    if (expect_dir >= 0 &&
-        (e.type == SDFS_TYPE_DIR) != (expect_dir != 0)) return -1;
-
-    if (e.type == SDFS_TYPE_DIR && sdfs_dir_count_entries(e.start_block) > 0)
+    if (!sdfs_dir_find_entry(parent_block, name, &e)) {
+        sleep_mutex_unlock(&sdfs_mutation_lock);
         return -1;
+    }
+    if (expect_dir >= 0 &&
+        (e.type == SDFS_TYPE_DIR) != (expect_dir != 0)) {
+        sleep_mutex_unlock(&sdfs_mutation_lock);
+        return -1;
+    }
+
+    if (e.type == SDFS_TYPE_DIR && sdfs_dir_count_entries(e.start_block) > 0) {
+        sleep_mutex_unlock(&sdfs_mutation_lock);
+        return -1;
+    }
     /* Make the name unreachable durably before releasing any referenced
      * blocks. A crash can leak blocks, but cannot leave a live entry pointing
      * into space that has already been reallocated. */
-    if (sdfs_dir_remove_entry(parent_block, name) != 0) return -1;
+    if (sdfs_dir_remove_entry(parent_block, name) != 0) {
+        sleep_mutex_unlock(&sdfs_mutation_lock);
+        return -1;
+    }
     if (sdfs_mark_open_unlinked(e.start_block, e.file_size,
-                                e.type == SDFS_TYPE_DIR))
+                                e.type == SDFS_TYPE_DIR)) {
+        sleep_mutex_unlock(&sdfs_mutation_lock);
         return 0;
+    }
     if (e.type == SDFS_TYPE_DIR) {
         sdfs_free_block(e.start_block);
     } else if (sdfs_free_file_chain(e.start_block, e.file_size) != 0) {
@@ -1470,6 +1643,7 @@ static int sdfs_delete_entry(uint32_t parent_block, const char *name,
     }
     if (sdfs_flush_bitmap() != 0)
         serial_print("SDFS: delete committed; freed blocks may leak\n");
+    sleep_mutex_unlock(&sdfs_mutation_lock);
     return 0;
 }
 
@@ -1483,12 +1657,46 @@ int sdfs_delete(const char *path) {
 
 static int sdfs_rename_entry(uint32_t old_parent_block, const char *old_name,
                              uint32_t new_parent_block, const char *new_name) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return -1;
+    if (old_parent_block == new_parent_block &&
+        strcmp(old_name, new_name) == 0) {
+        sleep_mutex_unlock(&sdfs_mutation_lock);
+        return 0;
+    }
+
     sdfs_entry_t e;
-    if (!sdfs_dir_find_entry(old_parent_block, old_name, &e)) return -1;
+    if (!sdfs_dir_find_entry(old_parent_block, old_name, &e)) {
+        sleep_mutex_unlock(&sdfs_mutation_lock);
+        return -1;
+    }
 
-    if (sdfs_dir_name_exists(new_parent_block, new_name)) return -1;
+    if (sdfs_dir_name_exists(new_parent_block, new_name)) {
+        sleep_mutex_unlock(&sdfs_mutation_lock);
+        return -1;
+    }
 
-    sdfs_dir_remove_entry(old_parent_block, old_name);
+    uint8_t *source_buffer = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+    if (!source_buffer) {
+        sleep_mutex_unlock(&sdfs_mutation_lock);
+        return -1;
+    }
+    if (sdfs_read_block(e.block, source_buffer) != 0) {
+        kfree(source_buffer);
+        sleep_mutex_unlock(&sdfs_mutation_lock);
+        return -1;
+    }
+    sdfs_entry_t source_entry;
+    if (sdfs_entry_deserialize(source_buffer + e.block_offset,
+                               SDFS_BLOCK_SIZE - e.block_offset,
+                               &source_entry) <= 1 ||
+        source_entry.type != e.type ||
+        strcmp(source_entry.name, old_name) != 0 ||
+        source_entry.start_block != e.start_block) {
+        kfree(source_buffer);
+        sleep_mutex_unlock(&sdfs_mutation_lock);
+        return -1;
+    }
+    source_buffer[e.block_offset] = SDFS_TYPE_DEL;
 
     uint32_t now = sdfs_now();
 
@@ -1505,24 +1713,35 @@ static int sdfs_rename_entry(uint32_t old_parent_block, const char *old_name,
     ne.gid = e.gid;
     ne.permissions = e.permissions;
 
-    if (sdfs_dir_add_entry(new_parent_block, &ne) != 0) {
-        sdfs_entry_t oe;
-        memset(&oe, 0, sizeof(oe));
-        oe.type = e.type;
-        oe.name_len = strlen(old_name);
-        memcpy(oe.name, old_name, oe.name_len);
-        oe.start_block = e.start_block;
-        oe.file_size = e.file_size;
-        oe.created_time = e.created_time;
-        oe.modified_time = e.modified_time;
-        oe.uid = e.uid;
-        oe.gid = e.gid;
-        oe.permissions = e.permissions;
-        sdfs_dir_add_entry(old_parent_block, &oe);
+    uint32_t destination_block = 0;
+    uint8_t *destination_buffer = NULL;
+    int destination_owned = 0;
+    if (sdfs_dir_prepare_rename_add(new_parent_block, &ne, e.block,
+                                    source_buffer, &destination_block,
+                                    &destination_buffer,
+                                    &destination_owned) != 0) {
+        kfree(source_buffer);
+        sleep_mutex_unlock(&sdfs_mutation_lock);
         return -1;
     }
 
-    return 0;
+    uint32_t blocks[2];
+    uint8_t *buffers[2];
+    uint32_t transaction_count = 1;
+    blocks[0] = e.block;
+    buffers[0] = source_buffer;
+    if (destination_block != e.block) {
+        blocks[1] = destination_block;
+        buffers[1] = destination_buffer;
+        transaction_count = 2;
+    }
+
+    int result = sdfs_metadata_write_blocks(blocks, buffers,
+                                            transaction_count);
+    if (destination_owned) kfree(destination_buffer);
+    kfree(source_buffer);
+    sleep_mutex_unlock(&sdfs_mutation_lock);
+    return result;
 }
 
 int sdfs_rename(const char *old_path, const char *new_path) {
@@ -1538,7 +1757,8 @@ int sdfs_rename(const char *old_path, const char *new_path) {
                              new_parent_block, new_name);
 }
 
-int sdfs_path_info(const char *path, int *is_dir_out, uint32_t *size_out) {
+static int sdfs_path_info_inner(const char *path, int *is_dir_out,
+                                uint32_t *size_out) {
     if (!sdfs_mounted || !path) return -1;
     if (strcmp(path, "/") == 0) {
         if (is_dir_out) *is_dir_out = 1;
@@ -1553,8 +1773,16 @@ int sdfs_path_info(const char *path, int *is_dir_out, uint32_t *size_out) {
     return 0;
 }
 
-int sdfs_list_dir_entry(const char *path, int index, char *name_out,
-                        int *is_dir_out, uint32_t *size_out) {
+int sdfs_path_info(const char *path, int *is_dir_out, uint32_t *size_out) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return -1;
+    int result = sdfs_path_info_inner(path, is_dir_out, size_out);
+    sleep_mutex_unlock(&sdfs_mutation_lock);
+    return result;
+}
+
+static int sdfs_list_dir_entry_inner(const char *path, int index,
+                                     char *name_out, int *is_dir_out,
+                                     uint32_t *size_out) {
     if (!sdfs_mounted || !path) return -1;
 
     uint32_t dir_block;
@@ -1579,11 +1807,20 @@ int sdfs_list_dir_entry(const char *path, int index, char *name_out,
     return 0;
 }
 
+int sdfs_list_dir_entry(const char *path, int index, char *name_out,
+                        int *is_dir_out, uint32_t *size_out) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return -1;
+    int result = sdfs_list_dir_entry_inner(path, index, name_out, is_dir_out,
+                                           size_out);
+    sleep_mutex_unlock(&sdfs_mutation_lock);
+    return result;
+}
+
 /* ============================================================
  * V2 permissions API
  * ============================================================ */
 
-int sdfs_set_permissions(const char *path, uint16_t perm) {
+static int sdfs_set_permissions_inner(const char *path, uint16_t perm) {
     if (!sdfs_mounted || !path || (perm & ~0777u)) return -1;
 
     uint32_t parent_block;
@@ -1620,8 +1857,15 @@ int sdfs_get_permissions(const char *path, uint16_t *perm) {
     return 0;
 }
 
-int sdfs_get_metadata(const char *path, uint16_t *uid, uint16_t *gid,
-                      uint16_t *permissions) {
+int sdfs_set_permissions(const char *path, uint16_t perm) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return -1;
+    int result = sdfs_set_permissions_inner(path, perm);
+    sleep_mutex_unlock(&sdfs_mutation_lock);
+    return result;
+}
+
+static int sdfs_get_metadata_inner(const char *path, uint16_t *uid,
+                                   uint16_t *gid, uint16_t *permissions) {
     if (!sdfs_mounted || !path) return -1;
     if (strcmp(path, "/") == 0) {
         if (uid) *uid = 0;
@@ -1635,6 +1879,14 @@ int sdfs_get_metadata(const char *path, uint16_t *uid, uint16_t *gid,
     if (gid) *gid = entry.gid;
     if (permissions) *permissions = sdfs_permission_mode(entry.permissions);
     return 0;
+}
+
+int sdfs_get_metadata(const char *path, uint16_t *uid, uint16_t *gid,
+                      uint16_t *permissions) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return -1;
+    int result = sdfs_get_metadata_inner(path, uid, gid, permissions);
+    sleep_mutex_unlock(&sdfs_mutation_lock);
+    return result;
 }
 
 /* ============================================================
@@ -1720,15 +1972,18 @@ static int sdfs_mark_open_unlinked(uint32_t start_block, uint32_t size,
 
 static void sdfs_free_unlinked_chain(uint32_t start_block, uint32_t size,
                                      int is_dir) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return;
     int rc = is_dir ? (sdfs_free_block(start_block), 0)
                     : sdfs_free_file_chain(start_block, size);
     if (rc == 0 && sdfs_flush_bitmap() != 0)
         serial_print("SDFS: unlinked blocks remain allocated after close\n");
     else if (rc != 0)
         serial_print("SDFS: unlinked block cleanup deferred after close\n");
+    sleep_mutex_unlock(&sdfs_mutation_lock);
 }
 
-static uint32_t sdfs_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+static uint32_t sdfs_read_inner(fs_node_t *node, uint32_t offset,
+                                uint32_t size, uint8_t *buffer) {
     if (!node || !(node->flags & FS_FILE)) return 0;
 
     uint32_t start_block = node->inode;
@@ -1769,7 +2024,16 @@ static uint32_t sdfs_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8
     return bytes_read;
 }
 
-static uint32_t sdfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
+static uint32_t sdfs_read(fs_node_t *node, uint32_t offset, uint32_t size,
+                          uint8_t *buffer) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return 0;
+    uint32_t result = sdfs_read_inner(node, offset, size, buffer);
+    sleep_mutex_unlock(&sdfs_mutation_lock);
+    return result;
+}
+
+static uint32_t sdfs_write_inner(fs_node_t *node, uint32_t offset,
+                                 uint32_t size, uint8_t *buffer) {
     if (!node || !(node->flags & FS_FILE)) return 0;
 
     uint32_t start_block = node->inode;
@@ -1844,7 +2108,15 @@ static uint32_t sdfs_write(fs_node_t *node, uint32_t offset, uint32_t size, uint
     return bytes_written;
 }
 
-static struct dirent *sdfs_readdir(fs_node_t *node, uint32_t index) {
+static uint32_t sdfs_write(fs_node_t *node, uint32_t offset, uint32_t size,
+                           uint8_t *buffer) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return 0;
+    uint32_t result = sdfs_write_inner(node, offset, size, buffer);
+    sleep_mutex_unlock(&sdfs_mutation_lock);
+    return result;
+}
+
+static struct dirent *sdfs_readdir_inner(fs_node_t *node, uint32_t index) {
     if (!node || !(node->flags & FS_DIRECTORY)) return NULL;
     uint32_t dir_block = node->inode;
 
@@ -1858,7 +2130,14 @@ static struct dirent *sdfs_readdir(fs_node_t *node, uint32_t index) {
     return &sdfs_dirent;
 }
 
-static int sdfs_truncate(fs_node_t *node) {
+static struct dirent *sdfs_readdir(fs_node_t *node, uint32_t index) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return NULL;
+    struct dirent *result = sdfs_readdir_inner(node, index);
+    sleep_mutex_unlock(&sdfs_mutation_lock);
+    return result;
+}
+
+static int sdfs_truncate_inner(fs_node_t *node) {
     if (!node || !(node->flags & FS_FILE)) return -22;
     uint32_t old_start = node->inode;
     uint32_t old_size = node->length;
@@ -1932,7 +2211,14 @@ static int sdfs_truncate(fs_node_t *node) {
     return 0;
 }
 
-static fs_node_t *sdfs_finddir(fs_node_t *node, const char *name) {
+static int sdfs_truncate(fs_node_t *node) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return -5;
+    int result = sdfs_truncate_inner(node);
+    sleep_mutex_unlock(&sdfs_mutation_lock);
+    return result;
+}
+
+static fs_node_t *sdfs_finddir_inner(fs_node_t *node, const char *name) {
     if (!node || !(node->flags & FS_DIRECTORY) || !name) return NULL;
     uint32_t dir_block = node->inode;
 
@@ -1965,6 +2251,13 @@ static fs_node_t *sdfs_finddir(fs_node_t *node, const char *name) {
     res->close = sdfs_close;
     res->truncate = sdfs_truncate;
     return res;
+}
+
+static fs_node_t *sdfs_finddir(fs_node_t *node, const char *name) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return NULL;
+    fs_node_t *result = sdfs_finddir_inner(node, name);
+    sleep_mutex_unlock(&sdfs_mutation_lock);
+    return result;
 }
 
 static fs_node_t *sdfs_vfs_create(fs_node_t *dir_node, const char *name, uint32_t flags) {

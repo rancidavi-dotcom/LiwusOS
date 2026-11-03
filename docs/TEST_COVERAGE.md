@@ -1,10 +1,8 @@
 # Test inventory and coverage matrix
 
-Snapshot: 2026-11-02, branch `lean-kernel`, base commit `6afc34f` before this
-verification-framework change. The original kernel runner had 47 top-level
-cases. The current runner has 49 top-level cases after adding `pmm_contract`
-and `kheap_contract`; 48 are kernel-side functions and one is the `ring3_processes`
-aggregator. Its 23 ring-3 pass markers are nested subcases, not extra members
+Snapshot: 2026-11-03, branch `lean-kernel`, after the SDFS rename transaction and concurrent mutation regressions. The original kernel runner had 47 top-level cases. The current
+runner has 51 top-level cases after adding `pmm_contract`, `kheap_contract`,
+`sdfs_rename_journal_atomic`, and `sdfs_concurrent_mutations`; 50 are kernel-side functions and one is the `ring3_processes` aggregator. Its 23 ring-3 pass markers are nested subcases, not extra members
 of the 47-case denominator. `make test`, `make ring3-test`, and `make smap-test`
 repeat this same inventory with different QEMU settings.
 
@@ -28,7 +26,7 @@ percentage or a claim of completeness. BSP means the bootstrap processor.
 | Wait queues | ✓ | ~ | ~ | — | ~ | ~ | High. `sched_wait_queue` checks 8 waiters, partial/all/empty wake and bounded repeat; killed blocked pipe reader tests removal and cleanup. No simultaneous AP wake race. |
 | Futex | ~ | ✓ | ~ | ~ | ~ | ~ | High. Linux clone probe checks one blocking WAIT/WAKE, mismatch, read-only mismatch, bad/alignment, unsupported shared/timeout. No multiple waiter wake, same VA across mms, repeated futex stress or futex cancellation. |
 | Pipes | ✓ | ✓ | ✓ | ~ | ~ | ~ | High. Ring-3 cases cover data, 4 KiB-full writer, empty reader, EOF, EPIPE, fork/exec, invalid output, killed blocked reader. No multi-reader/writer stress or repeated close races. |
-| VFS/SDFS | ✓ | ✓ | ~ | ~ | — | ~ | Medium-high. SDFS/VFS cases cover create/read/write/directories/rename/delete/remount/permissions/journal/CRC/disk-full and terminal redirection. Native SDK probe covers getdents records, continuation, empty/non-directory/invalid-fd, short/read-only buffers and cleanup. Shell integration checks ls/cat against actual SDFS data. Shared RAM disk and fixed order; no concurrent VFS stress. |
+| VFS/SDFS | ✓ | ✓ | ~ | ~ | ~ | ~ | Medium-high. SDFS/VFS cases cover create/read/write/directories/rename/delete/remount/permissions/journal/CRC/disk-full and terminal redirection. Native SDK probe covers getdents records, continuation, empty/non-directory/invalid-fd, short/read-only buffers and cleanup. Shell integration checks ls/cat against actual SDFS data. Shared RAM disk and fixed order; `sdfs_concurrent_mutations` runs four kernel workers through create/write/read/delete on disjoint names, serialized by the filesystem sleep mutex. It does not test SMP execution. |
 | ELF loader | ✓ | ✓ | ~ | ✓ | — | ~ | High. Ring-3 covers native ELF, ET_DYN, Linux static probes, malformed ELF, invalid argv/envp, repeated exec and segment permission faults. No parser fuzzing or header-overflow corpus. |
 | Native ABI | ✓ | ✓ | ~ | ✓ | ~ | ~ | High. Ring-3 suite exercises selected `int 0x80` calls, invalid pointers, process/pipes/mmap; `native-hello.lxe` runs through crt0 and SDK wrappers. Not every published syscall has a regression. |
 | Linux personality | ✓ | ✓ | ~ | ✓ | ~ | ~ | High. Two freestanding probes cover selected SYSCALL, stat/openat/mmap, arch_prctl, clone/TLS and private futex behavior. No libc/pthreads or full errno/syscall matrix. |
@@ -36,7 +34,7 @@ percentage or a claim of completeness. BSP means the bootstrap processor.
 | Memory protection/usercopy | ✓ | ✓ | ✓ | ✓ | — | ~ | High. Ring-3 tests cover NX, supervisor/read-only pages, cross-permission ranges, syscall output pointers, SMAP and stack guard. Not exhaustive for all syscalls or wraparound lengths. |
 | Fault injection/fuzz/soak | — | ~ | — | — | — | ~ | High. Host VMA test injects one allocator failure and runs fixed-seed model operations. No kernel-wide allocator fault injection, ELF/syscall fuzzing, coverage counters or soak. |
 
-## Active kernel cases (49 top-level)
+## Active kernel cases (51 top-level)
 
 The `name` is the stable test identifier used in serial output and in
 `tests/harness/kernel_cases.txt`. The listed expected result is what the case
@@ -66,10 +64,12 @@ asserts; shared SDFS state is formatted once and then reused in this order.
 | `sdfs_dir_list` | same | Creates a listing fixture and requires exactly three entries. |
 | `sdfs_dir_not_empty` | same | Rejects deletion of a directory containing a child. |
 | `sdfs_nested_dirs` | same | Resolves a deep nested path to a file. |
+| `sdfs_concurrent_mutations` | same | Four scheduled kernel workers each create, write, read back, and delete eight distinct files; all bytes must match and all workers must finish. Exercises sleepable lock contention on the BSP. |
 | `sdfs_rename_file` | `tests/test_sdfs_rename.c` | Renames a file, preserves bytes/size, and makes the old name absent. |
 | `sdfs_rename_dir` | same | Renames a directory and verifies the directory and nested file paths. |
 | `sdfs_rename_not_found` | same | Renaming a nonexistent path returns `-1`. |
 | `sdfs_rename_overwrite` | same | Renaming onto an existing destination returns `-1`. |
+| `sdfs_rename_journal_atomic` | same | Injects a pre-commit second-snapshot failure and a post-commit target write failure; remount must show a complete namespace and preserve file bytes. |
 | `sdfs_delete_file` | `tests/test_sdfs_delete.c` | Creates and deletes a file; the path is absent afterward. |
 | `sdfs_delete_nonexistent` | same | Deleting a missing file returns `-1`. |
 | `sdfs_delete_root` | same | Deleting `/` is rejected. |
@@ -148,7 +148,7 @@ Linux SYSCALL probe, a Linux clone/private-futex probe, and native
 top-level count. It also runs an external SDK-built ELF64 app and checks its
 stdout and raw status 23; that result is separately validated by the serial
 harness. The independent `make shell-test` drives the booted ring-3 shell over
-QEMU COM1 and is not part of the 49/23 baseline manifests. `make test-unit`
+QEMU COM1 and is not part of the 50/23 baseline manifests. `make test-unit`
 also runs the bounded shell parser cases under ASan/UBSan.
 
 ## Known coverage holes

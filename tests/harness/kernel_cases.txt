@@ -21,10 +21,12 @@ sdfs_dir_create
 sdfs_dir_list
 sdfs_dir_not_empty
 sdfs_nested_dirs
+sdfs_concurrent_mutations
 sdfs_rename_file
 sdfs_rename_dir
 sdfs_rename_not_found
 sdfs_rename_overwrite
+sdfs_rename_journal_atomic
 sdfs_delete_file
 sdfs_delete_nonexistent
 sdfs_delete_root

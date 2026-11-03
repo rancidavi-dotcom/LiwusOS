@@ -57,12 +57,7 @@ errors and remount replay; it is not a physical power-cut simulator.
 ## Limits
 
 This guarantee applies to the kernel's whole-file `sdfs_write_file()` path and
-single-block metadata writes through the journal. It does not make arbitrary
-in-place VFS writes, `rename()`, or multiple filesystem calls atomic. Rename
-removes the source entry and adds the destination in separate metadata writes;
-it attempts an in-memory rollback if the addition fails, but a power loss
-between writes can leave the source name missing. Concurrent filesystem
-mutations are not yet covered by a global filesystem lock. Device flush
+metadata writes through the journal, including a single atomic transaction for the source and destination directory blocks during rename. If a directory needs a new block, allocation is made durable before the namespace transaction; an interrupted attempt may leak that block, but does not expose a partial rename. Arbitrary in-place VFS writes and multi-call utility operations are not atomic. SDFS mutation and metadata reads use a sleepable filesystem mutex, so block I/O does not run with interrupts disabled. The current scheduler keeps user tasks on the BSP; this is not evidence of SMP filesystem execution. Device flush
 completion has been implemented for the AHCI path and exercised in QEMU;
 real-device power-loss behavior still depends on the controller and drive
 honoring FLUSH CACHE EXT.
@@ -73,7 +68,8 @@ not invoke the kernel journal and has its own documented limits.
 
 ## Tests
 
-The existing 49-case kernel manifest remains unchanged. `sdfs_overwrite`
+The 51-case kernel manifest includes `sdfs_rename_journal_atomic` and `sdfs_concurrent_mutations`.
+`sdfs_overwrite`
 injects a failure at the journal commit block and at the target directory
 block, remounts, and checks that it sees the complete old or new contents.
 `journal_multiple_entries` corrupts a committed journal payload, verifies
@@ -84,6 +80,6 @@ test RAM disk.
 
 Directory enumeration regression coverage also deletes an entry, creates a
 replacement, and verifies that live entries are returned exactly once. Kernel
-and offline host walkers skip the full serialized tombstone slot. This fixes
-directory traversal after ordinary deletion; it does not add crash atomicity
-to rename or multi-step utility operations.
+and offline host walkers skip the full serialized tombstone slot. The rename
+fault-injection case separately verifies recovery on both sides of journal
+commit. Multi-step utility operations remain outside the journal transaction.

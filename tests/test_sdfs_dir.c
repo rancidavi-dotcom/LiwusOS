@@ -2,6 +2,50 @@
 #include "sdfs.h"
 #include "framework.h"
 #include "string.h"
+#include "task.h"
+#include "kheap.h"
+
+#define SDFS_CONCURRENT_WORKERS 4
+#define SDFS_CONCURRENT_FILES 8
+static volatile uint32_t sdfs_concurrent_done;
+static volatile uint32_t sdfs_concurrent_errors;
+
+static void sdfs_concurrent_worker(int worker) {
+    uint8_t payload[513];
+    for (uint32_t n = 0; n < SDFS_CONCURRENT_FILES; n++) {
+        char path[64];
+        char number[12];
+        strcpy(path, "/sdfs-race-");
+        itoa(worker, number, 10);
+        strcat(path, number);
+        strcat(path, "-");
+        itoa((int)n, number, 10);
+        strcat(path, number);
+        for (uint32_t i = 0; i < sizeof(payload); i++)
+            payload[i] = (uint8_t)(worker * 37 + n * 11 + i);
+
+        if (sdfs_create_file(path) != 0 ||
+            sdfs_write_file(path, payload, sizeof(payload)) != sizeof(payload)) {
+            __sync_fetch_and_add(&sdfs_concurrent_errors, 1);
+            continue;
+        }
+        uint32_t size = 0;
+        uint8_t *readback = (uint8_t *)sdfs_read_file(path, &size);
+        if (!readback || size != sizeof(payload) ||
+            memcmp(readback, payload, sizeof(payload)) != 0)
+            __sync_fetch_and_add(&sdfs_concurrent_errors, 1);
+        if (readback) kfree(readback);
+        if (sdfs_delete(path) != 0)
+            __sync_fetch_and_add(&sdfs_concurrent_errors, 1);
+    }
+    __sync_fetch_and_add(&sdfs_concurrent_done, 1);
+    for (;;) task_sleep_ms(1000);
+}
+
+static void sdfs_concurrent_worker0(void) { sdfs_concurrent_worker(0); }
+static void sdfs_concurrent_worker1(void) { sdfs_concurrent_worker(1); }
+static void sdfs_concurrent_worker2(void) { sdfs_concurrent_worker(2); }
+static void sdfs_concurrent_worker3(void) { sdfs_concurrent_worker(3); }
 
 int test_sdfs_dir_create(void) {
     int ret = sdfs_create_dir("/mydir");
@@ -89,6 +133,26 @@ int test_sdfs_nested_dirs(void) {
     sdfs_delete("/a/b");
     sdfs_delete("/a");
     PASS("test_sdfs_nested_dirs");
+}
+
+int test_sdfs_concurrent_mutations(void) {
+    void (*workers[SDFS_CONCURRENT_WORKERS])(void) = {
+        sdfs_concurrent_worker0, sdfs_concurrent_worker1,
+        sdfs_concurrent_worker2, sdfs_concurrent_worker3
+    };
+    sdfs_concurrent_done = 0;
+    sdfs_concurrent_errors = 0;
+    for (int i = 0; i < SDFS_CONCURRENT_WORKERS; i++)
+        ASSERT(create_task_named(workers[i], "sdfs-mutator") >= 0,
+               "create concurrent SDFS worker");
+    for (uint32_t tick = 0; tick < 1000 &&
+         sdfs_concurrent_done != SDFS_CONCURRENT_WORKERS; tick++)
+        task_sleep_ms(10);
+    ASSERT(sdfs_concurrent_done == SDFS_CONCURRENT_WORKERS,
+           "all SDFS mutation workers complete within deadline");
+    ASSERT(sdfs_concurrent_errors == 0,
+           "concurrent create/write/read/delete preserves files");
+    PASS("test_sdfs_concurrent_mutations");
 }
 
 #endif

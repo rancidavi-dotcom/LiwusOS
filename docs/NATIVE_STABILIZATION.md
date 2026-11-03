@@ -72,7 +72,7 @@ contents.
 | `cat` | Text, empty file, binary file, and exact readback through 65536 bytes; missing path and directory errors | No injected read/write device fault during a child |
 | `mkdir` | Creates a real directory used by subsequent commands and persistent tests | No QEMU disk-full command case |
 | `rm` | Removes a real entry; later listing omits it; ring-3 DAC probes cover denied removal | No crash-point test for the multi-step operation |
-| `mv` | Renames a real file and preserves readable contents; kernel tests cover rename and collision | Rename is not crash-atomic |
+| `mv` | Renames a real file and preserves readable contents; kernel tests cover collision and journal recovery before/after commit | Multi-call utility behavior is not a single transaction |
 | `cp` | Exact copy/readback at 0, 1, 15, 16, 255, 256, 4095, 4096, 4097, 8192, and 65536 bytes; binary data and existing-destination refusal | No deterministic QEMU disk-full or process-kill mid-copy test |
 | `touch` | Creates an empty file and preserves existing binary content | Timestamp semantics remain intentionally limited |
 | `echo` | Arguments, zero arguments, newline, and 100 uniquely numbered replies | No shell redirection or expansion is supported |
@@ -94,26 +94,30 @@ passed. No personal disk image was used.
 
 ## G. SDFS transaction and concurrency limits
 
-The existing journal protects whole-file replacement through its copy-on-write
-path and one-block metadata commit. It does not make `rename`, in-place
-descriptor writes, unlink plus block reclamation, or multi-call `cp` atomic
-across power loss. A crash can leave leaked allocation or a missing source
-name after rename; those guarantees were not expanded in this milestone.
+Rename now stages source removal and destination insertion in one journal
+transaction. A destination directory extension initializes and persists the
+new block before the parent link is committed; an interrupted operation can
+leak that block, but journal replay cannot expose half of the rename. The
+regression injects one failure before commit and another after commit, remounts
+in both cases, and verifies a complete namespace and preserved file bytes.
 
-The metadata write path and open-reference list have locks, but bitmap
-allocation and all directory mutation sequences do not share a filesystem-wide
-mutation lock. User tasks execute on the BSP in the current scheduler, so the
-QEMU tests demonstrate sequential behavior, not concurrent filesystem safety
-under SMP. No global lock or scheduler restructuring was added without a
-supported concurrent workload and lock-order protocol.
+A sleepable filesystem mutex serializes SDFS namespace/data mutations and
+metadata reads across block I/O. The journal has its own sleepable mutex, and
+thread termination requested while holding a sleep mutex is deferred until
+unlock. Four scheduled kernel workers concurrently create, replace, read back,
+and delete disjoint files on the shared RAM disk. The scheduler currently runs
+user tasks on the BSP, so this is contention and interleaving evidence on one
+CPU, not SMP filesystem proof. Arbitrary in-place descriptor writes and
+multi-call utilities such as `cp` are still not power-loss atomic.
 
 ## H. Test results
 
 Final checks after the SDFS kernel change:
 
 - `make -B kernel.bin`: PASS, `-Werror` enabled.
-- `make test-all`: PASS — test, ring-3, and SMAP modes; each reported 49 unique
-  kernel cases and 23 ring-3 cases.
+- `make test-all`: PASS — test, ring-3, and SMAP modes; each reported 51 unique
+  top-level cases (50 kernel functions plus the ring-3 aggregator) and 23
+  ring-3 cases. SMAP mode used four vCPUs and confirmed AP startup.
 - `make test-stress`: PASS — 50,000 fixed-seed VMA model steps.
 - `make test-unit`: PASS — serial harness self-test, 5,000 VMA model steps,
   and shell parser tests.
@@ -122,9 +126,13 @@ Final checks after the SDFS kernel change:
   at the default 200 ms pacing. Each run used a temporary disk, 100 numbered
   shell commands, and exact copy/readback checks through 65536 bytes. The
   zero-argument `echo` assertion was added during the repetition series and
-  passed in its later runs and the final default-paced run.
+  passed in its later runs and the final default-paced run. It also passed
+  after the filesystem mutex and rename transaction changes in this milestone.
 - `make app-install-test`: PASS after the host installer fix — seven host
   installer cases and four boots on one reused temporary SDFS image.
+- `make app-install-test` after the mutex and rename changes: PASS — seven host
+  installer cases, four boots with A-to-B replacement, and refusal while QEMU
+  held the image open.
 - `git diff --check`: to be recorded after the final documentation/checkpoint
   edits.
 
@@ -144,17 +152,17 @@ syscall probes passed with the existing manifest.
 
 ## J. Git and checkpoint
 
-The implementation is on `lean-kernel`, based on `24b42e7`. A local checkpoint
-will include only the SDFS kernel fix, the offline installer fix, their
-regressions, the shell harness corrections/stress checks, and this report.
-It will not include the pre-existing ABI/roadmap edits or untracked handoff and
-compatibility documents. No push is planned.
+The prior stabilization is recorded at `5a3c95f` on `lean-kernel`. This
+milestone checkpoint contains the sleepable mutex, journal-atomic rename,
+concurrency and crash-recovery regressions, and updated evidence. It excludes
+the pre-existing edits to `docs/ABI_LINUX.md` and `docs/ROADMAP.md` and the
+untracked handoff and compatibility documents. No push is planned.
 
 ## K. Completion state
 
-**MILESTONE PARCIAL.** The interactive utility workflow, the console harness,
-the discovered SDFS directory corruption, and four-boot persistence all have
-reproducible passing evidence. Full completion is not claimed because rename
-and multi-call operations lack crash-atomic guarantees, and concurrent SDFS
-mutation is not proven safe for SMP. Those limits are documented and remain
-follow-up work.
+**MILESTONE CONCLUÍDO NO ESCOPO VALIDADO.** The interactive utility workflow,
+console harness, SDFS tombstone correction, crash-atomic rename, BSP-threaded
+filesystem mutation, and four-boot persistence have reproducible evidence.
+This does not claim SMP filesystem safety, crash atomicity for in-place VFS
+writes or multi-call utilities, or full Linux ABI compatibility. Those limits
+remain explicit follow-up work.

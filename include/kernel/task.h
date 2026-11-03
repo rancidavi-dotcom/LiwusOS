@@ -88,6 +88,9 @@ typedef struct thread {
   int id;
   task_state_t state;
   int exit_status;
+  uint32_t kernel_mutex_depth;
+  int pending_kill;
+  int pending_kill_status;
   uint64_t stack_top;
   uint64_t kernel_stack;
   uint64_t kernel_stack_base;
@@ -137,6 +140,7 @@ typedef struct {
 } task_info_t;
 
 void init_tasking();
+bool tasking_is_initialized(void);
 int create_task(void (*entry_point)());
 int create_task_named(void (*entry_point)(), const char *name);
 /* Cria a tarefa ja com a prioridade desejada, sem janela em que ela possa
