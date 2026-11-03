@@ -18,6 +18,13 @@ key-up transitions, modifiers, and rollover reports. The xHCI driver does not
 yet submit USB transfers or enumerate devices, so USB keyboards and mice are
 still not usable; PS/2 remains the active input path.
 
+The HID layer also has a bounds-checked parser for complete USB configuration
+descriptors. It locates boot keyboard/mouse interfaces and their interrupt-IN
+endpoints, and rejects truncated or malformed descriptor chains. Host tests
+cover this parser alongside report decoding. Device enumeration and descriptor
+retrieval are still unimplemented, so this parser is not yet exercised against
+a physical or emulated USB device.
+
 The next low-level piece is now present and host-tested: command-ring and
 event-ring primitives with the 16-byte TRB layout, a physically addressed Link
 TRB, a bounded command queue, wrap handling, and producer/consumer cycle-bit
@@ -32,9 +39,10 @@ mastering; they do not change the current input capability.
    xHCI controller or with an unassigned/invalid BAR.
 2. Add bounded DMA allocation and wire the tested rings into xHCI reset/start,
    with polling completion handling before enabling interrupts.
-3. Enumerate root ports and devices; implement control transfers and descriptor
-   parsing with strict length and bounds checks.
-4. Add USB HID boot-keyboard input and retain PS/2 as a fallback.
+3. Enumerate root ports and devices; implement control transfers and retrieve
+   configuration descriptors into the tested strict parser.
+4. Attach interrupt-IN endpoints to the tested HID report decoder and retain
+   PS/2 as a fallback.
 5. Add hubs and other classes only after the transfer and enumeration layers
    have regression coverage on QEMU and hardware.
 

@@ -36,6 +36,28 @@ static void expect_key(size_t index, uint8_t code, bool extended, bool pressed) 
 }
 
 int main(void) {
+  uint8_t configuration[] = {
+      9, 2, 41, 0, 2, 1, 0, 0x80, 50,
+      9, 4, 0, 0, 0, 0xFF, 0, 0, 0,
+      9, 4, 4, 0, 2, 3, 1, 1, 0,
+      7, 5, 0x01, 3, 8, 0, 10,
+      7, 5, 0x81, 3, 8, 0, 10};
+  usb_hid_boot_interface_t boot_interface;
+  assert(usb_hid_find_boot_interface(configuration, sizeof(configuration),
+                                     &boot_interface) == 0);
+  assert(boot_interface.configuration_value == 1);
+  assert(boot_interface.interface_number == 4);
+  assert(boot_interface.endpoint_address == 0x81);
+  assert(boot_interface.interval == 10 &&
+         boot_interface.max_packet_size == 8 &&
+         boot_interface.protocol == 1);
+  assert(usb_hid_find_boot_interface(configuration,
+                                     sizeof(configuration) - 1,
+                                     &boot_interface) < 0);
+  uint8_t malformed[] = {9, 2, 10, 0, 1, 1, 0, 0x80, 50, 0, 4};
+  assert(usb_hid_find_boot_interface(malformed, sizeof(malformed),
+                                     &boot_interface) < 0);
+
   const uint8_t key_a[] = {0, 0, 0x04, 0, 0, 0, 0, 0};
   const uint8_t key_a_repeat[] = {0, 0, 0x04, 0, 0, 0, 0, 0};
   const uint8_t shift_a[] = {0x02, 0, 0x04, 0, 0, 0, 0, 0};
@@ -78,6 +100,6 @@ int main(void) {
   assert(usb_hid_mouse_report(mouse, sizeof(mouse)) == 0);
   assert(mouse_x == -2 && mouse_y == 3 && mouse_buttons == 5);
 
-  puts("USB HID PASS: key transitions, modifiers, rollover, reset, mouse deltas");
+  puts("USB HID PASS: descriptor bounds, key transitions, modifiers, rollover, mouse deltas");
   return 0;
 }

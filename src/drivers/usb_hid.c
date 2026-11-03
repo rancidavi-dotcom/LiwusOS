@@ -68,6 +68,87 @@ static void usb_hid_irq_restore(uint64_t flags) {
 }
 #endif
 
+static uint16_t read_le16(const uint8_t *bytes) {
+  return (uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8);
+}
+
+static void save_boot_interface(usb_hid_boot_interface_t *result,
+                                uint8_t configuration, uint8_t interface,
+                                uint8_t endpoint, uint8_t interval,
+                                uint16_t packet_size, uint8_t protocol) {
+  *result = (usb_hid_boot_interface_t){
+      .configuration_value = configuration,
+      .interface_number = interface,
+      .endpoint_address = endpoint,
+      .interval = interval,
+      .max_packet_size = packet_size,
+      .protocol = protocol};
+}
+
+int usb_hid_find_boot_interface(const uint8_t *descriptor, size_t length,
+                                usb_hid_boot_interface_t *result) {
+  if (!descriptor || !result || length < 9 || descriptor[0] < 9 ||
+      descriptor[1] != 2)
+    return -1;
+
+  uint16_t total_length = read_le16(descriptor + 2);
+  if (total_length < descriptor[0] || total_length > length ||
+      descriptor[5] == 0)
+    return -1;
+
+  bool candidate = false;
+  uint8_t interface_number = 0;
+  uint8_t protocol = 0;
+  uint8_t endpoint_address = 0;
+  uint8_t interval = 0;
+  uint16_t max_packet_size = 0;
+
+  for (size_t offset = descriptor[0]; offset < total_length;) {
+    if (total_length - offset < 2) return -1;
+    uint8_t descriptor_length = descriptor[offset];
+    uint8_t descriptor_type = descriptor[offset + 1];
+    if (descriptor_length < 2 || descriptor_length > total_length - offset)
+      return -1;
+
+    const uint8_t *current = descriptor + offset;
+    if (descriptor_type == 4) {
+      if (descriptor_length < 9) return -1;
+      if (candidate && endpoint_address) {
+        save_boot_interface(result, descriptor[5], interface_number,
+                            endpoint_address, interval, max_packet_size,
+                            protocol);
+        return 0;
+      }
+      candidate = current[3] == 0 && current[5] == 3 &&
+                  current[6] == 1 &&
+                  (current[7] == 1 || current[7] == 2);
+      interface_number = current[2];
+      protocol = current[7];
+      endpoint_address = 0;
+      max_packet_size = 0;
+      interval = 0;
+    } else if (descriptor_type == 5 && candidate) {
+      if (descriptor_length < 7) return -1;
+      uint8_t address = current[2];
+      uint8_t attributes = current[3] & 0x03;
+      uint16_t packet_size = read_le16(current + 4) & 0x07ff;
+      uint16_t minimum = protocol == 1 ? 8 : 3;
+      if ((address & 0x80) && (address & 0x0f) != 0 && attributes == 3 &&
+          packet_size >= minimum) {
+        endpoint_address = address;
+        max_packet_size = packet_size;
+        interval = current[6];
+      }
+    }
+    offset += descriptor_length;
+  }
+
+  if (!candidate || !endpoint_address) return -1;
+  save_boot_interface(result, descriptor[5], interface_number,
+                      endpoint_address, interval, max_packet_size, protocol);
+  return 0;
+}
+
 static void send_modifier(uint8_t bit, uint8_t scancode, bool extended,
                           uint8_t modifiers) {
   bool was_pressed = (previous_modifiers & bit) != 0;
