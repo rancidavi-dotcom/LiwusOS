@@ -490,9 +490,29 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 test-harness:
 	python3 tests/harness/validate_serial.py --self-test
 
-test-unit: test-harness $(TEST_OBJ_DIR)/host/test_vma_host $(TEST_OBJ_DIR)/host/test_liwsh_parser
+test-unit: test-harness $(TEST_OBJ_DIR)/host/test_vma_host $(TEST_OBJ_DIR)/host/test_liwsh_parser $(TEST_OBJ_DIR)/host/test_usb_hid $(TEST_OBJ_DIR)/host/test_usb_xhci_ring
 	$(TEST_OBJ_DIR)/host/test_vma_host
 	$(TEST_OBJ_DIR)/host/test_liwsh_parser
+	$(TEST_OBJ_DIR)/host/test_usb_hid
+	$(TEST_OBJ_DIR)/host/test_usb_xhci_ring
+
+$(TEST_OBJ_DIR)/host/test_usb_hid: tests/host/test_usb_hid.c \
+		src/drivers/usb_hid.c include/drivers/usb_hid.h \
+		include/drivers/keyboard.h include/drivers/mouse.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O1 -g -Wall -Wextra -Werror \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		-DUSB_HID_HOST_TEST \
+		-Iinclude -Iinclude/drivers -o $@ tests/host/test_usb_hid.c \
+		src/drivers/usb_hid.c
+
+$(TEST_OBJ_DIR)/host/test_usb_xhci_ring: tests/host/test_usb_xhci_ring.c \
+		src/drivers/usb_xhci_ring.c include/drivers/usb_xhci_ring.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O1 -g -Wall -Wextra -Werror \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		-Iinclude -Iinclude/drivers -o $@ tests/host/test_usb_xhci_ring.c \
+		src/drivers/usb_xhci_ring.c
 
 $(TEST_OBJ_DIR)/host/test_liwsh_parser: tests/host/test_liwsh_parser.c \
 		programs/liwsh/parser.c programs/liwsh/parser.h

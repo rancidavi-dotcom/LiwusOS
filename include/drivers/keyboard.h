@@ -12,6 +12,8 @@ typedef enum {
 } keyboard_layout_t;
 
 void keyboard_handler(void);
+/* Feed a normalized Set-1 key event from a non-PS/2 input driver. */
+void keyboard_inject_set1(uint8_t scancode, bool is_extended, bool pressed);
 char get_last_key(void);
 int keyboard_pop_char(char *out);
 bool check_ctrl_c(void);

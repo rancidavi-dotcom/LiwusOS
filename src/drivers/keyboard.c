@@ -166,9 +166,7 @@ static const unsigned char *get_altgr_table(void) {
     }
 }
 
-void keyboard_handler(void) {
-    uint8_t scancode = inb(0x60);
-
+static void keyboard_process_scancode(uint8_t scancode) {
     if (scancode == 0xE0) {
         extended = true;
         return;
@@ -186,7 +184,9 @@ void keyboard_handler(void) {
         key_state[scancode] = true;
         if (extended) {
             char key = 0;
-            if (scancode == 0x48) key = 128;
+            if (scancode == 0x1D) ctrl_pressed = true;
+            else if (scancode == 0x38) altgr_pressed = true;
+            else if (scancode == 0x48) key = 128;
             else if (scancode == 0x50) key = 129;
             else if (scancode == 0x4B) key = 130;
             else if (scancode == 0x4D) key = 131;
@@ -271,6 +271,18 @@ void keyboard_handler(void) {
         push_event(scancode, 1);
         extended = false;
     }
+}
+
+void keyboard_handler(void) {
+    keyboard_process_scancode(inb(0x60));
+}
+
+void keyboard_inject_set1(uint8_t scancode, bool is_extended, bool pressed) {
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    if (is_extended) keyboard_process_scancode(0xE0);
+    keyboard_process_scancode(pressed ? scancode : (uint8_t)(scancode | 0x80));
+    if (flags & (1ULL << 9)) __asm__ volatile("sti" ::: "memory");
 }
 
 int keyboard_pop_char(char *out) {
