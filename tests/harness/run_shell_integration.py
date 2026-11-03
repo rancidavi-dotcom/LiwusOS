@@ -275,6 +275,13 @@ def main() -> int:
             utility_commands = (
                 (b"echo Native tools ready", b"Native tools ready\n"),
                 (b"mkdir /toolbox-test", None),
+                (b"mkdir -p /work/projeto", None),
+                (b"mkdir -p /work/projeto", None),
+                (b"touch /work/hello.txt", None),
+                (b"cp /work/hello.txt /work/projeto", None),
+                (b"ls /work/projeto", b"hello.txt\n"),
+                (b"cp /readme.txt /work/projeto", None),
+                (b"cat /work/projeto/readme.txt", readme),
                 (b"touch /toolbox-test/empty", None),
                 (b"cp /readme.txt /toolbox-test/readme.copy", None),
                 (b"mv /toolbox-test/readme.copy /toolbox-test/readme.txt", None),

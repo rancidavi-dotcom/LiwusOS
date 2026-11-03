@@ -132,14 +132,13 @@ unlinked open file until close, truncate behavior, invalid operation pointers,
 and execute-bit enforcement. It is run inside `ring3_processes` and does not
 change the 23 nested-suite marker count.
 
-The shell integration is intended to exercise the six native utilities
-(`mkdir`, `rm`, `mv`, `cp`, `touch`, `echo`) plus `ls`/`cat` against a temporary
-SDFS disk, including empty and multi-block copy, no-overwrite behavior, and
-preservation of an existing file when touched. The current full run stops
-after `mkdir /toolbox-test` because the next command is not echoed by the guest.
-The persistent install integration did exercise `mkdir`, `cp`, `mv`, `touch`,
-`echo`, `ls`, and `cat` across later boots. A separate reduced QEMU smoke
-sequence passed all six utilities, including `rm`.
+The shell integration exercises the six native utilities (`mkdir`, `rm`,
+`mv`, `cp`, `touch`, `echo`) plus `ls`/`cat` against a temporary SDFS disk.
+It covers `mkdir -p` creation and repeat use, copying a file into a directory,
+empty and multi-block copy, no-overwrite behavior, and preservation of an
+existing file when touched. The persistent install integration exercises
+`mkdir`, `cp`, `mv`, `touch`, `echo`, `ls`, and `cat` across later boots. A
+separate reduced QEMU smoke sequence passed all six utilities, including `rm`.
 
 The same integration group also executes an ET_DYN PIE probe, a freestanding
 Linux SYSCALL probe, a Linux clone/private-futex probe, and native

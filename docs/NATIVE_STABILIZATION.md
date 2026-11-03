@@ -70,10 +70,10 @@ contents.
 |---|---|---|
 | `ls` | `/`, `/bin`, post-delete/create directory, missing path; getdents-backed records | No broad enumeration soak over large directories |
 | `cat` | Text, empty file, binary file, and exact readback through 65536 bytes; missing path and directory errors | No injected read/write device fault during a child |
-| `mkdir` | Creates a real directory used by subsequent commands and persistent tests | No QEMU disk-full command case |
+| `mkdir` | Creates directories; `mkdir -p` creates missing parents and is idempotent for an existing directory | No QEMU disk-full command case |
 | `rm` | Removes a real entry; later listing omits it; ring-3 DAC probes cover denied removal | No crash-point test for the multi-step operation |
 | `mv` | Renames a real file and preserves readable contents; kernel tests cover collision and journal recovery before/after commit | Multi-call utility behavior is not a single transaction |
-| `cp` | Exact copy/readback at 0, 1, 15, 16, 255, 256, 4095, 4096, 4097, 8192, and 65536 bytes; binary data and existing-destination refusal | No deterministic QEMU disk-full or process-kill mid-copy test |
+| `cp` | Exact copy/readback at 0, 1, 15, 16, 255, 256, 4095, 4096, 4097, 8192, and 65536 bytes; binary data, directory destinations, and existing-file refusal | No deterministic QEMU disk-full or process-kill mid-copy test |
 | `touch` | Creates an empty file and preserves existing binary content | Timestamp semantics remain intentionally limited |
 | `echo` | Arguments, zero arguments, newline, and 100 uniquely numbered replies | No shell redirection or expansion is supported |
 

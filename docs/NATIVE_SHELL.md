@@ -50,11 +50,13 @@ single-user DAC model without credential-changing calls or multi-user login.
 and `echo.lxe` are independent SDK applications. `ls` enumerates a directory
 through `liw_getdents`; without a path it uses the current directory. `cat` and
 `cp` copy file bytes through bounded buffers. `mv` handles regular files when
-the destination is absent; directory moves are unsupported. `cp` refuses to
-overwrite an existing destination. `touch` creates a file or leaves an
-existing regular file unchanged. `rm` removes regular files; `mkdir` creates
-one directory; `echo` writes its arguments and a newline. None are shell or
-kernel built-ins.
+the destination is absent; directory moves are unsupported. `cp` accepts a
+destination directory and writes the source basename inside it; it refuses to
+overwrite an existing file. `touch` creates a file or leaves an existing
+regular file unchanged. `rm` removes regular files; `mkdir -p` creates missing
+parent directories and succeeds when the requested directory already exists.
+Without `-p`, `mkdir` creates one directory whose parent must exist. `echo`
+writes its arguments and a newline. None are shell or kernel built-ins.
 
 ## Command language
 
