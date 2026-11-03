@@ -31,6 +31,7 @@
 #define XHCI_COMMAND_ADDRESS_DEVICE 11u
 #define XHCI_COMMAND_CONFIGURE_ENDPOINT 12u
 #define XHCI_COMPLETION_SUCCESS 1u
+#define XHCI_COMPLETION_SHORT_PACKET 13u
 #define XHCI_EVENT_HANDLER_BUSY (1u << 3)
 #define XHCI_EXT_CAP_LEGACY 1u
 #define XHCI_EXT_CAP_BIOS_OWNED (1u << 16)
@@ -40,6 +41,8 @@
 #define XHCI_PORTSC_ENABLED (1u << 1)
 #define XHCI_PORTSC_RESET (1u << 4)
 #define XHCI_PORTSC_RESET_CHANGE (1u << 21)
+#define XHCI_PORTSC_WARM_RESET (1u << 31)
+#define XHCI_PORTSC_WARM_RESET_CHANGE (1u << 19)
 #define XHCI_INPUT_CONTEXT_ADD_SLOT (1u << 0)
 #define XHCI_INPUT_CONTEXT_ADD_EP0 (1u << 1)
 #define XHCI_TRANSFER_EVENT 32u
@@ -319,7 +322,10 @@ static int xhci_wait_transfer(uint8_t slot_id, uint8_t endpoint_id,
           (uint8_t)(event.control >> 24) != slot_id ||
           (uint8_t)((event.control >> 16) & 0x1f) != endpoint_id)
         continue;
-      if ((event.status >> 24) != XHCI_COMPLETION_SUCCESS) return -1;
+      uint32_t completion_code = event.status >> 24;
+      if (completion_code != XHCI_COMPLETION_SUCCESS &&
+          completion_code != XHCI_COMPLETION_SHORT_PACKET)
+        return -1;
       if (residual_length) *residual_length = event.status & 0x00ffffffu;
       return 0;
     }
@@ -504,7 +510,9 @@ void usb_xhci_poll(void) {
     xhci_boot_device_t *device = &xhci_boot_devices[slot_id];
     device->transfer_pending = false;
     uint32_t residual = event.status & 0x00ffffffu;
-    if ((event.status >> 24) == XHCI_COMPLETION_SUCCESS &&
+    uint32_t completion_code = event.status >> 24;
+    if ((completion_code == XHCI_COMPLETION_SUCCESS ||
+         completion_code == XHCI_COMPLETION_SHORT_PACKET) &&
         residual <= device->interrupt_packet_size) {
       uint32_t received = device->interrupt_packet_size - residual;
       int decoded = device->hid_interface.protocol == 1
@@ -540,21 +548,25 @@ void usb_xhci_poll(void) {
   }
 }
 
-static int xhci_reset_root_port(uint8_t port_id) {
+static int xhci_reset_root_port(uint8_t port_id, uint8_t speed_id) {
   uint64_t portsc_phys = (uint64_t)(uintptr_t)xhci_operational_regs +
                          0x400 + (uint64_t)(port_id - 1) * 0x10;
   volatile uint32_t *portsc = (volatile uint32_t *)portsc_phys;
   uint32_t status = *portsc;
   if (!(status & XHCI_PORTSC_CONNECTED)) return -1;
   if (!(status & XHCI_PORTSC_ENABLED)) {
-    /* PORTSC change bits are W1C; write only PR so unrelated changes remain. */
-    *portsc = XHCI_PORTSC_RESET;
+    bool superspeed = speed_id >= 4;
+    /* PORTSC change bits are W1C; only request the appropriate reset. */
+    *portsc = superspeed ? XHCI_PORTSC_WARM_RESET : XHCI_PORTSC_RESET;
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     for (uint32_t i = 0; i < XHCI_CONTROLLER_WAIT_SPINS; ++i) {
       status = *portsc;
-      if ((status & XHCI_PORTSC_RESET_CHANGE) &&
-          !(status & XHCI_PORTSC_RESET)) {
-        *portsc = XHCI_PORTSC_RESET_CHANGE;
+      uint32_t reset_change = superspeed ? XHCI_PORTSC_WARM_RESET_CHANGE
+                                         : XHCI_PORTSC_RESET_CHANGE;
+      uint32_t reset = superspeed ? XHCI_PORTSC_WARM_RESET
+                                  : XHCI_PORTSC_RESET;
+      if ((status & reset_change) && !(status & reset)) {
+        *portsc = reset_change;
         return (status & XHCI_PORTSC_ENABLED) ? 0 : -1;
       }
       __asm__ volatile("pause" ::: "memory");
@@ -659,10 +671,12 @@ static uint16_t xhci_read_le16(const uint8_t *bytes) {
 static int xhci_configure_boot_hid(uint8_t slot_id) {
   xhci_boot_device_t *device = &xhci_boot_devices[slot_id];
   uint8_t *descriptor = device->descriptor_buffer;
+  uint8_t expected_ep0_packet =
+      device->speed_id >= 4 ? 9 : (uint8_t)device->ep0_max_packet;
   memset(descriptor, 0, PAGE_SIZE);
   if (xhci_control_request(slot_id, 0x80, 6, 0x0100, 0, descriptor, 18) < 0 ||
       descriptor[0] < 18 || descriptor[1] != 1 ||
-      descriptor[7] != device->ep0_max_packet) {
+      descriptor[7] != expected_ep0_packet) {
     serial_print("USB: invalid or unreadable device descriptor, slot ");
     serial_print_hex(slot_id);
     serial_print("\n");
@@ -719,7 +733,8 @@ static uint32_t xhci_enumerate_connected_slots(uint16_t ports,
     uint32_t status = *portsc;
     if (!(status & XHCI_PORTSC_CONNECTED)) continue;
     attempted++;
-    if (xhci_reset_root_port(port_id) < 0) {
+    uint8_t connected_speed = (uint8_t)((status >> 10) & 0x0f);
+    if (xhci_reset_root_port(port_id, connected_speed) < 0) {
       serial_print("USB: xHCI root port reset failed: ");
       serial_print_hex(port_id);
       serial_print("\n");
@@ -734,7 +749,7 @@ static uint32_t xhci_enumerate_connected_slots(uint16_t ports,
       continue;
     }
     xhci_port_slot[index] = slot;
-    xhci_port_speed[index] = (uint8_t)((status >> 10) & 0x0f);
+    xhci_port_speed[index] = connected_speed;
     if (xhci_address_device(slot, port_id, xhci_port_speed[index], max_slots) <
         0) {
       serial_print("USB: device addressing failed for port ");
