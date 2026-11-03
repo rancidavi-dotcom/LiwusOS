@@ -110,11 +110,12 @@ prompt and requires less than 0.75 CPU seconds. Its serial transcript is written
 `test-logs/shell-integration.serial`. The intended utility sequence covers a
 temporary SDFS disk, including multi-block and empty-file copies, rename,
 removal, no-overwrite behavior, and preservation when touching an existing
-file. The current full run times out after `mkdir /toolbox-test`: the prompt is
-printed, but the following `touch` input is not echoed. See
-[`NATIVE_UTILITIES_HANDOFF.md`](NATIVE_UTILITIES_HANDOFF.md) for the current
-validation record; the shell integration must pass before this sequence is
-considered validated.
+file. The test includes a 100-command numbered echo sequence through the real
+serial console to detect missing, repeated, stale, or reordered responses. A
+previous harness bug double-waited for the exit marker on commands with no
+stdout and therefore stopped before sending the next command. That expectation
+is corrected; the serial transcript and repeat count are recorded in the
+stabilization report.
 
 This is a minimal interactive process launcher, not a general-purpose shell.
 The kernel's current serial input is polled at a bounded 10 ms sleep cadence;

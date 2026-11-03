@@ -1,6 +1,7 @@
 #ifdef KERNEL_TEST
 #include "sdfs.h"
 #include "framework.h"
+#include "string.h"
 
 int test_sdfs_dir_create(void) {
     int ret = sdfs_create_dir("/mydir");
@@ -31,11 +32,30 @@ int test_sdfs_dir_list(void) {
         if (sdfs_list_dir_entry("/listdir", i, name, &is_dir, &size) != 0) break;
         count++;
     }
-    ASSERT(count == 3, "3 entries in /listdir");
-
+    ASSERT(count == 3, "3 entries in /listdir before delete");
     sdfs_delete("/listdir/a.txt");
+
+    /* A tombstone must occupy the full serialized entry, not just its two
+     * byte header. Reuse the directory afterward and verify enumeration. */
+    ASSERT(sdfs_create_file("/listdir/replacement.txt") == 0,
+           "create after directory deletion");
+    count = 0;
+    int saw_b = 0, saw_sub = 0, saw_replacement = 0, saw_deleted = 0;
+    for (int i = 0; i < 10; i++) {
+        if (sdfs_list_dir_entry("/listdir", i, name, &is_dir, &size) != 0) break;
+        count++;
+        if (strcmp(name, "b.txt") == 0) saw_b++;
+        else if (strcmp(name, "sub") == 0) saw_sub++;
+        else if (strcmp(name, "replacement.txt") == 0) saw_replacement++;
+        else if (strcmp(name, "a.txt") == 0) saw_deleted++;
+    }
+    ASSERT(count == 3, "3 entries after delete and create");
+    ASSERT(saw_b == 1 && saw_sub == 1 && saw_replacement == 1 && saw_deleted == 0,
+           "enumeration skips deleted record and lists live entries once");
+
     sdfs_delete("/listdir/b.txt");
     sdfs_delete("/listdir/sub");
+    sdfs_delete("/listdir/replacement.txt");
     sdfs_delete("/listdir");
     PASS("test_sdfs_dir_list");
 }

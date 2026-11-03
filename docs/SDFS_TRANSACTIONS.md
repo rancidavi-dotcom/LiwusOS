@@ -81,3 +81,9 @@ replay and mount refuse it without clearing the record, restores the journal,
 and verifies successful replay. The normal `make app-install-test` path also
 boots a real temporary AHCI disk, exercising write/flush ordering outside the
 test RAM disk.
+
+Directory enumeration regression coverage also deletes an entry, creates a
+replacement, and verifies that live entries are returned exactly once. Kernel
+and offline host walkers skip the full serialized tombstone slot. This fixes
+directory traversal after ordinary deletion; it does not add crash atomicity
+to rename or multi-step utility operations.

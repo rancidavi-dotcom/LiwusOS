@@ -153,6 +153,15 @@ class SDFS:
         else:
             self.bitmap[block >> 3] &= ~mask
 
+    @staticmethod
+    def _deleted_entry_size(block, pos):
+        if pos + 2 > BLOCK:
+            raise InstallError("truncated SDFS deleted entry")
+        size = 2 + block[pos + 1] + 24
+        if pos + size > BLOCK:
+            raise InstallError("invalid SDFS deleted entry length")
+        return size
+
     def allocate(self):
         for block in range(self.root + 1, self.total):
             if not self.is_used(block):
@@ -184,8 +193,11 @@ class SDFS:
                 if pos + 2 > BLOCK:
                     raise InstallError("truncated SDFS directory entry")
                 kind, nlen = block[pos], block[pos + 1]
-                if kind in (0, ENTRY_DEL):
+                if kind == 0:
                     pos += 2
+                    continue
+                if kind == ENTRY_DEL:
+                    pos += self._deleted_entry_size(block, pos)
                     continue
                 size = 2 + nlen + 24
                 if nlen == 0 or pos + size > BLOCK:
@@ -230,11 +242,18 @@ class SDFS:
             nxt, count = struct.unpack_from("<IH", block, 0)
             pos = 6
             for _ in range(count):
+                if pos + 2 > BLOCK:
+                    raise InstallError("truncated SDFS directory entry")
                 typ, nlen = block[pos], block[pos + 1]
-                if typ in (0, ENTRY_DEL):
+                if typ == 0:
                     pos += 2
                     continue
+                if typ == ENTRY_DEL:
+                    pos += self._deleted_entry_size(block, pos)
+                    continue
                 size = 2 + nlen + 24
+                if nlen == 0 or pos + size > BLOCK:
+                    raise InstallError("invalid SDFS directory entry length")
                 raw = block[pos + 2:pos + 2 + nlen]
                 if raw.decode("utf-8") == name:
                     return cur, pos, typ, u32(block, pos + 2 + nlen), u32(block, pos + 6 + nlen), size
@@ -298,9 +317,21 @@ class SDFS:
                 nxt, entry_count = struct.unpack_from("<IH", block, 0)
                 pos, slot = 6, None
                 for _ in range(entry_count):
+                    if pos + 2 > BLOCK:
+                        raise InstallError("truncated SDFS directory entry")
                     typ, nlen = block[pos], block[pos + 1]
-                    size = 2 if typ in (0, ENTRY_DEL) else 2 + nlen + 24
-                    if typ in (0, ENTRY_DEL) and size >= len(entry):
+                    if typ == 0:
+                        size = 2
+                    elif typ == ENTRY_DEL:
+                        size = self._deleted_entry_size(block, pos)
+                    else:
+                        size = 2 + nlen + 24
+                        if nlen == 0 or pos + size > BLOCK:
+                            raise InstallError("invalid SDFS directory entry length")
+                    if typ == 0 and size >= len(entry):
+                        slot = pos
+                        break
+                    if typ == ENTRY_DEL and size == len(entry):
                         slot = pos
                         break
                     pos += size

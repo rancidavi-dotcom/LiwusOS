@@ -70,19 +70,46 @@ in test protocol assumptions, not evidence of kernel memory corruption.
   synchronization fix, 20 bounded runs passed. No kernel scheduler change was
   made, because the observed failure was legal futex behavior plus a test
   gate released before all waiters queued.
-- `make shell-test` has **not passed**. After successfully running `mkdir
-  /toolbox-test`, the full serial integration waits for the next command's
-  child exit marker; the guest transcript shows the prompt but no echoed input
-  from `touch /toolbox-test/empty`. Repeatedly pacing input and switching the
-  serial transport from QEMU stdio to a loopback TCP socket did not fix the
-  full sequence. Reduced fresh-QEMU runs and the four-boot persistence test
-  did run `mkdir` followed by `touch` successfully. The cause of the
-  long-sequence failure is unresolved and it must not be treated as passed.
+- The initial `make shell-test` timeout was a harness expectation bug: commands
+  with no stdout used the child-exit marker as both their expected output and
+  their status, so the harness waited for a second marker before sending the
+  next command. UART counters and the bounded byte trace showed no overrun and
+  a one-to-one match between bytes transmitted and received. The harness fix
+  now waits for exactly one status marker. The subsequent full session exposed
+  an SDFS deleted-entry traversal defect; tombstones now retain their serialized
+  slot boundaries when directory walkers advance. See the stabilization
+  report for reproducible test results and remaining limitations.
 
-## Remaining validation and limitations
+## Stabilization status
 
-The required implementation targets passed except for the unresolved full
-shell integration timeout. Run final checks after any further fixes:
+The harness timeout and SDFS tombstone traversal defects have been corrected.
+Ten complete QEMU shell runs at 50 ms send pacing passed, followed by another
+pass at the default pacing; all include 100 numbered commands and byte-exact
+copy/readback sizes through 65536 bytes. The final validation and remaining
+limitations are in
+[`NATIVE_STABILIZATION.md`](NATIVE_STABILIZATION.md).
+
+Known transaction limits remain: rename, in-place descriptor writes, and
+multi-step `cp` are not crash-atomic. Concurrent filesystem mutation is not
+validated as SMP-safe because user tasks run on the BSP and SDFS allocation
+state is not protected by one filesystem-wide mutation lock. See
+[`SDFS_TRANSACTIONS.md`](SDFS_TRANSACTIONS.md) and
+[`NATIVE_UTILITIES_SECURITY.md`](NATIVE_UTILITIES_SECURITY.md).
+
+## Reproduce final validation
+
+```sh
+make -B kernel.bin
+make test-all
+make test-stress
+make test-unit
+make shell-test
+make app-install-test
+git diff --check
+```
+
+Do not claim complete SDFS crash atomicity or concurrent-mutation safety from
+these functional tests.
 
 ```sh
 make -B kernel.bin

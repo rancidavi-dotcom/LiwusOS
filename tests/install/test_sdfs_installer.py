@@ -116,6 +116,30 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(final.find_dir(final.resolve_dir("/bin"), "demo.lxe")[4],
                          len(static_elf(b"C")))
 
+    def test_install_walks_and_reuses_complete_deleted_directory_slot(self):
+        fs = INSTALLER.SDFS(add_bin(empty_sdfs()))
+        fs.install("demo.lxe", static_elf(b"A"), False)
+        fs.install("neighbor.lxe", static_elf(b"N"), False)
+        demo = fs.find_dir(fs.resolve_dir("/bin"), "demo.lxe")
+        block = bytearray(fs.read_block(demo[0]))
+        block[demo[1]] = INSTALLER.ENTRY_DEL
+        fs.write_block(demo[0], block)
+
+        # Kernel unlink leaves the serialized length and payload in the
+        # tombstone. The offline installer must walk past the whole slot and
+        # may reuse it only when the new record has the same serialized size.
+        after_delete = INSTALLER.SDFS(fs.image)
+        self.assertIsNone(after_delete.find_dir(after_delete.resolve_dir("/bin"),
+                                                "demo.lxe"))
+        self.assertIsNotNone(after_delete.find_dir(after_delete.resolve_dir("/bin"),
+                                                   "neighbor.lxe"))
+        after_delete.install("demo.lxe", static_elf(b"B", 4096), False)
+        repaired = INSTALLER.SDFS(after_delete.image)
+        bin_block = repaired.resolve_dir("/bin")
+        self.assertEqual(repaired.find_dir(bin_block, "demo.lxe")[4],
+                         len(static_elf(b"B", 4096)))
+        self.assertIsNotNone(repaired.find_dir(bin_block, "neighbor.lxe"))
+
     def test_install_regular_data_at_absolute_destination(self):
         fs = INSTALLER.SDFS(empty_sdfs())
         payload = b"Welcome to LIWUS OS!\n"

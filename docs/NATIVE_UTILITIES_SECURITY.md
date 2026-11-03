@@ -85,11 +85,15 @@ allow/deny results, descriptor access, parent-directory rules, unlink lifetime,
 truncate behavior, and execute-bit handling. `make app-install-test` ran
 `mkdir`, `cp`, `mv`, `touch`, and `echo` as shell-launched `.lxe` applications
 and verified the resulting files, uid, and modes across four boots of one
-temporary SDFS image. The full `make shell-test` target currently times out
-waiting for serial input after `mkdir /toolbox-test`; its guest transcript
-shows the prompt, then no characters from the next `touch` command. This
-limitation is recorded in `NATIVE_UTILITIES_HANDOFF.md`; do not count that
-target as passed. A reduced fresh-QEMU shell sequence did pass `mkdir`,
-`touch`, `echo`, `cp`, `mv`, `rm`, `ls`, and `cat` as separate programs. The
-native shell resolves the applications through the same generic `.lxe` lookup
-used for other programs.
+temporary SDFS image. The initial full shell-test timeout was caused by the
+test harness waiting twice for a single child-exit marker on commands with no
+stdout; serial diagnostics confirmed it had not sent the next command and
+that the guest received every byte sent so far. The harness now distinguishes
+command output from child status. Its full QEMU session passes after deleting
+and creating directory entries, which also exposed and verified the SDFS
+tombstone traversal fix. The native shell resolves the applications through
+the same generic `.lxe` lookup used for other programs. Repeated 100-command
+stability runs are recorded separately; one successful run is not a soak-test
+claim. The final integration scenario passed ten paced QEMU runs plus one
+default-paced run; this is a bounded regression run, not an indefinite soak
+test.

@@ -464,6 +464,17 @@ static int sdfs_entry_serialize(uint8_t *buf, uint32_t buf_size, const sdfs_entr
     return (int)needed;
 }
 
+/* Deleted entries retain their original name length and payload on disk.
+ * Preserve the slot boundary so directory walkers do not parse that payload
+ * as a sequence of new entries. V1 directories are read-only, but remain
+ * readable with their legacy entry size. */
+static uint32_t sdfs_deleted_entry_size(const uint8_t *buf, uint32_t buf_size) {
+    if (buf_size < 2 || buf[0] != SDFS_TYPE_DEL) return 2;
+    uint32_t overhead = disk_format_version == 1 ? 12u : 24u;
+    uint32_t size = 2u + (uint32_t)buf[1] + overhead;
+    return size <= buf_size ? size : 0u;
+}
+
 static int sdfs_entry_deserialize(const uint8_t *buf, uint32_t buf_size, sdfs_entry_t *e) {
     if (buf_size < 2) return -1;
     e->type = buf[0];
@@ -532,7 +543,10 @@ static int sdfs_dir_count_entries(uint32_t dir_block) {
             uint8_t type = pos[0];
             uint8_t name_len = pos[1];
             if (type == SDFS_TYPE_FREE || type == SDFS_TYPE_DEL) {
-                pos += 2; remaining -= 2; continue;
+                uint32_t slot_size = type == SDFS_TYPE_DEL
+                    ? sdfs_deleted_entry_size(pos, remaining) : 2u;
+                if (slot_size < 2) break;
+                pos += slot_size; remaining -= slot_size; continue;
             }
             uint32_t entry_size = 2 + name_len + 24;
             if (entry_size > remaining) break;
@@ -564,7 +578,11 @@ static int sdfs_dir_find_entry(uint32_t dir_block, const char *name, sdfs_entry_
             sdfs_entry_t e;
             int ret = sdfs_entry_deserialize(pos, remaining, &e);
             if (ret < 0) break;
-            if (ret == 1) { pos += 2; remaining -= 2; continue; }
+            if (ret == 1) {
+                uint32_t slot_size = sdfs_deleted_entry_size(pos, remaining);
+                if (slot_size < 2) break;
+                pos += slot_size; remaining -= slot_size; continue;
+            }
             e.block = cur;
             e.block_offset = (uint16_t)(pos - buf);
             if (strcmp(e.name, name) == 0) {
@@ -598,7 +616,11 @@ static int sdfs_dir_find_by_index(uint32_t dir_block, int index, sdfs_entry_t *o
             sdfs_entry_t e;
             int ret = sdfs_entry_deserialize(pos, remaining, &e);
             if (ret < 0) break;
-            if (ret == 1) { pos += 2; remaining -= 2; continue; }
+            if (ret == 1) {
+                uint32_t slot_size = sdfs_deleted_entry_size(pos, remaining);
+                if (slot_size < 2) break;
+                pos += slot_size; remaining -= slot_size; continue;
+            }
             if (count == index) {
                 e.block = cur;
                 e.block_offset = (uint16_t)(pos - buf);
@@ -639,9 +661,13 @@ static int sdfs_dir_add_entry(uint32_t dir_block, sdfs_entry_t *e) {
             if (remaining < 2) { break; }
             uint8_t type = pos[0];
             uint8_t name_len = pos[1];
-            uint32_t slot_size = (type == SDFS_TYPE_FREE || type == SDFS_TYPE_DEL) ? 2 : (2 + name_len + 24);
+            uint32_t slot_size = type == SDFS_TYPE_DEL
+                ? sdfs_deleted_entry_size(pos, remaining)
+                : (type == SDFS_TYPE_FREE ? 2u : 2u + name_len + 24u);
+            if (slot_size < 2) break;
             if (type == SDFS_TYPE_FREE || type == SDFS_TYPE_DEL) {
-                if (slot_size >= 2u + (uint32_t)e->name_len + 24u) {
+                /* Reusing a larger slot would leave unparseable padding. */
+                if (slot_size == 2u + (uint32_t)e->name_len + 24u) {
                     found_free = 1;
                     free_slot_remaining = remaining;
                     break;
@@ -710,7 +736,12 @@ static int sdfs_dir_remove_entry(uint32_t dir_block, const char *name) {
                 kfree(buf);
                 return 0;
             }
-            if (ret <= 1) { pos += 2; remaining -= 2; continue; }
+            if (ret <= 1) {
+                uint32_t slot_size = ret == 1
+                    ? sdfs_deleted_entry_size(pos, remaining) : 2u;
+                if (slot_size < 2) break;
+                pos += slot_size; remaining -= slot_size; continue;
+            }
             pos += ret;
             remaining -= ret;
         }

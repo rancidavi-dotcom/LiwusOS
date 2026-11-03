@@ -24,6 +24,9 @@ def main() -> int:
     log_path = logs / "shell-integration.serial"
     transcript = bytearray()
     pending = bytearray()
+    host_tx_bytes = 0
+    last_command = b""
+    send_delay = float(os.environ.get("LIW_SHELL_SEND_DELAY", "0.2"))
 
     with tempfile.TemporaryDirectory(prefix="liwus-shell-qemu-") as temp:
         temp_path = Path(temp)
@@ -57,6 +60,15 @@ def main() -> int:
             (files_path / "empty.txt").write_bytes(b"")
             payload = bytes(range(256)) * 3
             (files_path / "binary.bin").write_bytes(payload)
+            copy_sizes = (0, 1, 15, 16, 255, 256, 4095, 4096, 4097,
+                          8192, 65536)
+            copy_payloads = {}
+            for size in copy_sizes:
+                copy_data = bytes((index * 37 + 11) & 0xff
+                                  for index in range(size))
+                name = f"copy-{size}.bin"
+                (files_path / name).write_bytes(copy_data)
+                copy_payloads[size] = (name, copy_data)
             for source, destination in (("collision", "bin/collision"),
                                        ("empty.txt", "empty.txt"),
                                        ("binary.bin", "binary.bin")):
@@ -64,6 +76,11 @@ def main() -> int:
                     "tar", "-rf", str(initrd), "--format=ustar",
                     f"--transform=s|{source}|{destination}|",
                     "-C", str(files_path), source,
+                ], check=True)
+            for name, _ in copy_payloads.values():
+                subprocess.run([
+                    "tar", "-rf", str(initrd), "--format=ustar",
+                    "-C", str(files_path), name,
                 ], check=True)
         shutil.copy2(initrd, image_tree / "boot/initrd.tar")
         iso = temp_path / "liwus-shell-test.iso"
@@ -104,11 +121,16 @@ def main() -> int:
         serial.setblocking(False)
 
         def expect(marker: bytes, timeout: float = 90.0) -> None:
+            nonlocal host_tx_bytes
+            timeout = float(os.environ.get("LIW_SHELL_EXPECT_TIMEOUT", timeout))
             deadline = time.monotonic() + timeout
             while marker not in pending:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise TimeoutError(f"timed out waiting for {marker!r}")
+                    raise TimeoutError(
+                        f"timed out waiting for {marker!r}; host_tx={host_tx_bytes}; "
+                        f"last_command={last_command!r}"
+                    )
                 ready, _, _ = select.select([serial], [], [], remaining)
                 if not ready:
                     continue
@@ -124,13 +146,16 @@ def main() -> int:
             del pending[:end]
 
         def send(command_bytes: bytes) -> None:
+            nonlocal host_tx_bytes, last_command
             # Let the guest reach its blocking input path after each prompt.
             time.sleep(0.15)
+            last_command = command_bytes
             for offset in range(0, len(command_bytes), 4):
                 # Small groups keep each UART FIFO well below its capacity,
                 # while the pause lets the guest's polling reader drain it.
                 serial.sendall(command_bytes[offset:offset + 4])
-                time.sleep(0.2)
+                host_tx_bytes += len(command_bytes[offset:offset + 4])
+                time.sleep(send_delay)
 
         def process_cpu_ticks() -> int:
             stat = Path(f"/proc/{process.pid}/stat").read_text()
@@ -249,22 +274,29 @@ def main() -> int:
 
             utility_commands = (
                 (b"echo Native tools ready", b"Native tools ready\n"),
-                (b"mkdir /toolbox-test", b"[liwsh] exit status 0\n"),
-                (b"touch /toolbox-test/empty", b"[liwsh] exit status 0\n"),
-                (b"cp /readme.txt /toolbox-test/readme.copy", b"[liwsh] exit status 0\n"),
-                (b"mv /toolbox-test/readme.copy /toolbox-test/readme.txt", b"[liwsh] exit status 0\n"),
-                (b"cp /empty.txt /toolbox-test/empty.copy", b"[liwsh] exit status 0\n"),
-                (b"cp /binary.bin /toolbox-test/binary.copy", b"[liwsh] exit status 0\n"),
+                (b"mkdir /toolbox-test", None),
+                (b"touch /toolbox-test/empty", None),
+                (b"cp /readme.txt /toolbox-test/readme.copy", None),
+                (b"mv /toolbox-test/readme.copy /toolbox-test/readme.txt", None),
+                (b"cp /empty.txt /toolbox-test/empty.copy", None),
+                (b"cp /binary.bin /toolbox-test/binary.copy", None),
                 (b"cat /toolbox-test/readme.txt", readme),
                 (b"cat /toolbox-test/binary.copy", binary_payload),
-                (b"rm /toolbox-test/readme.txt", b"[liwsh] exit status 0\n"),
+                (b"rm /toolbox-test/readme.txt", None),
                 (b"ls /toolbox-test", b"binary.copy\n"),
             )
             for shell_command, output in utility_commands:
                 send(shell_command + b"\n")
-                expect(output)
+                if output is not None:
+                    expect(output)
                 expect(b"[liwsh] exit status 0\n")
                 expect(b"liwus> ")
+
+            send(b"echo\n")
+            expect(b"echo\n")  # cooked-input echo
+            expect(b"\n")      # echo with no arguments emits a newline
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
 
             # Existing-file touch must preserve content, and cp must refuse
             # replacing an existing destination instead of truncating it.
@@ -279,6 +311,30 @@ def main() -> int:
             expect(binary_payload)
             expect(b"[liwsh] exit status 0\n")
             expect(b"liwus> ")
+
+            for size, (name, expected_bytes) in copy_payloads.items():
+                source = f"/{name}".encode()
+                destination = f"/toolbox-test/{name}.copy".encode()
+                send(b"cp " + source + b" " + destination + b"\n")
+                expect(b"[liwsh] exit status 0\n")
+                expect(b"liwus> ")
+                send(b"cat " + destination + b"\n")
+                if expected_bytes:
+                    expect(expected_bytes)
+                expect(b"[liwsh] exit status 0\n")
+                expect(b"liwus> ")
+
+            # Exercise the complete UART -> stdin -> shell -> fork/exec/wait
+            # path over a long real guest session. Each reply carries a unique
+            # sequence number, so a missing, duplicated, stale, or reordered
+            # command cannot satisfy the next check.
+            for sequence in range(100):
+                token = f"console-stress-{sequence:03d}".encode()
+                send(b"echo " + token + b"\n")
+                expect(b"echo " + token + b"\n")  # cooked-input echo
+                expect(token + b"\n")
+                expect(b"[liwsh] exit status 0\n")
+                expect(b"liwus> ")
 
             send(b"missing-program.lxe\n")
             expect(b"liwsh: command not found: missing-program.lxe\n")
@@ -298,7 +354,7 @@ def main() -> int:
 
             transcript.extend(
                 f"\n[SHELL IDLE] QEMU CPU seconds per idle second: {cpu_seconds:.3f} PASS\n"
-                "[SHELL TEST] console input, commands, child lifecycle, EOF, restart PASS\n"
+                "[SHELL TEST] console input, 100-command sequence, utilities, child lifecycle, EOF, restart PASS\n"
                 .encode()
             )
             log_path.write_bytes(transcript)
