@@ -9,8 +9,14 @@ internals are not used.
 The kernel finds a PCI xHCI controller, validates its memory BAR, enables PCI
 memory decoding (without enabling bus mastering), maps its capability page as
 uncached MMIO, and reads the xHCI version and root-port count. This is a
-read-only capability probe; it deliberately does not reset or start the
-controller and does not submit DMA.
+read-only capability probe; it also reads root-port connection and speed
+status. It deliberately does not reset or start the controller, write port
+registers, or submit DMA.
+
+Run `make usb-probe-test` to boot a disposable QEMU snapshot with one emulated
+USB keyboard and mouse attached. The test verifies xHCI capability reads, at
+least two connected root ports, and normal kernel boot. This demonstrates
+device presence only; it does not test key or mouse input.
 
 The HID layer now decodes standard boot-keyboard and boot-mouse reports into
 the existing LIWUS keyboard and mouse input paths. It preserves key-down and

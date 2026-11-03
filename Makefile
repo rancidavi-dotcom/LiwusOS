@@ -588,8 +588,18 @@ QEMU_BASE = -machine q35 -m 2048 -no-reboot \
             -drive file=$(DISK_IMAGE),format=raw,if=none,id=disk \
             -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0
 
+.PHONY: usb-probe-test
 run: all
 	$(QEMU) $(QEMU_BASE) -cdrom $(ISO_IMAGE) -serial stdio
+
+usb-probe-test: all
+	@log=$$(mktemp); \
+	 timeout --signal=TERM 20s $(QEMU) $(QEMU_BASE) -snapshot \
+		-device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 \
+		-device usb-mouse,bus=xhci.0 -cdrom $(ISO_IMAGE) \
+		-display none -monitor none -serial file:$$log; qemu_rc=$$?; \
+	 python3 tests/harness/validate_usb_probe.py --log $$log \
+		--qemu-exit $$qemu_rc; result=$$?; rm -f $$log; exit $$result
 
 run-log: all
 	rm -f qemu_serial.log
