@@ -14,6 +14,9 @@ the controller. It polls the command/event rings, resets connected root ports,
 enables slots, addresses devices, reads their descriptors, selects boot HID
 configurations, and polls interrupt-IN endpoints from the timer handler.
 
+`make run` now disables QEMU's i8042 controller and attaches an xHCI USB
+keyboard and mouse, so interactive input exercises USB rather than PS/2.
+
 Run `make usb-probe-test` to boot a disposable QEMU snapshot with one emulated
 USB keyboard and mouse attached. The test injects `a`, mouse movement, and a
 button press through QEMU's monitor. It verifies xHCI startup, device
