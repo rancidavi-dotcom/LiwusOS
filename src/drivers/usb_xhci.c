@@ -983,7 +983,7 @@ static int xhci_initialize_controller(const pci_device_t *device, uint64_t bar,
   serial_print_hex(addressed_devices);
   serial_print(" scratchpads=");
   serial_print_hex(scratchpads);
-  serial_print(" polling mode; HID enumeration pending\n");
+  serial_print(" polling mode; boot-HID input active\n");
   return 0;
 }
 

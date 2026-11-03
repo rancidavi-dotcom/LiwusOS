@@ -19,7 +19,10 @@ USB keyboard and mouse attached. The test injects `a`, mouse movement, and a
 button press through QEMU's monitor. It verifies xHCI startup, device
 configuration, reports from both devices, the keyboard character echoed by the
 native shell, and mouse activity reaching LIWUS. This verifies QEMU's emulated
-controller path; physical USB hardware is not yet validated.
+controller path; physical USB hardware is not yet validated. Current scope is
+boot-protocol keyboard/mouse interfaces connected directly to a discovered
+xHCI root port at boot. USB hubs, hot-plug, multiple-controller selection, and
+HID devices that lack boot protocol are not supported yet.
 
 The HID layer decodes standard boot-keyboard and boot-mouse reports into the
 existing LIWUS keyboard and mouse input paths. It preserves key-down and
