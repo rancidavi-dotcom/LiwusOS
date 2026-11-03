@@ -60,6 +60,9 @@ def main() -> int:
             (files_path / "empty.txt").write_bytes(b"")
             payload = bytes(range(256)) * 3
             (files_path / "binary.bin").write_bytes(payload)
+            head_lines = b"".join(f"line-{number:02d}\n".encode()
+                                  for number in range(1, 13))
+            (files_path / "head-lines.txt").write_bytes(head_lines)
             copy_sizes = (0, 1, 15, 16, 255, 256, 4095, 4096, 4097,
                           8192, 65536)
             copy_payloads = {}
@@ -82,6 +85,10 @@ def main() -> int:
                     "tar", "-rf", str(initrd), "--format=ustar",
                     "-C", str(files_path), name,
                 ], check=True)
+            subprocess.run([
+                "tar", "-rf", str(initrd), "--format=ustar",
+                "-C", str(files_path), "head-lines.txt",
+            ], check=True)
         shutil.copy2(initrd, image_tree / "boot/initrd.tar")
         iso = temp_path / "liwus-shell-test.iso"
         subprocess.run(["grub-mkrescue", "-o", str(iso), str(image_tree)],
@@ -177,7 +184,18 @@ def main() -> int:
                 )
 
             send(b"help\n")
-            expect(b"Built-ins: help, version, exit\n")
+            expect(b"Built-ins: help, version, pwd, cd, exit\n")
+            expect(b"liwus> ")
+
+            send(b"pwd\n")
+            expect(b"/\n")
+            expect(b"liwus> ")
+            send(b"cd /bin\n")
+            expect(b"liwus> ")
+            send(b"pwd\n")
+            expect(b"/bin\n")
+            expect(b"liwus> ")
+            send(b"cd /\n")
             expect(b"liwus> ")
 
             send(b"help \"unsupported\"\n")
@@ -209,7 +227,8 @@ def main() -> int:
             send(b"ls /bin\n")
             for name in (b"native-hello.lxe", b"liwsh.lxe", b"ls.lxe",
                          b"cat.lxe", b"mkdir.lxe", b"rm.lxe", b"mv.lxe",
-                         b"cp.lxe", b"touch.lxe", b"echo.lxe"):
+                         b"cp.lxe", b"touch.lxe", b"echo.lxe", b"rmdir.lxe",
+                         b"stat.lxe", b"head.lxe"):
                 expect(name + b"\n")
             expect(b"[liwsh] exit status 0\n")
             expect(b"liwus> ")
@@ -219,6 +238,27 @@ def main() -> int:
                 expect(b"cat.lxe\n")
                 expect(b"[liwsh] exit status 0\n")
                 expect(b"liwus> ")
+
+            send(b"stat /readme.txt\n")
+            expect(b"Path: /readme.txt\n")
+            expect(b"Type: regular file\n")
+            expect(b"Size: 21 bytes\n")
+            expect(b"Mode: 644\n")
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
+
+            send(b"head /head-lines.txt\n")
+            expect(b"line-01\nline-02\nline-03\nline-04\nline-05\n"
+                   b"line-06\nline-07\nline-08\nline-09\nline-10\n")
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
+
+            send(b"mkdir /rmdir-empty\n")
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
+            send(b"rmdir /rmdir-empty\n")
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
 
             readme = b"Welcome to LIWUS OS!\n"
             for command in (b"cat /readme.txt", b"cat.lxe /readme.txt"):

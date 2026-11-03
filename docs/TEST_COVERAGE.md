@@ -135,8 +135,9 @@ change the 23 nested-suite marker count.
 The shell integration exercises the six native utilities (`mkdir`, `rm`,
 `mv`, `cp`, `touch`, `echo`) plus `ls`/`cat` against a temporary SDFS disk.
 It covers `mkdir -p` creation and repeat use, copying a file into a directory,
-empty and multi-block copy, no-overwrite behavior, and preservation of an
-existing file when touched. The persistent install integration exercises
+empty and multi-block copy, no-overwrite behavior, preservation of an existing
+file when touched, `pwd`/`cd` inheritance, `stat`, ten-line `head`, and empty
+directory `rmdir`. The persistent install integration exercises
 `mkdir`, `cp`, `mv`, `touch`, `echo`, `ls`, and `cat` across later boots. A
 separate reduced QEMU smoke sequence passed all six utilities, including `rm`.
 

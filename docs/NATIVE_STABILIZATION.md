@@ -76,6 +76,10 @@ contents.
 | `cp` | Exact copy/readback at 0, 1, 15, 16, 255, 256, 4095, 4096, 4097, 8192, and 65536 bytes; binary data, directory destinations, and existing-file refusal | No deterministic QEMU disk-full or process-kill mid-copy test |
 | `touch` | Creates an empty file and preserves existing binary content | Timestamp semantics remain intentionally limited |
 | `echo` | Arguments, zero arguments, newline, and 100 uniquely numbered replies | No shell redirection or expansion is supported |
+| `pwd` / `cd` | Shell cwd display and change; child commands inherit the selected directory | No HOME expansion or directory stack |
+| `rmdir` | Removes an empty directory and reports failure for unsupported paths | No recursive directory removal |
+| `stat` | Reports path, type, size, and permission bits | Owner/time fields and inode details are omitted |
+| `head` | Emits at most the first ten lines from a file | No `-n` option or stdin mode |
 
 ## F. VFS, permissions, and persistence
 

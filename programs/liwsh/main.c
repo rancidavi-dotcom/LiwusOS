@@ -192,13 +192,34 @@ int main(int argc, char **argv, char **envp) {
             continue;
         }
         if (same(args[0], "help")) {
-            write_text("Built-ins: help, version, exit\n");
+            write_text("Built-ins: help, version, pwd, cd, exit\n");
             write_text("Run an application as: program [arguments]\n");
             write_text("Exact paths are tried first; .lxe is the default suffix.\n");
             write_text("Bare names are also searched under /bin.\n");
             write_text("Quotes, escapes, pipes, redirection, and background jobs are unsupported.\n");
         } else if (same(args[0], "version")) {
             write_text("LIWUS Native Shell v0.1 (Native SDK v0.1)\n");
+        } else if (same(args[0], "pwd")) {
+            if (count != 1) {
+                write_text("usage: pwd\n");
+                continue;
+            }
+            char cwd[256];
+            if (liw_getcwd(cwd, sizeof(cwd)) < 0) {
+                write_text("pwd: cannot read current directory\n");
+                continue;
+            }
+            write_text(cwd);
+            write_text("\n");
+        } else if (same(args[0], "cd")) {
+            if (count != 2) {
+                write_text("usage: cd DIRECTORY\n");
+                continue;
+            }
+            if (liw_chdir(args[1]) < 0) {
+                write_text("cd: cannot change directory\n");
+                continue;
+            }
         } else if (same(args[0], "exit")) {
             liw_exit(0);
         } else {

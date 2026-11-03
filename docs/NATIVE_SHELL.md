@@ -32,7 +32,8 @@ Hello from LIWUS OS SDK v0.1!
 liwus> external-test demo
 ```
 
-The shell provides `help`, `version`, and `exit`. For a bare name without a
+The shell provides `help`, `version`, `pwd`, `cd`, and `exit`. `cd` changes the
+shell process directory, so later child applications inherit it. For a bare name without a
 suffix, it tries `name`, `name.lxe`, `/bin/name`, and `/bin/name.lxe`, in that
 order. A name already ending in `.lxe` is tried as-is in the current directory
 and then under `/bin`, without adding another suffix. A path containing `/`
@@ -46,8 +47,9 @@ path traversal, open, creation, removal, rename, and execution. User processes
 share uid/gid 1000; uid 0 is reserved for kernel-created contexts. This is a
 single-user DAC model without credential-changing calls or multi-user login.
 
-`ls.lxe`, `cat.lxe`, `mkdir.lxe`, `rm.lxe`, `mv.lxe`, `cp.lxe`, `touch.lxe`,
-and `echo.lxe` are independent SDK applications. `ls` enumerates a directory
+`ls.lxe`, `cat.lxe`, `mkdir.lxe`, `rmdir.lxe`, `stat.lxe`, `head.lxe`,
+`rm.lxe`, `mv.lxe`, `cp.lxe`, `touch.lxe`, and `echo.lxe` are independent SDK
+applications. `ls` enumerates a directory
 through `liw_getdents`; without a path it uses the current directory. `cat` and
 `cp` copy file bytes through bounded buffers. `mv` handles regular files when
 the destination is absent; directory moves are unsupported. `cp` accepts a
@@ -56,7 +58,9 @@ overwrite an existing file. `touch` creates a file or leaves an existing
 regular file unchanged. `rm` removes regular files; `mkdir -p` creates missing
 parent directories and succeeds when the requested directory already exists.
 Without `-p`, `mkdir` creates one directory whose parent must exist. `echo`
-writes its arguments and a newline. None are shell or kernel built-ins.
+writes its arguments and a newline. `rmdir` removes an empty directory, `stat`
+prints type, size, and permission bits, and `head FILE` prints at most the first
+ten lines. These are not shell or kernel built-ins.
 
 ## Command language
 
@@ -110,9 +114,10 @@ checks child output/status, invalid-command recovery, and shell restart after
 `exit` and Ctrl-D. It also measures QEMU CPU time during one idle second at the
 prompt and requires less than 0.75 CPU seconds. Its serial transcript is written to the ignored
 `test-logs/shell-integration.serial`. The intended utility sequence covers a
-temporary SDFS disk, including multi-block and empty-file copies, rename,
-removal, no-overwrite behavior, and preservation when touching an existing
-file. The test includes a 100-command numbered echo sequence through the real
+temporary SDFS disk, including cwd changes, metadata display, first-ten-line
+output, empty-directory removal, multi-block and empty-file copies, rename,
+no-overwrite behavior, and preservation when touching an existing file. The
+test includes a 100-command numbered echo sequence through the real
 serial console to detect missing, repeated, stale, or reordered responses. A
 previous harness bug double-waited for the exit marker on commands with no
 stdout and therefore stopped before sending the next command. That expectation
