@@ -584,13 +584,18 @@ test: test-unit $(TEST_ISO_IMAGE)
 # Execucao
 # ------------------------------------------------------------
 
-QEMU_BASE = -machine q35 -m 2048 -no-reboot \
-            -drive file=$(DISK_IMAGE),format=raw,if=none,id=disk \
-            -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0
+QEMU_COMMON = -m 2048 -no-reboot \
+              -drive file=$(DISK_IMAGE),format=raw,if=none,id=disk \
+              -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0
+QEMU_BASE = -machine q35 $(QEMU_COMMON)
+QEMU_USB_BASE = -machine q35,i8042=off $(QEMU_COMMON)
 
 .PHONY: usb-probe-test
 run: all
-	$(QEMU) $(QEMU_BASE) -cdrom $(ISO_IMAGE) -serial stdio
+	$(QEMU) $(QEMU_USB_BASE) -device qemu-xhci,id=xhci \
+		-device usb-kbd,bus=xhci.0 -device usb-mouse,bus=xhci.0 \
+		-cdrom $(ISO_IMAGE) -display curses -monitor none \
+		-serial file:qemu_serial.log
 
 usb-probe-test: all
 	python3 tests/harness/run_usb_input_test.py --qemu "$(QEMU)" \

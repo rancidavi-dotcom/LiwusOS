@@ -45,7 +45,7 @@ def main() -> int:
         monitor_path = root / "monitor.sock"
         qemu_command = [
             args.qemu,
-            "-machine", "q35", "-m", "2048", "-no-reboot",
+            "-machine", "q35,i8042=off", "-m", "2048", "-no-reboot",
             "-drive", f"file={args.disk},format=raw,if=none,id=disk",
             "-device", "ahci,id=ahci",
             "-device", "ide-hd,drive=disk,bus=ahci.0",
