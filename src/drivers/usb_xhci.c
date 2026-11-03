@@ -24,11 +24,12 @@
 #define XHCI_MAX_SCRATCHPADS 1023u
 #define XHCI_MAX_BOOT_DEVICES 16u
 #define XHCI_DMA_PAGE_LIMIT \
-  (4u + XHCI_MAX_SCRATCHPADS + 4u * XHCI_MAX_BOOT_DEVICES)
+  (4u + XHCI_MAX_SCRATCHPADS + 6u * XHCI_MAX_BOOT_DEVICES)
 #define XHCI_COMMAND_COMPLETION_EVENT 33u
 #define XHCI_COMMAND_NOOP 23u
 #define XHCI_COMMAND_ENABLE_SLOT 9u
 #define XHCI_COMMAND_ADDRESS_DEVICE 11u
+#define XHCI_COMMAND_CONFIGURE_ENDPOINT 12u
 #define XHCI_COMPLETION_SUCCESS 1u
 #define XHCI_EVENT_HANDLER_BUSY (1u << 3)
 #define XHCI_EXT_CAP_LEGACY 1u
@@ -45,6 +46,7 @@
 #define XHCI_TRB_SETUP_STAGE 2u
 #define XHCI_TRB_DATA_STAGE 3u
 #define XHCI_TRB_STATUS_STAGE 4u
+#define XHCI_TRB_NORMAL 1u
 
 typedef struct __attribute__((packed)) {
   uint64_t ring_segment_base;
@@ -63,6 +65,17 @@ typedef struct {
   uint8_t *descriptor_buffer;
   uint64_t descriptor_buffer_phys;
   usb_hid_boot_interface_t hid_interface;
+  usb_xhci_trb_segment_t *interrupt_ring;
+  uint64_t interrupt_ring_phys;
+  uint16_t interrupt_enqueue_index;
+  uint8_t interrupt_cycle;
+  uint8_t interrupt_endpoint_id;
+  uint16_t interrupt_packet_size;
+  uint8_t *report_buffer;
+  uint64_t report_buffer_phys;
+  bool transfer_pending;
+  bool input_activity_reported;
+  uint32_t report_count;
   bool configured;
 } xhci_boot_device_t;
 
@@ -365,6 +378,168 @@ static int xhci_control_request(uint8_t slot_id, uint8_t request_type,
   return 0;
 }
 
+static uint8_t xhci_interrupt_interval(const xhci_boot_device_t *device) {
+  uint32_t interval = device->hid_interface.interval;
+  if (!interval) return 0;
+  if (device->speed_id >= 3) return interval > 16 ? 15 : (uint8_t)(interval - 1);
+  interval *= 8;
+  uint8_t exponent = 0;
+  while (interval > 1) {
+    interval >>= 1;
+    exponent++;
+  }
+  return exponent > 15 ? 15 : exponent;
+}
+
+static int xhci_configure_interrupt_endpoint(uint8_t slot_id) {
+  xhci_boot_device_t *device = &xhci_boot_devices[slot_id];
+  uint8_t endpoint_number = device->hid_interface.endpoint_address & 0x0f;
+  uint8_t endpoint_id = (uint8_t)(endpoint_number * 2 + 1);
+  uint16_t packet_size = device->hid_interface.max_packet_size;
+  if (!endpoint_number || endpoint_id > 31 || packet_size < 3 ||
+      packet_size > PAGE_SIZE || !device->hid_interface.interval)
+    return -1;
+
+  uint8_t *input_context = (uint8_t *)xhci_alloc_dma_page(xhci_ac64);
+  usb_xhci_trb_segment_t *transfer_ring =
+      (usb_xhci_trb_segment_t *)xhci_alloc_dma_page(xhci_ac64);
+  uint8_t *report_buffer = (uint8_t *)xhci_alloc_dma_page(xhci_ac64);
+  if (!input_context || !transfer_ring || !report_buffer) return -1;
+  uint64_t input_phys = virt_to_phys(input_context);
+  uint64_t ring_phys = virt_to_phys(transfer_ring);
+  uint64_t report_phys = virt_to_phys(report_buffer);
+
+  uint8_t *output_slot_context =
+      (uint8_t *)phys_to_virt(xhci_device_context_array[slot_id]);
+  memcpy(input_context + xhci_context_size, output_slot_context,
+         xhci_context_size);
+  uint32_t *input_control = (uint32_t *)input_context;
+  input_control[1] = (1u << 0) | (1u << endpoint_id);
+  uint32_t *slot_context = (uint32_t *)(input_context + xhci_context_size);
+  slot_context[0] = (slot_context[0] & ~(0x1fu << 27)) |
+                    ((uint32_t)endpoint_id << 27);
+
+  uint8_t *endpoint_context =
+      input_context + (uint64_t)(endpoint_id + 1) * xhci_context_size;
+  uint32_t *ep = (uint32_t *)endpoint_context;
+  ep[0] = (uint32_t)xhci_interrupt_interval(device) << 16;
+  ep[1] = (3u << 1) | (7u << 3) | ((uint32_t)packet_size << 16);
+  ep[2] = (uint32_t)ring_phys | 1u;
+  ep[3] = (uint32_t)(ring_phys >> 32);
+  ep[4] = packet_size;
+  ep[5] = packet_size;
+  transfer_ring->trbs[USB_XHCI_RING_TRBS - 1].parameter = ring_phys;
+  transfer_ring->trbs[USB_XHCI_RING_TRBS - 1].control =
+      USB_XHCI_TRB_CYCLE | USB_XHCI_TRB_TOGGLE_CYCLE |
+      (USB_XHCI_TRB_TYPE_LINK << USB_XHCI_TRB_TYPE_SHIFT);
+
+  device->interrupt_ring = transfer_ring;
+  device->interrupt_ring_phys = ring_phys;
+  device->interrupt_cycle = 1;
+  device->interrupt_endpoint_id = endpoint_id;
+  device->interrupt_packet_size = packet_size;
+  device->report_buffer = report_buffer;
+  device->report_buffer_phys = report_phys;
+
+  usb_xhci_trb_t command = {
+      .parameter = input_phys,
+      .status = 0,
+      .control = (XHCI_COMMAND_CONFIGURE_ENDPOINT <<
+                  USB_XHCI_TRB_TYPE_SHIFT) |
+                 ((uint32_t)slot_id << 24)};
+  usb_xhci_trb_t completion = {0};
+  if (xhci_submit_command(&command, &completion) < 0) {
+    device->interrupt_ring = NULL;
+    serial_print("USB: Configure Endpoint failed, completion=");
+    serial_print_hex(completion.status >> 24);
+    serial_print("\n");
+    return -1;
+  }
+  return 0;
+}
+
+static int xhci_queue_interrupt_transfer(uint8_t slot_id) {
+  xhci_boot_device_t *device = &xhci_boot_devices[slot_id];
+  if (!device->interrupt_ring || !device->report_buffer ||
+      device->transfer_pending || device->interrupt_enqueue_index >= 255)
+    return -1;
+  uint16_t index = device->interrupt_enqueue_index;
+  usb_xhci_trb_t *trb = &device->interrupt_ring->trbs[index];
+  trb->parameter = device->report_buffer_phys;
+  trb->status = device->interrupt_packet_size;
+  trb->control = (XHCI_TRB_NORMAL << USB_XHCI_TRB_TYPE_SHIFT) | (1u << 5) |
+                 (device->interrupt_cycle ? USB_XHCI_TRB_CYCLE : 0);
+  device->interrupt_enqueue_index++;
+  if (device->interrupt_enqueue_index == 255) {
+    usb_xhci_trb_t *link = &device->interrupt_ring->trbs[255];
+    link->parameter = device->interrupt_ring_phys;
+    link->status = 0;
+    link->control = USB_XHCI_TRB_TOGGLE_CYCLE |
+                    (USB_XHCI_TRB_TYPE_LINK << USB_XHCI_TRB_TYPE_SHIFT) |
+                    (device->interrupt_cycle ? USB_XHCI_TRB_CYCLE : 0);
+    device->interrupt_enqueue_index = 0;
+    device->interrupt_cycle ^= 1u;
+  }
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  xhci_doorbell_regs[slot_id] = device->interrupt_endpoint_id;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  device->transfer_pending = true;
+  return 0;
+}
+
+void usb_xhci_poll(void) {
+  if (!xhci_controller_started) return;
+  for (uint8_t budget = 0; budget < 32; ++budget) {
+    usb_xhci_trb_t event;
+    if (!usb_xhci_event_ring_pop(&xhci_event_ring, &event)) break;
+    xhci_update_erdp();
+    uint32_t type = (event.control & USB_XHCI_TRB_TYPE_MASK) >>
+                    USB_XHCI_TRB_TYPE_SHIFT;
+    if (type != XHCI_TRANSFER_EVENT) continue;
+    uint8_t slot_id = (uint8_t)(event.control >> 24);
+    uint8_t endpoint_id = (uint8_t)((event.control >> 16) & 0x1f);
+    if (!slot_id || !xhci_boot_devices[slot_id].transfer_pending ||
+        xhci_boot_devices[slot_id].interrupt_endpoint_id != endpoint_id)
+      continue;
+    xhci_boot_device_t *device = &xhci_boot_devices[slot_id];
+    device->transfer_pending = false;
+    uint32_t residual = event.status & 0x00ffffffu;
+    if ((event.status >> 24) == XHCI_COMPLETION_SUCCESS &&
+        residual <= device->interrupt_packet_size) {
+      uint32_t received = device->interrupt_packet_size - residual;
+      int decoded = device->hid_interface.protocol == 1
+                        ? usb_hid_keyboard_report(device->report_buffer,
+                                                  received)
+                        : usb_hid_mouse_report(device->report_buffer, received);
+      if (decoded == 0) {
+        if (device->report_count == 0) {
+          serial_print("USB: HID interrupt report received, slot ");
+          serial_print_hex(slot_id);
+          serial_print("\n");
+        }
+        bool activity = false;
+        if (device->hid_interface.protocol == 1 && received >= 8) {
+          activity = device->report_buffer[0] != 0;
+          for (uint8_t i = 2; i < 8 && !activity; ++i)
+            activity = device->report_buffer[i] != 0;
+        } else if (device->hid_interface.protocol == 2 && received >= 3) {
+          activity = device->report_buffer[0] != 0 ||
+                     device->report_buffer[1] != 0 ||
+                     device->report_buffer[2] != 0;
+        }
+        if (activity && !device->input_activity_reported) {
+          serial_print(device->hid_interface.protocol == 1
+                           ? "USB: keyboard input event observed\n"
+                           : "USB: mouse input event observed\n");
+          device->input_activity_reported = true;
+        }
+        device->report_count++;
+      }
+    }
+    (void)xhci_queue_interrupt_transfer(slot_id);
+  }
+}
+
 static int xhci_reset_root_port(uint8_t port_id) {
   uint64_t portsc_phys = (uint64_t)(uintptr_t)xhci_operational_regs +
                          0x400 + (uint64_t)(port_id - 1) * 0x10;
@@ -512,6 +687,9 @@ static int xhci_configure_boot_hid(uint8_t slot_id) {
       xhci_control_request(slot_id, 0x21, 11, 0,
                            device->hid_interface.interface_number, NULL, 0) <
           0)
+    return -1;
+  if (xhci_configure_interrupt_endpoint(slot_id) < 0 ||
+      xhci_queue_interrupt_transfer(slot_id) < 0)
     return -1;
   device->configured = true;
   serial_print("USB: configured boot HID ");

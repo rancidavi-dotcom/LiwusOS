@@ -1,9 +1,9 @@
 # USB support status
 
-LIWUS is building native USB support through its own kernel driver. The xHCI
-controller path can now enumerate and configure boot HID devices, but input
-transfers and general USB support remain incomplete. It does not use Linux
-code or Linux USB internals.
+LIWUS has native xHCI support for QEMU boot-protocol USB keyboards and mice.
+The driver enumerates/configures these HID devices, polls interrupt-IN reports,
+and injects input into the existing LIWUS paths. General USB support remains
+incomplete; no Linux code or Linux USB internals are used.
 
 ## Current implementation
 
@@ -11,21 +11,21 @@ The kernel finds a PCI xHCI controller, validates its memory BAR, maps its
 registers as uncached MMIO, performs the BIOS handoff, allocates DMA structures
 within the controller's address limit, then enables bus mastering and starts
 the controller. It polls the command/event rings, resets connected root ports,
-enables slots, addresses devices, reads their descriptors and selects boot HID
-configurations. Interrupt-IN endpoints are not set up yet.
+enables slots, addresses devices, reads their descriptors, selects boot HID
+configurations, and polls interrupt-IN endpoints from the timer handler.
 
 Run `make usb-probe-test` to boot a disposable QEMU snapshot with one emulated
-USB keyboard and mouse attached. The test verifies xHCI capability reads, at
-least two connected root ports, a completed command-ring No-Op, reset root
-ports, addressed devices, retrieved descriptors, selected configurations,
-boot-protocol HID interfaces, and normal kernel boot. The test does not yet
-exercise key or mouse input.
+USB keyboard and mouse attached. The test injects `a`, mouse movement, and a
+button press through QEMU's monitor. It verifies xHCI startup, device
+configuration, reports from both devices, the keyboard character echoed by the
+native shell, and mouse activity reaching LIWUS. This verifies QEMU's emulated
+controller path; physical USB hardware is not yet validated.
 
 The HID layer decodes standard boot-keyboard and boot-mouse reports into the
 existing LIWUS keyboard and mouse input paths. It preserves key-down and
-key-up transitions, modifiers, and rollover reports. The xHCI driver currently
-uses control transfers for enumeration only; it does not yet poll interrupt
-endpoints, so USB input is not active and PS/2 remains the input path.
+key-up transitions, modifiers, and rollover reports. The xHCI driver uses
+control transfers for enumeration and interrupt transfers for reports. PS/2
+continues to work as a fallback input path.
 
 The HID layer also has a bounds-checked parser for complete USB configuration
 descriptors. It locates boot keyboard/mouse interfaces and their interrupt-IN
@@ -37,9 +37,8 @@ The command/event ring primitives have host regression coverage for the 16-byte
 TRB layout, physical Link TRB, bounded queue, wrap handling, and producer/
 consumer cycle bits. QEMU integration now additionally validates DMA setup,
 controller reset/start, command completion, root-port reset, Enable Slot,
-Address Device, and endpoint-zero descriptor/configuration transfers for an
-attached keyboard and mouse. Boot HID reports are decoded by the existing
-input layer, but interrupt endpoint setup and polling are still pending.
+Address Device, endpoint-zero descriptor/configuration transfers, interrupt
+endpoint setup, and keyboard/mouse reports for attached devices.
 
 ## Implementation sequence
 
@@ -53,7 +52,7 @@ input layer, but interrupt endpoint setup and polling are still pending.
    reset, Enable Slot, Address Device, descriptor retrieval, configuration
    selection, and HID boot protocol selection are implemented.)
 4. Attach interrupt-IN endpoints to the tested HID report decoder and retain
-   PS/2 as a fallback.
+   PS/2 as a fallback. (Implemented and exercised in QEMU.)
 5. Add hubs and other classes only after the transfer and enumeration layers
    have regression coverage on QEMU and hardware.
 
