@@ -21,10 +21,13 @@
 #define XHCI_HCCPARAMS1_AC64 (1u << 0)
 #define XHCI_RUNTIME_INTR0 0x20
 #define XHCI_MAX_SCRATCHPADS 1023u
-#define XHCI_DMA_PAGE_LIMIT (4u + XHCI_MAX_SCRATCHPADS)
+#define XHCI_MAX_BOOT_DEVICES 16u
+#define XHCI_DMA_PAGE_LIMIT \
+  (4u + XHCI_MAX_SCRATCHPADS + 3u * XHCI_MAX_BOOT_DEVICES)
 #define XHCI_COMMAND_COMPLETION_EVENT 33u
 #define XHCI_COMMAND_NOOP 23u
 #define XHCI_COMMAND_ENABLE_SLOT 9u
+#define XHCI_COMMAND_ADDRESS_DEVICE 11u
 #define XHCI_COMPLETION_SUCCESS 1u
 #define XHCI_EVENT_HANDLER_BUSY (1u << 3)
 #define XHCI_EXT_CAP_LEGACY 1u
@@ -35,6 +38,8 @@
 #define XHCI_PORTSC_ENABLED (1u << 1)
 #define XHCI_PORTSC_RESET (1u << 4)
 #define XHCI_PORTSC_RESET_CHANGE (1u << 21)
+#define XHCI_INPUT_CONTEXT_ADD_SLOT (1u << 0)
+#define XHCI_INPUT_CONTEXT_ADD_EP0 (1u << 1)
 
 typedef struct __attribute__((packed)) {
   uint64_t ring_segment_base;
@@ -50,6 +55,9 @@ static usb_xhci_command_ring_t xhci_command_ring;
 static usb_xhci_event_ring_t xhci_event_ring;
 static uint64_t xhci_command_ring_phys;
 static uint64_t xhci_event_ring_phys;
+static uint64_t *xhci_device_context_array;
+static uint32_t xhci_context_size;
+static bool xhci_ac64;
 static uint8_t xhci_port_slot[256];
 static uint8_t xhci_port_speed[256];
 static uint16_t xhci_port_count;
@@ -274,19 +282,85 @@ static uint8_t xhci_enable_slot(void) {
   return (uint8_t)(completion.control >> 24);
 }
 
-static uint32_t xhci_enumerate_connected_slots(uint16_t ports) {
-  uint32_t enabled = 0;
+static int xhci_address_device(uint8_t slot_id, uint8_t port_id,
+                              uint8_t speed_id, uint32_t max_slots) {
+  if (!slot_id || slot_id > max_slots || xhci_context_size < 32 ||
+      xhci_context_size > 64 ||
+      (xhci_context_size != 32 && xhci_context_size != 64))
+    return -1;
+
+  uint8_t *input_context =
+      (uint8_t *)xhci_alloc_dma_page(xhci_ac64);
+  uint8_t *output_context =
+      (uint8_t *)xhci_alloc_dma_page(xhci_ac64);
+  usb_xhci_trb_segment_t *endpoint_ring =
+      (usb_xhci_trb_segment_t *)xhci_alloc_dma_page(xhci_ac64);
+  if (!input_context || !output_context || !endpoint_ring) return -1;
+
+  uint64_t input_phys = virt_to_phys(input_context);
+  uint64_t output_phys = virt_to_phys(output_context);
+  uint64_t endpoint_ring_phys = virt_to_phys(endpoint_ring);
+  uint64_t input_control[8] = {0};
+  uint64_t slot_context[8] = {0};
+  uint64_t ep0_context[8] = {0};
+  input_control[0] =
+      (uint64_t)(XHCI_INPUT_CONTEXT_ADD_SLOT | XHCI_INPUT_CONTEXT_ADD_EP0)
+      << 32;
+  slot_context[0] = ((uint64_t)(speed_id & 0x0f) << 20) | (1ULL << 27);
+  slot_context[0] |= (uint64_t)port_id << 48;
+  uint16_t max_packet = speed_id >= 4 ? 512 : (speed_id == 3 ? 64 : 8);
+  ep0_context[0] =
+      ((uint64_t)((3u << 1) | (4u << 3) | ((uint32_t)max_packet << 16)))
+      << 32;
+  ep0_context[1] = endpoint_ring_phys | 1u;
+  ep0_context[2] = 8;
+  memcpy(input_context, input_control, xhci_context_size);
+  memcpy(input_context + xhci_context_size, slot_context,
+         xhci_context_size);
+  memcpy(input_context + (uint64_t)xhci_context_size * 2, ep0_context,
+         xhci_context_size);
+
+  endpoint_ring->trbs[USB_XHCI_RING_TRBS - 1].parameter = endpoint_ring_phys;
+  endpoint_ring->trbs[USB_XHCI_RING_TRBS - 1].control =
+      USB_XHCI_TRB_CYCLE | USB_XHCI_TRB_TOGGLE_CYCLE |
+      (6u << USB_XHCI_TRB_TYPE_SHIFT);
+  xhci_device_context_array[slot_id] = output_phys;
+
+  usb_xhci_trb_t command = {
+      .parameter = input_phys,
+      .status = 0,
+      .control = (XHCI_COMMAND_ADDRESS_DEVICE << USB_XHCI_TRB_TYPE_SHIFT) |
+                 ((uint32_t)slot_id << 24)};
+  usb_xhci_trb_t completion = {0};
+  if (xhci_submit_command(&command, &completion) < 0) {
+    xhci_device_context_array[slot_id] = 0;
+    serial_print("USB: Address Device failed for slot ");
+    serial_print_hex(slot_id);
+    serial_print(" completion=");
+    serial_print_hex(completion.status >> 24);
+    serial_print("\n");
+    return -1;
+  }
+  return 0;
+}
+
+static uint32_t xhci_enumerate_connected_slots(uint16_t ports,
+                                               uint32_t max_slots) {
+  uint32_t addressed = 0;
+  uint32_t attempted = 0;
   if (ports > sizeof(xhci_port_slot)) ports = sizeof(xhci_port_slot);
   xhci_port_count = ports;
   memset(xhci_port_slot, 0, sizeof(xhci_port_slot));
   memset(xhci_port_speed, 0, sizeof(xhci_port_speed));
   for (uint16_t index = 0; index < ports; ++index) {
+    if (attempted >= XHCI_MAX_BOOT_DEVICES) break;
     uint8_t port_id = (uint8_t)(index + 1);
     volatile uint32_t *portsc =
         (volatile uint32_t *)((uintptr_t)xhci_operational_regs + 0x400 +
                               (uint64_t)index * 0x10);
     uint32_t status = *portsc;
     if (!(status & XHCI_PORTSC_CONNECTED)) continue;
+    attempted++;
     if (xhci_reset_root_port(port_id) < 0) {
       serial_print("USB: xHCI root port reset failed: ");
       serial_print_hex(port_id);
@@ -303,9 +377,16 @@ static uint32_t xhci_enumerate_connected_slots(uint16_t ports) {
     }
     xhci_port_slot[index] = slot;
     xhci_port_speed[index] = (uint8_t)((status >> 10) & 0x0f);
-    enabled++;
+    if (xhci_address_device(slot, port_id, xhci_port_speed[index], max_slots) <
+        0) {
+      serial_print("USB: device addressing failed for port ");
+      serial_print_hex(port_id);
+      serial_print("\n");
+      break;
+    }
+    addressed++;
   }
-  return enabled;
+  return addressed;
 }
 
 static int map_xhci_register_page(uint64_t physical_page) {
@@ -436,6 +517,9 @@ static int xhci_initialize_controller(const pci_device_t *device, uint64_t bar,
     return -1;
   }
   xhci_command_ring_phys = command_phys;
+  xhci_device_context_array = device_context_array;
+  xhci_ac64 = ac64;
+  xhci_context_size = (hccparams1 & (1u << 2)) ? 64 : 32;
   erst[0].ring_segment_base = xhci_event_ring_phys;
   erst[0].ring_segment_size = USB_XHCI_RING_TRBS;
 
@@ -512,12 +596,12 @@ static int xhci_initialize_controller(const pci_device_t *device, uint64_t bar,
     return -1;
   }
 
-  uint32_t enabled_slots = xhci_enumerate_connected_slots(
-      (uint16_t)(hcsparams1 >> 24));
+  uint32_t addressed_devices = xhci_enumerate_connected_slots(
+      (uint16_t)(hcsparams1 >> 24), max_slots);
   serial_print("\nUSB: xHCI controller running; command-ring NOOP PASS; slots=");
   serial_print_hex(max_slots);
-  serial_print(" enabled-slots=");
-  serial_print_hex(enabled_slots);
+  serial_print(" addressed-devices=");
+  serial_print_hex(addressed_devices);
   serial_print(" scratchpads=");
   serial_print_hex(scratchpads);
   serial_print(" polling mode; HID enumeration pending\n");

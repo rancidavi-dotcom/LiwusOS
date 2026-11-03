@@ -17,9 +17,9 @@ xHCI No-Op command. It has no endpoint or device enumeration yet.
 Run `make usb-probe-test` to boot a disposable QEMU snapshot with one emulated
 USB keyboard and mouse attached. The test verifies xHCI capability reads, at
 least two connected root ports, a completed command-ring No-Op, reset root
-ports, enabled device slots, and normal kernel boot. This demonstrates basic
-controller transport and slot allocation. Device addressing, configuration,
-and key or mouse input are still unimplemented.
+ports, addressed devices, and normal kernel boot. This demonstrates basic
+controller transport and slot allocation. Configuration descriptors,
+configuration selection, and key or mouse input are still unimplemented.
 
 The HID layer now decodes standard boot-keyboard and boot-mouse reports into
 the existing LIWUS keyboard and mouse input paths. It preserves key-down and
@@ -37,9 +37,9 @@ a physical or emulated USB device.
 The command/event ring primitives have host regression coverage for the 16-byte
 TRB layout, physical Link TRB, bounded queue, wrap handling, and producer/
 consumer cycle bits. QEMU integration now additionally validates DMA setup,
-controller reset/start, command completion, root-port reset, and Enable Slot
-commands for an attached keyboard and mouse. USB HID still does not provide
-input until Address Device, descriptor/configuration control transfers, and
+controller reset/start, command completion, root-port reset, Enable Slot, and
+Address Device commands for an attached keyboard and mouse. USB HID still does
+not provide input until descriptor/configuration control transfers and
 interrupt transfers are implemented.
 
 ## Implementation sequence
@@ -51,7 +51,7 @@ interrupt transfers are implemented.
    the polling command path.)
 3. Address enabled slots; implement endpoint-zero control transfers and
    retrieve configuration descriptors into the tested strict parser. (Port
-   reset and Enable Slot are implemented; Address Device remains.)
+   reset, Enable Slot, and Address Device are implemented.)
 4. Attach interrupt-IN endpoints to the tested HID report decoder and retain
    PS/2 as a fallback.
 5. Add hubs and other classes only after the transfer and enumeration layers
