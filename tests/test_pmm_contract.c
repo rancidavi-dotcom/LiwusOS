@@ -29,6 +29,15 @@ int test_pmm_contract(void) {
     }
   }
 
+  void *low_frame = pmm_alloc_block_below(2ULL * 1024 * 1024 * 1024);
+  if (!low_frame ||
+      virt_to_phys(low_frame) >= 2ULL * 1024 * 1024 * 1024) {
+    if (low_frame) pmm_free_block(low_frame);
+    for (unsigned i = 0; i < 3; i++) pmm_free_block(frames[i]);
+    FAIL("pmm_contract", "below-limit allocation crossed the physical limit");
+  }
+  pmm_free_block(low_frame);
+
   volatile uint64_t *words = (volatile uint64_t *)frames[1];
   words[0] = 0x4c495755504d4d31ULL;
   words[PAGE_SIZE / sizeof(*words) - 1] = 0x4c495755504d4d32ULL;

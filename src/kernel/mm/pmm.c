@@ -154,10 +154,18 @@ int pmm_claim_contiguous_region(uint64_t hint, uint64_t desired_size,
     return 0;
 }
 
-static void *pmm_alloc_block_from(uint64_t first_block) {
+static void *pmm_alloc_block_range(uint64_t first_block,
+                                  uint64_t end_block_exclusive) {
     spinlock_acquire(&pmm_lock);
+    if (end_block_exclusive > pmm_allocation_limit_blocks)
+        end_block_exclusive = pmm_allocation_limit_blocks;
+    if (first_block >= end_block_exclusive) {
+        spinlock_release(&pmm_lock);
+        return 0;
+    }
     uint64_t bitmap_words = (pmm_allocation_limit_blocks + 31) / 32;
     for (uint64_t i = first_block / 32; i < bitmap_words; i++) {
+        if (i * 32 >= end_block_exclusive) break;
         if (pmm_bitmap[i] != 0xFFFFFFFF) {
             uint32_t first_bit = i == first_block / 32
                 ? (uint32_t)(first_block % 32) : 0;
@@ -165,7 +173,7 @@ static void *pmm_alloc_block_from(uint64_t first_block) {
                 uint32_t bit = 1U << j;
                 if (!(pmm_bitmap[i] & bit)) {
                     uint64_t block = i * 32 + j;
-                    if (block >= pmm_allocation_limit_blocks) break;
+                    if (block >= end_block_exclusive) break;
                     bitmap_set(block);
                     pmm_used_blocks++;
                     spinlock_release(&pmm_lock);
@@ -178,12 +186,18 @@ static void *pmm_alloc_block_from(uint64_t first_block) {
     return 0;
 }
 
-void* pmm_alloc_block(void) { return pmm_alloc_block_from(0); }
+void* pmm_alloc_block(void) {
+    return pmm_alloc_block_range(0, pmm_allocation_limit_blocks);
+}
 
 void* pmm_alloc_block_above(uint64_t min_phys) {
     uint64_t first;
     if (align_up_block(min_phys, &first) < 0) return 0;
-    return pmm_alloc_block_from(first);
+    return pmm_alloc_block_range(first, pmm_allocation_limit_blocks);
+}
+
+void* pmm_alloc_block_below(uint64_t max_phys_exclusive) {
+    return pmm_alloc_block_range(0, max_phys_exclusive / BLOCK_SIZE);
 }
 
 void pmm_free_block(void* addr) {

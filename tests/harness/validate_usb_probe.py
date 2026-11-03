@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate read-only xHCI discovery with QEMU boot HID devices attached."""
+"""Validate xHCI startup and basic device-slot discovery under QEMU."""
 
 import argparse
 from pathlib import Path
@@ -28,6 +28,11 @@ def main() -> int:
     connected = len(re.findall(r"USB: xHCI root port connected:", log))
     if connected < 2:
         errors.append(f"expected at least 2 connected HID ports, found {connected}")
+    if "USB: xHCI controller running; command-ring NOOP PASS" not in log:
+        errors.append("xHCI command/event rings did not complete a NOOP command")
+    slot_match = re.search(r"enabled-slots=0x([0-9a-fA-F]+)", log)
+    if not slot_match or int(slot_match.group(1), 16) < 2:
+        errors.append("xHCI did not enable slots for both attached USB devices")
     if "LIWUS_BOOT_READY" not in log:
         errors.append("kernel did not reach LIWUS_BOOT_READY")
     if "KERNEL PANIC" in log:
@@ -40,8 +45,9 @@ def main() -> int:
         print(f"serial log: {args.log}")
         return 1
 
-    print(f"USB PROBE TEST PASS: xHCI detected {connected} connected HID ports; "
-          "controller remained unstarted")
+    print(f"USB PROBE TEST PASS: xHCI started, completed a NOOP, and enabled "
+          f"slots for two devices; {connected} connected ports detected, "
+          "device addressing and HID input pending")
     return 0
 
 
