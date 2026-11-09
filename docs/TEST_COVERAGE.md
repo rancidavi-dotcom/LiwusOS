@@ -1,9 +1,11 @@
 # Test inventory and coverage matrix
 
-Snapshot: 2026-11-03, branch `lean-kernel`, after the SDFS rename transaction and concurrent mutation regressions. The original kernel runner had 47 top-level cases. The current
+Snapshot: 2026-11-09, branch `lean-kernel`, after the SDFS rename/concurrency
+regressions and the physical EHCI keyboard milestone. The original kernel
+runner had 47 top-level cases. The current
 runner has 51 top-level cases after adding `pmm_contract`, `kheap_contract`,
 `sdfs_rename_journal_atomic`, and `sdfs_concurrent_mutations`; 50 are kernel-side functions and one is the `ring3_processes` aggregator. Its 23 ring-3 pass markers are nested subcases, not extra members
-of the 47-case denominator. `make test`, `make ring3-test`, and `make smap-test`
+of the 51-case top-level total. `make test`, `make ring3-test`, and `make smap-test`
 repeat this same inventory with different QEMU settings.
 
 Legend in the matrix: `✓` means a named test directly checks that property;
@@ -27,6 +29,7 @@ percentage or a claim of completeness. BSP means the bootstrap processor.
 | Futex | ~ | ✓ | ~ | ~ | ~ | ~ | High. Linux clone probe checks one blocking WAIT/WAKE, mismatch, read-only mismatch, bad/alignment, unsupported shared/timeout. No multiple waiter wake, same VA across mms, repeated futex stress or futex cancellation. |
 | Pipes | ✓ | ✓ | ✓ | ~ | ~ | ~ | High. Ring-3 cases cover data, 4 KiB-full writer, empty reader, EOF, EPIPE, fork/exec, invalid output, killed blocked reader. No multi-reader/writer stress or repeated close races. |
 | VFS/SDFS | ✓ | ✓ | ~ | ~ | ~ | ~ | Medium-high. SDFS/VFS cases cover create/read/write/directories/rename/delete/remount/permissions/journal/CRC/disk-full and terminal redirection. Native SDK probe covers getdents records, continuation, empty/non-directory/invalid-fd, short/read-only buffers and cleanup. Shell integration checks ls/cat against actual SDFS data. Shared RAM disk and fixed order; `sdfs_concurrent_mutations` runs four kernel workers through create/write/read/delete on disjoint names, serialized by the filesystem sleep mutex. It does not test SMP execution. |
+| USB HID/host controllers | ✓ | ✓ | ✓ | ~ | ~ | ~ | Medium-high. Host tests cover descriptor bounds, HID reports, xHCI rings and 64-bit EHCI QH/qTD/split scheduling. QEMU tests cover xHCI keyboard/mouse and EHCI keyboard delivery. A physical H61 boot validates its integrated EHCI RMH and keyboard input; physical xHCI/mouse, hot-plug and mass storage remain uncovered. |
 | ELF loader | ✓ | ✓ | ~ | ✓ | — | ~ | High. Ring-3 covers native ELF, ET_DYN, Linux static probes, malformed ELF, invalid argv/envp, repeated exec and segment permission faults. No parser fuzzing or header-overflow corpus. |
 | Native ABI | ✓ | ✓ | ~ | ✓ | ~ | ~ | High. Ring-3 suite exercises selected `int 0x80` calls, invalid pointers, process/pipes/mmap; `native-hello.lxe` runs through crt0 and SDK wrappers. Not every published syscall has a regression. |
 | Linux personality | ✓ | ✓ | ~ | ✓ | ~ | ~ | High. Two freestanding probes cover selected SYSCALL, stat/openat/mmap, arch_prctl, clone/TLS and private futex behavior. No libc/pthreads or full errno/syscall matrix. |
@@ -144,11 +147,11 @@ separate reduced QEMU smoke sequence passed all six utilities, including `rm`.
 The same integration group also executes an ET_DYN PIE probe, a freestanding
 Linux SYSCALL probe, a Linux clone/private-futex probe, and native
 `native-hello.lxe` through crt0 and SDK wrappers. They have separate
-`[RING3 RESULT]` markers but do not add to the 23 `suite.c` cases or the 49
+`[RING3 RESULT]` markers but do not add to the 23 `suite.c` cases or the 51
 top-level count. It also runs an external SDK-built ELF64 app and checks its
 stdout and raw status 23; that result is separately validated by the serial
 harness. The independent `make shell-test` drives the booted ring-3 shell over
-QEMU COM1 and is not part of the 50/23 baseline manifests. `make test-unit`
+QEMU COM1 and is not part of the 51/23 baseline manifests. `make test-unit`
 also runs the bounded shell parser cases under ASan/UBSan.
 
 ## Known coverage holes

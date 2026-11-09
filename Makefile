@@ -13,7 +13,8 @@ QEMU     = qemu-system-x86_64
 M64 = -m64 -mno-red-zone
 
 KERNEL_INCLUDES = -Iinclude -Iinclude/kernel -Iinclude/drivers -Iinclude/fs \
-                  -Iinclude/uapi -Isrc/kernel -Isrc/kernel/terminal -Itests
+                  -Iinclude/uapi -Iinclude/net -Isrc/net -Isrc/net/lwip/include \
+                  -Isrc/kernel -Isrc/kernel/terminal -Itests
 
 CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -Werror $(KERNEL_INCLUDES) $(M64) \
          -fno-pie -fno-pic -mcmodel=large -mno-sse -mno-sse2 -mno-mmx \
@@ -46,7 +47,12 @@ KERNEL_C_SRCS = $(wildcard src/kernel/arch/x86_64/*.c) \
                 $(wildcard src/kernel/sched/*.c) \
                 $(wildcard src/kernel/terminal/*.c) \
                 $(wildcard src/drivers/*.c) \
-                $(wildcard src/fs/*.c)
+                $(wildcard src/fs/*.c) \
+                $(wildcard src/net/*.c) \
+                $(wildcard src/net/arch/*.c) \
+                $(wildcard src/net/lwip/core/*.c) \
+                $(wildcard src/net/lwip/core/ipv4/*.c) \
+                $(wildcard src/net/lwip/netif/*.c)
 
 KERNEL_S_SRCS = $(wildcard src/kernel/arch/x86_64/*.s) \
                 $(wildcard src/kernel/lib/*.s) \
@@ -598,7 +604,8 @@ test: test-unit $(TEST_ISO_IMAGE)
 
 QEMU_COMMON = -m 2048 -no-reboot \
               -drive file=$(DISK_IMAGE),format=raw,if=none,id=disk \
-              -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0
+              -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 \
+              -netdev user,id=net0 -device e1000,netdev=net0
 QEMU_BASE = -machine q35 $(QEMU_COMMON)
 QEMU_USB_BASE = -machine pc-q35-11.1,i8042=off $(QEMU_COMMON) \
 	-device ich9-usb-ehci1,id=ehci1,addr=1a.0 \

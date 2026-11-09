@@ -5,10 +5,13 @@ LiwusOS is an independent, bare-metal x86_64 OS with its own kernel, architectur
 
 ## Current state
 - **Branch:** `lean-kernel`
-- **Last commit:** `2d8280c` - "feat: add wait queues and private futex support"
+- **Last reviewed commit:** `2b96f7d` - "feat(hardware): suporte completo a teclado USB EHCI em hardware real e aceleracao grafica"
 - **Build:** Clean with `-Werror`
-- **Tests:** `make test` 49/49, `make ring3-test` 49/49, `make smap-test` 49/49 PASS
+- **Tests:** active manifests contain 51 top-level cases and 23 ring-3 markers; the hardware checkpoint preserved the existing automated USB/QEMU regressions
 - **Environment:** QEMU with 4 CPUs, SMAP active
+- **Physical evidence:** an Intel H61/PCH machine enumerates its integrated
+  `8087:0024` Rate Matching Hub through EHCI and accepts USB-keyboard input in
+  the ring-3 shell. See `docs/HARDWARE_PC_H61.md`.
 
 ## Directory structure (key)
 ```
@@ -48,7 +51,9 @@ docs/             Documentation
 
 ## Incomplete functionality
 - Linux: PT_INTERP/dynamic linking, broad syscalls, signals, full wait4, futex extensions, robust lists, full clone/pthreads, demand paging/COW/file-backed mmap, vDSO/auxv completeness, SMP thread migration/TLB shootdown validation, AVX/XSAVE
-- Native: Need better syscall wrapper infrastructure, public headers, runtime/crt0, examples
+- Native: Shell command composition is still minimal: no quotes, pipelines,
+  redirection, scripts, background jobs or job control. USB mass storage and a
+  generic block-device layer are also absent.
 
 ## Known bugs/risks
 - Native ABI has mixed error return conventions (-1 vs -errno)
@@ -56,7 +61,12 @@ docs/             Documentation
 - Some Linux features intentionally unimplemented
 
 ## Next priority (native)
-Focus on making native ABI usable from C: create syscall wrappers, public headers, minimal runtime, working example. See `docs/native-abi/DEVELOPMENT_PLAN.md`.
+Implement Native Shell v0.2 command composition: quoting/escaping, bounded
+pipelines and `<`, `>`, `>>`, `2>` redirection. Reuse the existing native
+`pipe`, `dup2`, `fork`, `execve`, `close` and `waitpid` mechanisms. Keep
+background jobs and full job control deferred until signals and process-group
+semantics exist. See `docs/NATIVE_SHELL.md` and
+`docs/native-abi/DEVELOPMENT_PLAN.md`.
 
 ## How to resume Linux compatibility
 **Read first:** `docs/linux-compat/HANDOFF.md` → `docs/linux-compat/IMPLEMENTATION_STATUS.md` → `docs/linux-compat/RESUME_PLAN.md` → `docs/linux-compat/KNOWN_ISSUES.md` → `docs/linux-compat/REPRODUCIBILITY.md` → `docs/ABI_LINUX.md` → `docs/ROADMAP.md`
@@ -68,18 +78,22 @@ Focus on making native ABI usable from C: create syscall wrappers, public header
 ## INSTRUÇÕES PARA O PRÓXIMO AGENTE
 - **Concluído:** Linux compatibility paused but fully preserved/documented; native ABI audited/documented; project handoff created.
 - **Pausado:** Linux expansion (new syscalls/features). All existing Linux code/tests remain active.
-- **Em desenvolvimento:** Native ABI usability (wrappers/headers/runtime/examples).
+- **Próximo milestone recomendado:** Native Shell v0.2 sobre o SDK e a ABI nativa já utilizáveis.
 - **Não modificar sem investigação:** `src/compat/linux/*`, Linux tests/probes, core shared mechanisms if changing for Linux reasons. Native ABI numbers/contracts - changes need justification.
 - **Ler primeiro:** This file, then native-abi docs and linux-compat docs as needed.
-- **Próximo objetivo concreto:** Create minimal native syscall wrappers in C, public headers (e.g. under `include/liwus/`), minimal crt0/runtime, and a simple native program that prints via native write, gets pid, exits - compile and run in ring3/QEMU. Keep it small and testable.
+- **Próximo objetivo concreto:** Add quotes/escapes, bounded pipelines and file
+  redirection to `liwsh`, plus stdin support in stream-oriented utilities such
+  as `cat`/`head`. Prove descriptor closure, failure recovery and repeated
+  pipelines in host parser tests and the QEMU shell integration.
 - **Verificar ambiente:** Build with `-Werror`, run `make test`, `make ring3-test`, `make smap-test`. All must stay green.
 
 ## Verification project update (2026-11-02)
 
 This update supersedes the test counts and broad Linux compatibility claims
 above. At the start of the verification work, `lean-kernel` was at `6afc34f`.
-The starting inventory was 47 top-level cases. The current inventory is 49
-(48 kernel functions plus the `ring3_processes` aggregator), with 23 nested
+The starting inventory was 47 top-level cases. At this historical checkpoint,
+the inventory was 49 (48 kernel functions plus the `ring3_processes`
+aggregator), with 23 nested
 ring-3 markers and separate PIE/Linux/native integration result markers.
 Repeating the image under three QEMU configurations does not increase those
 counts.
@@ -266,9 +280,10 @@ and 768-byte binary files, generic `demo`, exact-file precedence, invalid and
 long names, and shell recovery. The persistence flow verified first-boot
 seeding and explicit offline app updates. Test manifests remain 49/23.
 
-Known v0.1 limit: SDFS permission bits are metadata today; native `open` and
-`execve` do not yet enforce Unix-style access bits. The utilities report open
-errors, but permission-denied behavior is not validated or promised yet.
+This checkpoint originally treated SDFS permission bits as metadata only. The
+later Native System Utilities & Security milestone superseded that limitation:
+native path traversal, open, mutation, directory enumeration and `execve` now
+enforce the stored owner/group/other bits for the current single-user model.
 
 Checkpoint commits: `8594303` (`feat: expose native VFS directory
 enumeration`), `1543401` (`feat: add native ls cat and lxe command lookup`),

@@ -25,6 +25,10 @@ As recorded in the task directive (and reflected by project direction), developm
 - Linux syscall probe (ET_EXEC freestanding) passes: getpid/fstat/openat/mmap/munmap/FS-TLS/write
 - Linux clone probe passes: CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD with optional CLONE_SETTLS, shared memory, independent FS TLS, thread exit; private futex WAIT/WAKE validated
 
+This remains the frozen Linux-personality checkpoint. The repository has since
+advanced to `2b96f7d` for native userspace, filesystem and USB work; the active
+regression manifests now contain 51 top-level cases and 23 ring-3 markers.
+
 ## Implemented subsystems (verified)
 - **Entry/dispatch**: Linux x86-64 `SYSCALL/SYSRET` entry configured (STAR/LSTAR/SFMASK). Stub swaps GS, builds registers frame, routes by ABI. Dispatcher in `src/compat/linux/syscall.c`. Linux returns `-errno` in RAX.
 - **ABI selection**: Per process/thread via `task_t->process->abi` (`TASK_ABI_LINUX_X86_64`). Selection checked in Linux dispatcher.
@@ -53,9 +57,9 @@ As recorded in the task directive (and reflected by project direction), developm
 8. Process/thread separation is architectural (`process_t` = resources, `thread_t` = execution).
 
 ## Tests that must keep passing
-- `make test` (49/49)
-- `make ring3-test` (49/49) - includes Linux syscall probe and clone+futex probe
-- `make smap-test` (49/49) - with SMP/SMAP
+- `make test` (current 51-case manifest)
+- `make ring3-test` (current 51-case manifest) - includes Linux syscall probe and clone+futex probe
+- `make smap-test` (current 51-case manifest) - with SMP/SMAP
 - Kernel build with `-Werror`
 
 ## Known open problems (see KNOWN_ISSUES.md)

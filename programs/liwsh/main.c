@@ -192,13 +192,48 @@ int main(int argc, char **argv, char **envp) {
             continue;
         }
         if (same(args[0], "help")) {
-            write_text("Built-ins: help, version, pwd, cd, exit (power off)\n");
+            write_text("Built-ins: help, version, pwd, cd, ifconfig, ping, exit (power off)\n");
             write_text("Run an application as: program [arguments]\n");
             write_text("Exact paths are tried first; .lxe is the default suffix.\n");
             write_text("Bare names are also searched under /bin.\n");
             write_text("Quotes, escapes, pipes, redirection, and background jobs are unsupported.\n");
         } else if (same(args[0], "version")) {
             write_text("LIWUS Native Shell v0.1 (Native SDK v0.1)\n");
+        } else if (same(args[0], "ifconfig")) {
+            liw_net_info_t info;
+            if (liw_net_info(&info) < 0) {
+                write_text("ifconfig: rede nao disponivel\n");
+                continue;
+            }
+            write_text("et0: Link: ");
+            write_text(info.link_up ? "UP" : "DOWN");
+            write_text(" HWaddr ");
+            write_text(info.mac);
+            write_text("\n     inet addr: ");
+            write_text(info.ip);
+            write_text("  Mask: ");
+            write_text(info.netmask);
+            write_text("  Gateway: ");
+            write_text(info.gateway);
+            write_text("\n     RX packets: ");
+            write_number((int)info.packets_rx);
+            write_text(" TX packets: ");
+            write_number((int)info.packets_tx);
+            write_text("\n");
+        } else if (same(args[0], "ping")) {
+            if (count < 2) {
+                write_text("usage: ping IP [count]\n");
+                continue;
+            }
+            int ping_count = 4;
+            if (count >= 3) {
+                int c = 0;
+                for (const char *p = args[2]; *p >= '0' && *p <= '9'; p++) {
+                    c = c * 10 + (*p - '0');
+                }
+                if (c > 0) ping_count = c;
+            }
+            liw_net_ping(args[1], (uint32_t)ping_count);
         } else if (same(args[0], "pwd")) {
             if (count != 1) {
                 write_text("usage: pwd\n");

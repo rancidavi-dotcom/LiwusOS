@@ -110,20 +110,3 @@ git diff --check
 
 Do not claim complete SDFS crash atomicity or concurrent-mutation safety from
 these functional tests.
-
-```sh
-make -B kernel.bin
-make test-all
-make test-stress
-make test-unit
-make shell-test
-make app-install-test
-git diff --check
-```
-
-Do not claim the milestone complete until `make shell-test` also passes and
-the reproducible logs are recorded. The persistence suite exercises `mkdir`,
-`cp`, `mv`, `touch`, and `echo`; the reduced shell smoke run exercised `rm`,
-but the full `make shell-test` target remains unpassed. Review SDFS behavior
-against [`NATIVE_UTILITIES_SECURITY.md`](NATIVE_UTILITIES_SECURITY.md); in
-particular, rename, descriptor writes, and multi-step `cp` are not crash-atomic.

@@ -18,7 +18,7 @@ make -B kernel.bin
 
 ## Test commands
 ```sh
-make test        # 49/49 kernel cases + ring3 tests
+make test        # 51 top-level cases + ring3 tests
 make ring3-test  # ring3 integration suite including Linux probes
 make smap-test   # SMP + SMAP test (4 CPUs, 4GB)
 ```
@@ -48,7 +48,7 @@ It will be copied as `linux_glibc_hello` into test image temporarily. Note: glib
 
 ## Logs and expected results
 - Serial logs written to `test_serial.log` (for test targets)
-- Expected: `RESULT: 49/49 PASS`, `RESULT: ALL PASS`, `LIWUS_BOOT_READY`, probe messages like `[RING3 RESULT] Linux x86-64 SYSCALL ... PASS` and `[RING3 RESULT] Linux clone ... PASS`
+- Expected: `RESULT: 51/51 PASS`, `RESULT: ALL PASS`, `LIWUS_BOOT_READY`, probe messages like `[RING3 RESULT] Linux x86-64 SYSCALL ... PASS` and `[RING3 RESULT] Linux clone ... PASS`
 - smap-test also shows AP initialization messages
 
 ## Distinguishing kernel vs environment failures

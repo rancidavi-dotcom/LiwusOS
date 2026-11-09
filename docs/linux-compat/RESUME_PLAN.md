@@ -3,8 +3,9 @@
 This plan is ordered by technical dependencies. Re-evaluate as needed - this is not a mandatory sequence if dependencies change.
 
 ## Current baseline (must hold)
-- Branch `lean-kernel`, commit `2d8280c`
-- All tests pass: `make test`, `make ring3-test`, `make smap-test` (49/49)
+- Branch `lean-kernel`; current reviewed repository checkpoint `2b96f7d`
+- Active manifests: 51 top-level cases and 23 ring-3 markers in `make test`,
+  `make ring3-test` and `make smap-test`
 - Build clean with `-Werror`
 
 ## Pending work (from roadmap/known issues)

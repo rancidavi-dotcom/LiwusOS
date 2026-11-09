@@ -39,5 +39,7 @@
 #define SYS_JOB_CREATE 40
 #define SYS_JOB_FOREGROUND 41
 #define SYS_SHUTDOWN   42
+#define SYS_NET_INFO   43
+#define SYS_NET_PING   44
 
 #endif

@@ -216,3 +216,21 @@ void hex_to_str(uint8_t n, char *out) {
   out[1] = digits[n & 0xF];
   out[2] = '\0';
 }
+
+long strtol(const char *nptr, char **endptr, int base) {
+  (void)base;
+  long val = 0;
+  int sign = 1;
+  while (*nptr == ' ' || *nptr == '\t') nptr++;
+  if (*nptr == '-') { sign = -1; nptr++; }
+  else if (*nptr == '+') { nptr++; }
+  while (*nptr >= '0' && *nptr <= '9') {
+    val = val * 10 + (*nptr++ - '0');
+  }
+  if (endptr) *endptr = (char *)nptr;
+  return val * sign;
+}
+
+int atoi(const char *nptr) {
+  return (int)strtol(nptr, (void *)0, 10);
+}

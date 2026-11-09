@@ -16,11 +16,14 @@ make all
 make run
 ```
 
-`make run` displays the guest's VGA text console in the host terminal through
-QEMU curses. Type at the `liwus>` prompt and press Enter. The PS/2 keyboard is
-also accepted by the existing kernel input path. The cooked kernel input
-echoes characters. While waiting for input, the kernel sleeps in 10 ms timer
-intervals rather than spinning continuously.
+`make run` displays the guest's text console in the host terminal through QEMU
+curses. Its Q35 profile disables i8042 and attaches the emulated keyboard and
+mouse to EHCI, exercising the USB input path used by the shell. The same shell
+also accepts the kernel's PS/2 fallback on machines that provide it; a physical
+H61/EHCI boot keyboard is validated separately in `docs/USB.md`. Type at the
+`liwus>` prompt and press Enter. The cooked kernel input echoes characters.
+While waiting for input, the kernel sleeps in 10 ms timer intervals rather
+than spinning continuously.
 
 Example commands:
 
@@ -77,6 +80,17 @@ Quotes, escapes, pipes, redirection, environment expansion, globbing, scripts,
 background jobs, and job control are not implemented. Quote, escape, and
 operator characters are rejected explicitly. There is no configurable `PATH`;
 `ls` and `cat` are ordinary programs installed in `/bin`, not shell built-ins.
+
+## Planned v0.2 milestone
+
+The next recommended increment is deliberately smaller than a POSIX shell:
+quoted/escaped arguments, bounded pipelines, and `<`, `>`, `>>`, and `2>`
+redirection using the existing native `pipe`, `dup2`, `fork`, `execve`,
+`close`, and `waitpid` calls. Stream-oriented utilities should accept standard
+input where appropriate. Background execution and job control remain deferred
+until signals and process-group semantics exist. Completion requires host
+parser cases plus QEMU integration that proves descriptor closure, command
+failure recovery, and repeated pipelines without leaking file or pipe state.
 
 ## Add an application
 

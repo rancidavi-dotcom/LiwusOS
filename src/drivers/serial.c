@@ -97,3 +97,69 @@ void serial_print_hex(uint64_t n) {
     spinlock_release(&serial_lock);
     serial_irq_restore(flags);
 }
+
+void serial_printf(const char *fmt, ...) {
+    uint64_t flags = serial_irq_save();
+    spinlock_acquire(&serial_lock);
+
+    va_list args;
+    va_start(args, fmt);
+
+    while (*fmt) {
+        if (*fmt == '%') {
+            fmt++;
+            if (*fmt == 's') {
+                const char *s = va_arg(args, const char *);
+                if (!s) s = "(null)";
+                while (*s) write_serial(*s++);
+            } else if (*fmt == 'd' || *fmt == 'i') {
+                int val = va_arg(args, int);
+                if (val < 0) {
+                    write_serial('-');
+                    val = -val;
+                }
+                char buf[12];
+                int i = 0;
+                do {
+                    buf[i++] = (char)('0' + (val % 10));
+                    val /= 10;
+                } while (val && i < 11);
+                while (i > 0) write_serial(buf[--i]);
+            } else if (*fmt == 'u') {
+                unsigned int val = va_arg(args, unsigned int);
+                char buf[12];
+                int i = 0;
+                do {
+                    buf[i++] = (char)('0' + (val % 10));
+                    val /= 10;
+                } while (val && i < 11);
+                while (i > 0) write_serial(buf[--i]);
+            } else if (*fmt == 'x' || *fmt == 'X') {
+                unsigned int val = va_arg(args, unsigned int);
+                char buf[10];
+                int i = 0;
+                char *hex = (*fmt == 'X') ? "0123456789ABCDEF" : "0123456789abcdef";
+                do {
+                    buf[i++] = hex[val & 0xF];
+                    val >>= 4;
+                } while (val && i < 9);
+                while (i > 0) write_serial(buf[--i]);
+            } else if (*fmt == 'c') {
+                char c = (char)va_arg(args, int);
+                write_serial(c);
+            } else if (*fmt == '%') {
+                write_serial('%');
+            } else {
+                write_serial('%');
+                write_serial(*fmt);
+            }
+        } else {
+            write_serial(*fmt);
+        }
+        fmt++;
+    }
+
+    va_end(args);
+    spinlock_release(&serial_lock);
+    serial_irq_restore(flags);
+}

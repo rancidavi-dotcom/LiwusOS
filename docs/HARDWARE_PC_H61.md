@@ -1,6 +1,6 @@
 # PC físico de testes — firmware identificado como H61
 
-Registro atualizado em 2026-11-03, a partir das fotos e dos relatos do
+Registro atualizado em 2026-11-09, a partir das fotos e dos relatos do
 mantenedor. Consultar este arquivo antes de perguntar novamente sobre este PC.
 Os valores abaixo descrevem o estado observado; não pressupor que opções da
 BIOS tenham sido alteradas depois das fotos.
@@ -33,6 +33,13 @@ BIOS tenham sido alteradas depois das fotos.
 
 `H61` é a identificação do projeto de firmware exibida na foto, não um
 modelo completo da placa-mãe. A data de copyright não é a data do build.
+
+## Controladora de Rede Física (NIC)
+
+- **Dispositivo**: Realtek PCIe GBE Family Controller
+- **Fabricante**: Realtek Semiconductor Co., Ltd. (Vendor ID: `0x10EC`)
+- **Dispositivo**: RTL8111/8168/8411 PCI Express Gigabit Ethernet Controller (Device ID: `0x8168`)
+- **Arquitetura de driver no LiwusOS**: Driver RTL8169/8168 nativo integrado à pilha de rede lwIP, complementando a Intel e1000 (`0x8086:0x100E`) usada para desenvolvimento e testes no QEMU.
 
 ## BIOS — USB Configuration
 
@@ -200,7 +207,11 @@ disco SATA físico foi formatado ou que a instalação ficou persistente.
     A ISO resultante foi gravada no pendrive `8014CEAF`; `cmp --bytes=34349056`
     confirmou a cópia integral e o flush terminou.
 
-## Diagnóstico pendente e continuidade
+## Histórico do diagnóstico que levou à correção
+
+Os parágrafos desta seção registram hipóteses e resultados intermediários. O
+bloqueio de teclado descrito neles foi resolvido e validado fisicamente; a
+conclusão atual está em **Confirmação de Funcionamento em Hardware Real**.
 
 O perfil `make run` usa QEMU `pc-q35-11.1`/ICH9, sem i8042, com dois EHCIs e
 teclado/mouse USB ligados ao EHCI. O teste EHCI também usa dois controladores

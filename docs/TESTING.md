@@ -9,7 +9,7 @@ does not prove that the kernel is free of bugs.
 | Command | What it runs | Typical use |
 |---|---|---|
 | `make test-harness` | Synthetic serial-log checks for missing/duplicate cases, missing PASS, failure/panic markers, and wrong QEMU status | Fast runner changes |
-| `make test-unit` | Harness self-checks plus production VMA and shell parser host tests with ASan/UBSan | Fast development gate |
+| `make test-unit` | Harness self-checks plus production VMA, shell parser, USB HID, xHCI ring and EHCI schedule host tests with ASan/UBSan | Fast development gate |
 | `make test-stress` | Same VMA source and reference model for 50,000 operations with seed `0x4c495755` | Explicit host stress |
 | `make test` | Host checks, then the 51 top-level kernel cases and the ring-3 integration group in QEMU with 2 GiB RAM | Main regression gate |
 | `make ring3-test` | Repeats that same 51-case test image and ring-3 group in QEMU | Ring-3 focused reproduction |
@@ -81,6 +81,17 @@ This tests the production VMA algorithm, not hardware page tables or the kernel
 heap. The allocator fault injection and sanitizers apply only to this host
 test; no production allocator behavior is changed.
 
+## Host USB tests
+
+`test_usb_hid` checks bounded configuration-descriptor parsing and boot
+keyboard/mouse report decoding. `test_usb_xhci_ring` checks TRB layout, bounded
+ring operation, link wrap and cycle phase. `test_usb_ehci_schedule` checks the
+64-bit QH/qTD hardware layout, alignment, extended-buffer offsets, split masks,
+transaction-translator fields and bounded intervals. These host tests validate
+data structures and algorithms; controller startup and input delivery are
+covered separately by `make usb-probe-test`, `make usb-ehci-start-test` and the
+documented H61 physical boot.
+
 ## Adding or changing a test
 
 1. Give the case a stable unique name and a bounded success/failure condition.
@@ -104,11 +115,12 @@ case. The QEMU timeout is suite-wide, not an individual per-case deadline.
 unprivileged user. It checks owner/group/other permission decisions, path search
 permissions, descriptor read/write rights, parent-directory mutation rules,
 open-file lifetime after unlink, and allowed/denied executable modes. The
-full shell integration is intended to exercise utilities on a temporary SDFS
-disk, but the current run times out after `mkdir` without the next `touch`
-line reaching the guest. The persistent install integration did run `mkdir`,
-`cp`, `mv`, `touch`, and `echo` across four boots of the same temporary SDFS
-image.
+full shell integration exercises utilities on a temporary SDFS disk and passes
+after fixes to the harness's exit-marker handling and SDFS tombstone traversal.
+Stabilization repeated complete sessions, including 100 numbered commands and
+byte-exact copies through 65536 bytes. The persistent install integration also
+runs `mkdir`, `cp`, `mv`, `touch`, and `echo` across four boots of the same
+temporary SDFS image. See `docs/NATIVE_STABILIZATION.md`.
 
 ## Current limits
 

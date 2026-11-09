@@ -170,3 +170,11 @@ long liw_write_all(int fd, const void *buffer, size_t count) {
     }
     return 0;
 }
+
+long liw_net_info(liw_net_info_t *out_info) {
+    return liw_syscall1(SYS_NET_INFO, (long)out_info);
+}
+
+long liw_net_ping(const char *target_ip, uint32_t count) {
+    return liw_syscall2(SYS_NET_PING, (long)target_ip, (long)count);
+}

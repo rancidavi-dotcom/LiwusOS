@@ -22,6 +22,7 @@
 #include "kstat.h"
 #include "elf_loader.h"
 #include "usb_ehci.h"
+#include "net_manager.h"
 
 extern uint64_t last_elf_heap_start;
 extern int last_elf_load_error;
@@ -1919,6 +1920,55 @@ void syscall_handler(registers_t *regs) {
         break;
       }
       for (;;) asm volatile("cli; hlt" ::: "memory");
+    case 43: { /* SYS_NET_INFO */
+      struct {
+        char mac[18];
+        char ip[16];
+        char netmask[16];
+        char gateway[16];
+        uint32_t link_up;
+        uint32_t packets_rx;
+        uint32_t packets_tx;
+      } *user_info = (void *)regs->rdi;
+      if (!user_info || validate_user_write(user_info, sizeof(*user_info)) != 0) {
+        regs->rax = (uint64_t)-1;
+        break;
+      }
+      char ip[16] = {0}, mask[16] = {0}, gw[16] = {0};
+      net_get_ip_strings(ip, mask, gw);
+      const uint8_t *m = net_get_mac();
+      uint32_t rx = 0, tx = 0;
+      net_get_packet_counts(&rx, &tx);
+      bool link = net_get_link_status();
+      char mac_str[18];
+      static const char hex[] = "0123456789abcdef";
+      for (int i = 0; i < 6; i++) {
+        mac_str[i * 3] = hex[(m[i] >> 4) & 0xF];
+        mac_str[i * 3 + 1] = hex[m[i] & 0xF];
+        if (i < 5) mac_str[i * 3 + 2] = ':';
+      }
+      mac_str[17] = '\0';
+
+      memcpy(user_info->mac, mac_str, sizeof(user_info->mac));
+      memcpy(user_info->ip, ip, sizeof(user_info->ip));
+      memcpy(user_info->netmask, mask, sizeof(user_info->netmask));
+      memcpy(user_info->gateway, gw, sizeof(user_info->gateway));
+      user_info->link_up = link ? 1 : 0;
+      user_info->packets_rx = rx;
+      user_info->packets_tx = tx;
+      regs->rax = 0;
+      break;
+    }
+    case 44: { /* SYS_NET_PING */
+      const char *ip_str = (const char *)regs->rdi;
+      uint32_t count = (uint32_t)regs->rsi;
+      if (!ip_str || validate_user_pointer(ip_str, 1) < 0) {
+        regs->rax = (uint64_t)-1;
+        break;
+      }
+      regs->rax = net_ping(ip_str, count);
+      break;
+    }
   }
 }
 

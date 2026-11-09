@@ -25,6 +25,7 @@
 #include "vga.h"
 #include "terminal.h"
 #include "kernel_layout.h"
+#include "net_manager.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -624,6 +625,13 @@ void kernel_main_continue(void) {
   ahci_init();
   ata_bmide_init();
   boot_stage("disk-hw ok");
+
+  /* Inicializa a pilha de rede e hardware de rede */
+  if (net_init() == 0) {
+    boot_stage("network ok");
+  } else {
+    boot_stage("network unavailable");
+  }
 
   /* APs have left the low trampoline and all firmware/MMIO pointers have
    * direct-map aliases. The BSP now runs on a direct-map kernel stack. */

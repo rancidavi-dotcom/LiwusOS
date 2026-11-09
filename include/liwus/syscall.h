@@ -53,6 +53,20 @@ long liw_dup2(int oldfd, int newfd);
 /* Writes until complete; returns 0 or the first negative native error. */
 long liw_write_all(int fd, const void *buffer, size_t count);
 
+/* Informacoes de rede e utilitario de ping */
+typedef struct {
+    char mac[18];
+    char ip[16];
+    char netmask[16];
+    char gateway[16];
+    uint32_t link_up;
+    uint32_t packets_rx;
+    uint32_t packets_tx;
+} liw_net_info_t;
+
+long liw_net_info(liw_net_info_t *out_info);
+long liw_net_ping(const char *target_ip, uint32_t count);
+
 #ifdef __cplusplus
 }
 #endif

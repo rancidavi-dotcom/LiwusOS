@@ -13,9 +13,11 @@
 10. **Evolve native dev tools** gradually
 
 ## Next steps (immediate)
-- External SDK consumer build and ring-3 execution
-- First Native SDK userspace shell with real serial input
-- Incremental filesystem/application provisioning for installed SDFS images
+- Native Shell v0.2: quotes/escapes, pipelines and file redirection
+- Make stream utilities accept standard input where appropriate
+- Add repeated pipeline/descriptor-cleanup coverage to the shell integration
+- After the shell milestone, introduce a generic block-device interface before
+  attempting USB Mass Storage
 
 ## Constraints
 - Preserve binary compatibility

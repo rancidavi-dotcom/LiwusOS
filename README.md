@@ -28,8 +28,9 @@ had an in-kernel GUI, SMP bring-up, networking and audio; it was retired because
 it could not be maintained or tested. It is preserved as the `legacy-gui` tag and
 is **not** part of the build.
 
-The project is now focused on making the existing kernel solid before adding a
-Linux ABI compatibility layer. See [docs/ROADMAP.md](docs/ROADMAP.md).
+The project is now focused on its native ABI, SDK, userspace and hardware
+support. The existing Linux ABI personality remains isolated and preserved,
+but its expansion is temporarily paused. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Implemented
 
@@ -44,15 +45,18 @@ Linux ABI compatibility layer. See [docs/ROADMAP.md](docs/ROADMAP.md).
 | Binaries | Static ELF32 and ELF64 (`PT_LOAD` only) |
 | Filesystem | VFS + SDFS on ATA/AHCI disks: journal, CRC32, permissions, rename |
 | Initrd | tar archive installed into SDFS on first boot |
-| Drivers | ACPI, PCI, AHCI, ATA (PIO and bus-master DMA), PS/2 keyboard and mouse, serial, VGA text |
+| Drivers | ACPI, PCI, AHCI, ATA, PS/2 input, serial, USB xHCI/EHCI boot HID and framebuffer/VGA text console |
 | Shell | LIWUS SDK v0.1 process shell in ring 3; serial/keyboard input, built-ins and `.lxe` fork/exec/wait |
-| Tests | 49 named kernel/integration cases, 23 ring-3 subcases and host VMA/parser tests |
+| Tests | 51 named kernel/integration cases, 23 ring-3 subcases and host VMA/parser/USB tests |
 
 ## Not implemented (yet)
 
-GUI, GPU acceleration, networking, audio, USB, SMP task scheduling, signal
-delivery, demand paging, COW, file-backed `mmap`, dynamic linking, `/proc`,
-`/dev`, PTYs, and broad Linux application compatibility remain incomplete.
+GUI, a GPU/KMS driver, networking, audio, USB mass storage and general USB
+hot-plug, SMP task scheduling, signal delivery, demand paging, COW,
+file-backed `mmap`, dynamic linking, `/proc`, `/dev`, PTYs, and broad Linux
+application compatibility remain incomplete. The framebuffer text console has
+a RAM shadow buffer and optimized flush/scroll path; this is console rendering,
+not hardware GPU acceleration.
 The Linux x86-64 personality and native ABI exist, but Linux compatibility is
 partial and paused for expansion. The roadmap explains the remaining gates.
 
@@ -66,7 +70,7 @@ src/kernel/mm/   PMM, VMM, kernel heap, user/kernel copy
 src/kernel/sched/scheduler, fork, wait, exit
 src/kernel/terminal/ in-kernel text terminal and built-in commands
 src/fs/          VFS, SDFS, journal, CRC32, initrd
-src/drivers/     ACPI, PCI, AHCI, ATA, keyboard, mouse, serial, VGA
+src/drivers/     ACPI, PCI, storage, USB HID, keyboard, mouse, serial, console
 programs/        ring-3 init, shell, editor and C example
 tests/           in-kernel tests and the ring-3 integration suite
 docs/            ABI, roadmap and memory model
@@ -87,8 +91,8 @@ The build is warning-free and uses `-Werror`.
 ## Tests
 
 ```sh
-make test         # host checks + 49 top-level QEMU cases and ring-3 integration
-make test-unit    # harness sensitivity checks + production VMA code on host
+make test         # host checks + 51 top-level QEMU cases and ring-3 integration
+make test-unit    # harness + VMA, shell parser and USB host tests
 make test-stress  # 50,000 fixed-seed host VMA model operations
 make ring3-test   # same QEMU suite, validating its ring-3 cases
 make smap-test    # same suite with SMAP and 4 vCPUs initialized
