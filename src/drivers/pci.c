@@ -6,9 +6,17 @@
 #include "vmm.h"
 #include "acpi.h"
 #include "kernel_layout.h"
+#include "vga.h"
 
-static pci_device_t *devices[32];
+/* Keep the general device inventory large enough for bridges and functions
+ * found on real machines. USB discovery has its own registry below so it is
+ * not lost when unrelated devices fill this list. */
+#define PCI_DEVICE_LIMIT 256
+#define PCI_USB_DEVICE_LIMIT 32
+static pci_device_t *devices[PCI_DEVICE_LIMIT];
 static int pci_count = 0;
+static pci_device_t *usb_devices[PCI_USB_DEVICE_LIMIT];
+static int usb_device_count = 0;
 
 /* Acesso PCI via ECAM (MMCONFIG) quando o firmware fornece MCFG. */
 static uint64_t ecam_base = 0;
@@ -116,6 +124,7 @@ static void pci_probe_mcfg(void) {
 
 void pci_init() {
   pci_count = 0;
+  usb_device_count = 0;
   pci_probe_mcfg();
   for (uint16_t bus = 0; bus < 256; bus++) {
     for (uint16_t dev = 0; dev < 32; dev++) {
@@ -149,6 +158,8 @@ void pci_init() {
             else if (pi == 0x30) serial_print("xHCI");
             else serial_print("Unknown");
             serial_print(")\n");
+            if (usb_device_count < PCI_USB_DEVICE_LIMIT)
+              usb_devices[usb_device_count++] = d;
         }
 
         uint32_t int_reg = pci_read_config(bus, dev, fn, 0x3C);
@@ -156,12 +167,9 @@ void pci_init() {
 
         if (d->vendor_id == 0x1AF4) {
           serial_print("PCI: FOUND VIRTIO DEVICE!\n");
-          if (d->device_id == 0x1050) {
-            serial_print("PCI: IT IS THE GPU (VirtIO-GPU)! skipping auto-init to keep UI...\n");
-          }
         }
 
-        if (pci_count < 32)
+        if (pci_count < PCI_DEVICE_LIMIT)
           devices[pci_count++] = d;
       }
     }
@@ -203,18 +211,255 @@ pci_device_t *pci_get_wireless() {
 }
 
 pci_device_t *pci_get_usb(uint8_t interface_type) {
-  for (int i = 0; i < pci_count; i++) {
-    // Class 0x0C (Serial Bus), Subclass 0x03 (USB)
-    if (devices[i]->class_id == 0x0C && devices[i]->subclass_id == 0x03) {
-      // Opcionalmente podemos filtrar por interface (UHCI=0x00, OHCI=0x10, EHCI=0x20, xHCI=0x30)
-      if (interface_type == 0xFF) return devices[i];
-      
-      uint32_t class_reg = pci_read_config(devices[i]->bus, devices[i]->device, devices[i]->function, 0x08);
+  for (int i = 0; i < usb_device_count; i++) {
+      if (interface_type == 0xFF) return usb_devices[i];
+
+      uint32_t class_reg = pci_read_config(usb_devices[i]->bus,
+                                           usb_devices[i]->device,
+                                           usb_devices[i]->function, 0x08);
       uint8_t prog_if = (class_reg >> 8) & 0xFF;
-      if (prog_if == interface_type) return devices[i];
-    }
+      if (prog_if == interface_type) return usb_devices[i];
   }
   return (void *)0;
+}
+
+int pci_usb_device_count(uint8_t interface_type) {
+  int count = 0;
+  for (int i = 0; i < usb_device_count; i++) {
+    uint32_t class_reg = pci_read_config(usb_devices[i]->bus,
+                                         usb_devices[i]->device,
+                                         usb_devices[i]->function, 0x08);
+    uint8_t prog_if = (class_reg >> 8) & 0xFF;
+    if (interface_type == 0xFF || prog_if == interface_type) count++;
+  }
+  return count;
+}
+
+pci_device_t *pci_get_usb_by_index(uint8_t interface_type, int index) {
+  if (index < 0) return (void *)0;
+  for (int i = 0; i < usb_device_count; i++) {
+    uint32_t class_reg = pci_read_config(usb_devices[i]->bus,
+                                         usb_devices[i]->device,
+                                         usb_devices[i]->function, 0x08);
+    uint8_t prog_if = (class_reg >> 8) & 0xFF;
+    if (interface_type != 0xFF && prog_if != interface_type) continue;
+    if (index-- == 0) return usb_devices[i];
+  }
+  return (void *)0;
+}
+
+static char *pci_hex_field(char *out, uint64_t value, uint8_t digits) {
+  static const char hex[] = "0123456789abcdef";
+  for (int shift = (int)(digits - 1) * 4; shift >= 0; shift -= 4)
+    *out++ = hex[(value >> shift) & 0xF];
+  return out;
+}
+
+static const char *pci_usb_type(uint8_t prog_if) {
+  switch (prog_if) {
+  case 0x00: return "UHCI";
+  case 0x10: return "OHCI";
+  case 0x20: return "EHCI";
+  case 0x30: return "xHCI";
+  default: return "USB?";
+  }
+}
+
+void pci_print_usb_inventory(void) {
+  if (usb_device_count == 0) {
+    serial_print("[usb-pci] no PCI USB controllers found\n");
+    vga_puts("[usb-pci] no PCI USB controllers found\n");
+    return;
+  }
+
+  for (int i = 0; i < usb_device_count; i++) {
+    pci_device_t *d = usb_devices[i];
+    uint32_t class_reg = pci_read_config(d->bus, d->device, d->function, 0x08);
+    uint8_t prog_if = (class_reg >> 8) & 0xFF;
+    char line[64];
+    char *p = line;
+    const char *type = pci_usb_type(prog_if);
+    const char *prefix = "[usb-pci] ";
+    while (*prefix) *p++ = *prefix++;
+    while (*type) *p++ = *type++;
+    *p++ = ' ';
+    p = pci_hex_field(p, d->bus, 2);
+    *p++ = ':';
+    p = pci_hex_field(p, d->device, 2);
+    *p++ = '.';
+    p = pci_hex_field(p, d->function, 1);
+    *p++ = ' ';
+    p = pci_hex_field(p, d->vendor_id, 4);
+    *p++ = ':';
+    p = pci_hex_field(p, d->device_id, 4);
+    *p = '\0';
+    serial_print(line);
+    serial_print("\n");
+    vga_puts(line);
+    vga_puts("\n");
+  }
+}
+
+static char *pci_text(char *out, const char *text) {
+  while (*text) *out++ = *text++;
+  return out;
+}
+
+static char *pci_bdf(char *out, const pci_device_t *d) {
+  out = pci_hex_field(out, d->bus, 2);
+  *out++ = ':';
+  out = pci_hex_field(out, d->device, 2);
+  *out++ = '.';
+  return pci_hex_field(out, d->function, 1);
+}
+
+static void pci_usb_diag_line(const char *line) {
+  serial_print(line);
+  serial_print("\n");
+  vga_puts(line);
+  vga_puts("\n");
+}
+
+/* Read-only EHCI inspection. Never claims ownership, resets the controller,
+ * changes port registers, or enables PCI memory/bus-master decoding. */
+static void pci_ehci_probe_readonly(const pci_device_t *d) {
+  uint32_t command = pci_read_config(d->bus, d->device, d->function, 0x04);
+  uint16_t pci_command = (uint16_t)command;
+  uint32_t bar_low = pci_read_config(d->bus, d->device, d->function, 0x10);
+  uint64_t bar = 0;
+  uint8_t bar_type;
+
+  if (!bar_low || bar_low == 0xFFFFFFFF || (bar_low & 1)) {
+    pci_usb_diag_line("[ehci-ro] unusable memory BAR0");
+    return;
+  }
+  bar_type = (bar_low >> 1) & 0x3;
+  if (bar_type == 0x2) {
+    uint32_t bar_high = pci_read_config(d->bus, d->device, d->function, 0x14);
+    bar = ((uint64_t)bar_high << 32) | (bar_low & ~0xFULL);
+  } else if (bar_type == 0) {
+    bar = bar_low & ~0xFULL;
+  } else {
+    pci_usb_diag_line("[ehci-ro] unsupported BAR0 type");
+    return;
+  }
+
+  char line[80];
+  char *p = pci_text(line, "[ehci-ro] ");
+  p = pci_bdf(p, d);
+  p = pci_text(p, " BAR0=");
+  p = pci_hex_field(p, bar, 16);
+  p = pci_text(p, (pci_command & (1u << 1)) ? " MSE=1" : " MSE=0");
+  *p = '\0';
+  pci_usb_diag_line(line);
+
+  /* Do not touch an address if the firmware has not enabled MMIO decoding. */
+  if (!(pci_command & (1u << 1))) {
+    pci_usb_diag_line("[ehci-ro] skipped; PCI memory decoding is disabled");
+    return;
+  }
+  if (!bar || bar >= DIRECT_MAP_SIZE || DIRECT_MAP_SIZE - bar < 0x200) {
+    pci_usb_diag_line("[ehci-ro] BAR0 is outside the supported direct map");
+    return;
+  }
+
+  uint64_t first_page = bar & ~((uint64_t)PAGE_SIZE - 1);
+  uint64_t last_page = (bar + 0x1FF) & ~((uint64_t)PAGE_SIZE - 1);
+  for (uint64_t page = first_page;; page += PAGE_SIZE) {
+    if (vmm_map_page_in(kernel_directory, (void *)page, phys_to_virt(page),
+                        PTE_P | PTE_W | PTE_PCD | PTE_NX) < 0) {
+      pci_usb_diag_line("[ehci-ro] MMIO mapping failed");
+      return;
+    }
+    if (page == last_page) break;
+  }
+
+  volatile uint8_t *regs = (volatile uint8_t *)phys_to_virt(bar);
+  uint8_t cap_length = regs[0];
+  if (cap_length < 0x10 || cap_length > 0x40) {
+    p = pci_text(line, "[ehci-ro] ");
+    p = pci_bdf(p, d);
+    p = pci_text(p, " invalid CAPLENGTH=");
+    p = pci_hex_field(p, cap_length, 2);
+    *p = '\0';
+    pci_usb_diag_line(line);
+    return;
+  }
+
+  volatile uint32_t *cap_regs = (volatile uint32_t *)regs;
+  uint32_t hcsparams = cap_regs[1];
+  uint32_t hccparams = cap_regs[2];
+  uint32_t port_count = hcsparams & 0xF;
+  if (port_count == 0 || port_count > 15) {
+    pci_usb_diag_line("[ehci-ro] invalid HCSPARAMS port count");
+    return;
+  }
+
+  p = pci_text(line, "[ehci-ro] ");
+  p = pci_bdf(p, d);
+  p = pci_text(p, " CAP=");
+  p = pci_hex_field(p, cap_length, 2);
+  p = pci_text(p, " HCS=");
+  p = pci_hex_field(p, hcsparams, 8);
+  p = pci_text(p, " HCC=");
+  p = pci_hex_field(p, hccparams, 8);
+  p = pci_text(p, " ports=");
+  p = pci_hex_field(p, port_count, 1);
+  *p = '\0';
+  pci_usb_diag_line(line);
+
+  volatile uint32_t *op_regs =
+      (volatile uint32_t *)(regs + cap_length);
+  uint32_t usbcmd = op_regs[0];
+  uint32_t usbsts = op_regs[1];
+  uint32_t configflag = op_regs[0x10];
+  uint8_t legacy_offset = (hccparams >> 8) & 0xFF;
+  uint32_t legacy = 0xFFFFFFFF;
+  if (legacy_offset >= 0x40 && legacy_offset <= 0xFC)
+    legacy = pci_read_config(d->bus, d->device, d->function, legacy_offset);
+
+  p = pci_text(line, "[ehci-ro] ");
+  p = pci_bdf(p, d);
+  p = pci_text(p, " CMD=");
+  p = pci_hex_field(p, usbcmd, 8);
+  p = pci_text(p, " STS=");
+  p = pci_hex_field(p, usbsts, 8);
+  p = pci_text(p, " CF=");
+  p = pci_hex_field(p, configflag, 8);
+  p = pci_text(p, " LEG=");
+  p = pci_hex_field(p, legacy, 8);
+  *p = '\0';
+  pci_usb_diag_line(line);
+
+  uint32_t connected = 0;
+  for (uint32_t port = 0; port < port_count; port++) {
+    uint32_t portsc = op_regs[0x11 + port]; /* Operational + 0x44 + 4*n */
+    p = pci_text(line, "[ehci-ro] ");
+    p = pci_bdf(p, d);
+    p = pci_text(p, " PORT");
+    p = pci_hex_field(p, port, 1);
+    p = pci_text(p, "=");
+    p = pci_hex_field(p, portsc, 8);
+    *p = '\0';
+    pci_usb_diag_line(line);
+    if (portsc & 1) connected++;
+  }
+  if (!connected) {
+    p = pci_text(line, "[ehci-ro] ");
+    p = pci_bdf(p, d);
+    p = pci_text(p, " no connected root ports");
+    *p = '\0';
+    pci_usb_diag_line(line);
+  }
+}
+
+void pci_probe_ehci_readonly(void) {
+  for (int i = 0; i < usb_device_count; i++) {
+    pci_device_t *d = usb_devices[i];
+    uint32_t class_reg = pci_read_config(d->bus, d->device, d->function, 0x08);
+    if (((class_reg >> 8) & 0xFF) == 0x20)
+      pci_ehci_probe_readonly(d);
+  }
 }
 
 pci_device_t *pci_get_ahci() {

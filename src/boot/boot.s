@@ -20,22 +20,10 @@ mb2_tags_start:
   .align 8
   .word 1      /* type */
   .word 0      /* flags */
-  .long 16     /* size = 8 + 2*4 */
+  .long 20     /* size = 8 + 3*4 */
   .long 14     /* ACPI old RSDP */
   .long 15     /* ACPI new RSDP */
-
-  /* Framebuffer tag (Type 5).
-   * A framebuffer is useful, but it must never make the kernel unbootable:
-   * several real BIOS/UEFI video implementations cannot provide the exact
-   * requested VBE mode.  vga.c has a VGA text-mode fallback for that case.
-   */
-  .align 8
-  .word 5      /* type */
-  .word 0      /* optional: GRUB may boot us without a framebuffer */
-  .long 20     /* size */
-  .long 1024   /* width */
-  .long 768    /* height */
-  .long 32     /* depth */
+  .long 8      /* framebuffer information */
 
   .align 8
   .word 0, 0          /* end tag type=0, flags=0 */

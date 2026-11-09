@@ -12,6 +12,9 @@ typedef enum {
 } keyboard_layout_t;
 
 void keyboard_handler(void);
+void keyboard_tick(void);
+/* Prefer the normalized USB HID path and ignore legacy-controller bytes. */
+void keyboard_set_usb_active(bool active);
 /* Feed a normalized Set-1 key event from a non-PS/2 input driver. */
 void keyboard_inject_set1(uint8_t scancode, bool is_extended, bool pressed);
 char get_last_key(void);

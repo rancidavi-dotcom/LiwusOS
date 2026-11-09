@@ -25,6 +25,7 @@ long liw_read(int fd, void *buf, size_t count);
 int liw_open(const char *path, int flags);
 int liw_close(int fd);
 void liw_exit(int status) __attribute__((noreturn));
+long liw_shutdown(void);
 int liw_getpid(void);
 int liw_fork(void);
 int liw_execve(const char *path, char *const argv[], char *const envp[]);

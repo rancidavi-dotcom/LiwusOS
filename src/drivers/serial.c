@@ -5,6 +5,8 @@
 #define PORT 0x3f8          // COM1
 
 static spinlock_t serial_lock = {0};
+static int serial_present = 0;
+static int serial_input_enabled = 1;
 
 /* Serial output is also used by the scheduler and exception paths. On the
  * single CPU, do not let a timer IRQ switch to another task while that task
@@ -21,14 +23,28 @@ static inline void serial_irq_restore(uint64_t flags) {
 }
 
 int init_serial() {
+   serial_present = 0;
    outb(PORT + 1, 0x00);    // Disable all interrupts
    outb(PORT + 3, 0x80);    // Enable DLAB (set baud rate divisor)
    outb(PORT + 0, 0x03);    // Set divisor to 3 (lo byte) 38400 baud
    outb(PORT + 1, 0x00);    //                  (hi byte)
    outb(PORT + 3, 0x03);    // 8 bits, no parity, one stop bit
    outb(PORT + 2, 0xC7);    // Enable FIFO, clear them, with 14-byte threshold
-   outb(PORT + 4, 0x0B);    // IRQs enabled, RTS/DSR set
+   /* A missing legacy UART commonly reads as 0xff on real hardware. Verify
+    * the 16550 internal loopback before accepting COM1 as a stdin source. */
+   outb(PORT + 4, 0x1E);    // Loopback, RTS/OUT1/OUT2 asserted
+   outb(PORT + 0, 0xAE);
+   if (inb(PORT + 0) != 0xAE) {
+      outb(PORT + 4, 0x00);
+      return -1;
+   }
+   outb(PORT + 4, 0x0B);    // Normal mode, IRQ gate/RTS/DTR set
+   serial_present = 1;
    return 0;
+}
+
+void serial_set_input_enabled(int enabled) {
+   serial_input_enabled = enabled != 0;
 }
 
 int is_transmit_empty() {
@@ -36,7 +52,7 @@ int is_transmit_empty() {
 }
 
 int serial_received() {
-   return inb(PORT + 5) & 1;
+   return serial_present && serial_input_enabled && (inb(PORT + 5) & 1);
 }
 
 char read_serial() {
@@ -53,6 +69,7 @@ int serial_pop_char(char *c) {
 }
 
 void write_serial(char a) {
+   if (!serial_present) return;
    while (is_transmit_empty() == 0);
    outb(PORT, a);
 }

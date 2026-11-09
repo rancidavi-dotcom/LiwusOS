@@ -1,4 +1,5 @@
 #include "syscall.h"
+#include "acpi.h"
 #include "elf.h"
 #include "sdfs.h"
 #include "initrd.h"
@@ -20,6 +21,7 @@
 #include "vma.h"
 #include "kstat.h"
 #include "elf_loader.h"
+#include "usb_ehci.h"
 
 extern uint64_t last_elf_heap_start;
 extern int last_elf_load_error;
@@ -701,12 +703,14 @@ int sys_read(int fd, void *buf, uint32_t count) {
     cc_t vtime = kernel_termios.c_cc[VTIME];
 
     if (!icanon && vmin == 0 && vtime == 0) {
+        usb_ehci_service();
         if (!keyboard_pop_char(&c) && !serial_pop_char(&c)) return 0;
     } else if (!icanon && vmin == 0 && vtime > 0) {
         // Non-blocking read with timeout (for ESC sequence detection)
         int timeout_ticks = vtime * 10; // vtime in deciseconds, 100 Hz timer
         int start = (int)timer_ticks;
         while (!keyboard_pop_char(&c) && !serial_pop_char(&c)) {
+            usb_ehci_service();
             if ((int)(timer_ticks - start) >= timeout_ticks) {
                 return 0; // timeout
             }
@@ -714,6 +718,7 @@ int sys_read(int fd, void *buf, uint32_t count) {
         }
     } else {
         while (!keyboard_pop_char(&c) && !serial_pop_char(&c)) {
+            usb_ehci_service();
             task_sleep_ms(10);
         }
     }
@@ -987,11 +992,14 @@ int sys_ioctl(int fd, unsigned long request, void *argp) {
     return sys_tcsetattr(fd, 0, (const struct termios *)argp);
   }
   if (request == TIOCGWINSZ && argp) {
+    size_t cols = 80, rows = 25;
+    vga_get_dimensions(&cols, &rows);
+    extern uint32_t vga_fb_width, vga_fb_height;
     struct winsize ws;
-    ws.ws_row = 25;
-    ws.ws_col = 80;
-    ws.ws_xpixel = 0;
-    ws.ws_ypixel = 0;
+    ws.ws_row = (unsigned short)(rows ? rows : 25);
+    ws.ws_col = (unsigned short)(cols ? cols : 80);
+    ws.ws_xpixel = (unsigned short)vga_fb_width;
+    ws.ws_ypixel = (unsigned short)vga_fb_height;
     if (copy_to_user(argp, &ws, sizeof(ws)) < 0) return -EFAULT;
     return 0;
   }
@@ -1900,6 +1908,17 @@ void syscall_handler(registers_t *regs) {
     case 39: regs->rax = task_set_foreground((int)regs->rdi); break;
     case 40: regs->rax = task_create_job(); break;
     case 41: regs->rax = task_set_foreground_job((int)regs->rdi); break;
+    case 42:
+      if (!current_task || !current_task->process) {
+        regs->rax = (uint64_t)-EPERM;
+        break;
+      }
+      serial_print("[syscall] native shutdown requested\n");
+      if (!acpi_poweroff()) {
+        regs->rax = (uint64_t)-EIO;
+        break;
+      }
+      for (;;) asm volatile("cli; hlt" ::: "memory");
   }
 }
 

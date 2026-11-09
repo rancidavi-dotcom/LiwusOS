@@ -37,9 +37,10 @@ void vga_set_cursor_pos(int x, int y);
 void vga_show_cursor(int visible);
 void vga_clear_line(int row);
 void vga_clear_to_eol(void);
+void vga_get_dimensions(size_t *cols, size_t *rows);
 
+/* Low-level rendering primitives for the text console framebuffer backend. */
 void vga_put_pixel(uint32_t x, uint32_t y, uint32_t color);
 void vga_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
-void vga_draw_char_scaled(uint32_t x, uint32_t y, char c, uint32_t color, int scale);
 
 #endif

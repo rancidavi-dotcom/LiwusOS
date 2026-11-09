@@ -2,7 +2,7 @@
 
 Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verificáveis. A compatibilidade traduz a ABI na borda e reutiliza o mesmo motor de processos, memória virtual e VFS do sistema. Cada fase começa somente depois do gate anterior passar.
 
-> **Estado desta revisão:** Gate 0 permanece como marco histórico (`6402de8`). Os passos 9a/9b (`6bbb7cf`, `7fd8184`), 9c–14 e 16 estão implementados; 12–13 incluem VMAs ordenadas, NXE e W^X. O passo 15 foi implementado com stacks de kernel guardadas, stacks distintas por tarefa, IRQ por CPU e IST para page fault/double fault. O passo 17 foi migrado nos caminhos de ELF/VM e nos mapeamentos de kernel/MMIO; wrappers legados ainda existem dentro da camada VMM para operações de boot. A Fase 2 está aberta: Incrementos A/B separam processo e thread; Incremento C adiciona wait queues, bloqueio nativo de waitpid/pipes e FUTEX_WAIT/WAKE privados sem timeout. Evidência: build com `-Werror`, `make test`/`make ring3-test`/`make smap-test` 47/47, QEMU SMAP com quatro CPUs e probe Linux futex. Tarefas de usuário continuam no BSP. Futex compartilhado, REQUEUE, timeouts, sinais e execução de binário musl/glibc funcional seguem ausentes; o ELF glibc estático local falhou em `#UD` por AVX e `PT_INTERP` ainda não é carregado.
+> **Estado desta revisão:** Gate 0 permanece como marco histórico (`6402de8`). Os passos 9a/9b (`6bbb7cf`, `7fd8184`), 9c–14 e 16 estão implementados; 12–13 incluem VMAs ordenadas, NXE e W^X. O passo 15 foi implementado com stacks de kernel guardadas, stacks distintas por tarefa, IRQ por CPU e IST para page fault/double fault. O passo 17 foi migrado nos caminhos de ELF/VM e nos mapeamentos de kernel/MMIO; wrappers legados ainda existem dentro da camada VMM para operações de boot. A Fase 2 está aberta: Incrementos A/B separam processo e thread; Incremento C adiciona wait queues, bloqueio nativo de waitpid/pipes e FUTEX_WAIT/WAKE privados sem timeout. Evidência: build com `-Werror`, `make test`/`make ring3-test`/`make smap-test` 49/49, com 23 marcadores ring-3, QEMU SMAP com quatro CPUs e probe Linux futex. Tarefas de usuário continuam no BSP. Futex compartilhado, REQUEUE, timeouts, sinais e execução de binário musl/glibc funcional seguem ausentes; o ELF glibc estático local falhou em `#UD` por AVX e `PT_INTERP` ainda não é carregado.
 
 ## Fase 0 — Congelar e descrever a base
 
@@ -118,3 +118,10 @@ Esta sequência prioriza dependências técnicas; os itens não têm estimativa 
 4. Incremento D: implementar sinais, semântica de `wait4`/SIGCHLD e credenciais, preservando o contrato nativo de `waitpid`.
 5. Completar VM Linux que o loader necessita: demand paging, stack/auxv, `PT_TLS`, COW e mmap de arquivo; então validar ELF estático de terceiros sem modificação e registrar os artefatos/hash do teste.
 6. Implementar `PT_INTERP` e o carregamento do interpretador dinâmico; validar glibc dinâmica após a execução estática passar.
+
+## Pausa controlada da compatibilidade Linux (atual)
+
+- **Status:** PAUSADA temporariamente para priorizar a ABI nativa Liwus. Não abandonada.
+- **Localização:** `src/compat/linux/` isolada; testes Linux continuam ativos.
+- **Documentação de continuidade:** [docs/linux-compat/HANDOFF.md](docs/linux-compat/HANDOFF.md), [docs/linux-compat/IMPLEMENTATION_STATUS.md](docs/linux-compat/IMPLEMENTATION_STATUS.md), [docs/linux-compat/RESUME_PLAN.md](docs/linux-compat/RESUME_PLAN.md), [docs/linux-compat/KNOWN_ISSUES.md](docs/linux-compat/KNOWN_ISSUES.md), [docs/linux-compat/REPRODUCIBILITY.md](docs/linux-compat/REPRODUCIBILITY.md).
+- **Regra:** Não adicionar novas syscalls/funcionalidades Linux nesta fase; manter funcionalidade existente e todos os testes passando. Qualquer retomada deve seguir o plano de retomada e atualizar a matriz de implementação.

@@ -72,8 +72,9 @@ def main():
             str(prefix / "lib/libliwus.a"),
         ], project)
 
-        header = subprocess.check_output(["readelf", "-h", str(binary)], text=True)
-        program = subprocess.check_output(["readelf", "-l", str(binary)], text=True)
+        env = {**os.environ, "LC_ALL": "C"}
+        header = subprocess.check_output(["readelf", "-h", str(binary)], text=True, env=env)
+        program = subprocess.check_output(["readelf", "-l", str(binary)], text=True, env=env)
         if "ELF64" not in header or "Advanced Micro Devices X86-64" not in header:
             raise SystemExit("external artifact is not x86-64 ELF64")
         if "EXEC (Executable file)" not in header or "INTERP" in program:

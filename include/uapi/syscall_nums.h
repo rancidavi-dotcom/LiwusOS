@@ -38,5 +38,6 @@
 #define SYS_SET_FOREGROUND 39
 #define SYS_JOB_CREATE 40
 #define SYS_JOB_FOREGROUND 41
+#define SYS_SHUTDOWN   42
 
 #endif

@@ -70,6 +70,10 @@ void liw_exit(int status) {
     for (;;) __asm__ volatile("pause");
 }
 
+long liw_shutdown(void) {
+    return liw_syscall0(SYS_SHUTDOWN);
+}
+
 int liw_getpid(void) {
     return (int)liw_syscall0(SYS_GETPID);
 }

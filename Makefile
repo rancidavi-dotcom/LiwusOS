@@ -413,7 +413,11 @@ $(USER_SHELL_ELF): $(OBJ_DIR)/programs/user_shell/main.o $(OBJ_DIR)/programs/use
 # ------------------------------------------------------------
 
 $(DISK_IMAGE):
-	dd if=/dev/zero of=$@ bs=1M count=64 status=none
+	@if [ -e "$@" ]; then \
+		echo "$@ already exists; preserving persistent disk image"; \
+	else \
+		dd if=/dev/zero of=$@ bs=1M count=64 status=none; \
+	fi
 
 isodir/boot/kernel.bin: $(KERNEL_BIN)
 	@mkdir -p isodir/boot/grub
@@ -490,11 +494,19 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 test-harness:
 	python3 tests/harness/validate_serial.py --self-test
 
-test-unit: test-harness $(TEST_OBJ_DIR)/host/test_vma_host $(TEST_OBJ_DIR)/host/test_liwsh_parser $(TEST_OBJ_DIR)/host/test_usb_hid $(TEST_OBJ_DIR)/host/test_usb_xhci_ring
+test-unit: test-harness $(TEST_OBJ_DIR)/host/test_vma_host $(TEST_OBJ_DIR)/host/test_liwsh_parser $(TEST_OBJ_DIR)/host/test_usb_hid $(TEST_OBJ_DIR)/host/test_usb_xhci_ring $(TEST_OBJ_DIR)/host/test_usb_ehci_schedule
 	$(TEST_OBJ_DIR)/host/test_vma_host
 	$(TEST_OBJ_DIR)/host/test_liwsh_parser
 	$(TEST_OBJ_DIR)/host/test_usb_hid
 	$(TEST_OBJ_DIR)/host/test_usb_xhci_ring
+	$(TEST_OBJ_DIR)/host/test_usb_ehci_schedule
+
+$(TEST_OBJ_DIR)/host/test_usb_ehci_schedule: tests/host/test_usb_ehci_schedule.c \
+		include/drivers/usb_ehci_schedule.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O1 -g -Wall -Wextra -Werror \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		-Iinclude -Iinclude/drivers -o $@ $<
 
 $(TEST_OBJ_DIR)/host/test_usb_hid: tests/host/test_usb_hid.c \
 		src/drivers/usb_hid.c include/drivers/usb_hid.h \
@@ -588,17 +600,24 @@ QEMU_COMMON = -m 2048 -no-reboot \
               -drive file=$(DISK_IMAGE),format=raw,if=none,id=disk \
               -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0
 QEMU_BASE = -machine q35 $(QEMU_COMMON)
-QEMU_USB_BASE = -machine q35,i8042=off $(QEMU_COMMON)
+QEMU_USB_BASE = -machine pc-q35-11.1,i8042=off $(QEMU_COMMON) \
+	-device ich9-usb-ehci1,id=ehci1,addr=1a.0 \
+	-device ich9-usb-ehci2,id=ehci2,addr=1d.0
 
-.PHONY: usb-probe-test
+.PHONY: usb-probe-test usb-ehci-start-test
 run: all
-	$(QEMU) $(QEMU_USB_BASE) -device qemu-xhci,id=xhci \
-		-device usb-kbd,bus=xhci.0 -device usb-mouse,bus=xhci.0 \
+	$(QEMU) $(QEMU_USB_BASE) \
+		-device usb-kbd,bus=ehci1.0,port=1 \
+		-device usb-mouse,bus=ehci1.0,port=2 \
 		-cdrom $(ISO_IMAGE) -display curses -monitor none \
 		-serial file:qemu_serial.log
 
 usb-probe-test: all
 	python3 tests/harness/run_usb_input_test.py --qemu "$(QEMU)" \
+		--disk "$(DISK_IMAGE)" --iso "$(ISO_IMAGE)"
+
+usb-ehci-start-test: all
+	python3 tests/harness/run_usb_ehci_start_test.py --qemu "$(QEMU)" \
 		--disk "$(DISK_IMAGE)" --iso "$(ISO_IMAGE)"
 
 run-log: all

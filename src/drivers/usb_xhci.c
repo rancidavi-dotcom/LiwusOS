@@ -1,6 +1,7 @@
 #include "usb_xhci.h"
 
 #include "kernel_layout.h"
+#include "keyboard.h"
 #include "pci.h"
 #include "pmm.h"
 #include "serial.h"
@@ -100,6 +101,8 @@ static volatile uint32_t *xhci_operational_regs;
 static volatile uint32_t *xhci_doorbell_regs;
 static volatile uint32_t *xhci_runtime_regs;
 static bool xhci_controller_started;
+static bool xhci_keyboard_configured;
+static const char *xhci_boot_status = "usb: not probed";
 static xhci_boot_device_t xhci_boot_devices[256];
 
 static int map_xhci_register_page(uint64_t physical_page);
@@ -164,14 +167,13 @@ static int xhci_legacy_handoff(uint64_t bar, uint32_t hccparams1) {
     uint8_t cap_id = (uint8_t)capability;
     uint8_t next = (uint8_t)(capability >> 8);
     if (cap_id == XHCI_EXT_CAP_LEGACY) {
-      volatile uint32_t *control = header + 1;
-      uint32_t value = *control;
-      if (value & XHCI_EXT_CAP_BIOS_OWNED) {
-        *control = value | XHCI_EXT_CAP_OS_OWNED;
-        __atomic_thread_fence(__ATOMIC_SEQ_CST);
-        if (xhci_wait_mask(control, XHCI_EXT_CAP_BIOS_OWNED, 0) < 0)
-          return -1;
-      }
+      /* Ownership semaphores are in USBLEGSUP itself (offset +0), not
+       * USBLEGCTLSTS at +4. Always assert OS ownership, including when the
+       * firmware has already cleared BIOS ownership. */
+      *header = capability | XHCI_EXT_CAP_OS_OWNED;
+      __atomic_thread_fence(__ATOMIC_SEQ_CST);
+      if (xhci_wait_mask(header, XHCI_EXT_CAP_BIOS_OWNED, 0) < 0)
+        return -1;
       return 0;
     }
     if (!next) return 0;
@@ -432,8 +434,11 @@ static int xhci_configure_interrupt_endpoint(uint8_t slot_id) {
   ep[1] = (3u << 1) | (7u << 3) | ((uint32_t)packet_size << 16);
   ep[2] = (uint32_t)ring_phys | 1u;
   ep[3] = (uint32_t)(ring_phys >> 32);
-  ep[4] = packet_size;
-  ep[5] = packet_size;
+  /* For periodic endpoints, real controllers require Max ESIT Payload in
+   * DWORD 4 bits 16..31. QEMU tolerated zero here, but hardware may then
+   * configure the endpoint without ever scheduling an interrupt transfer. */
+  ep[4] = packet_size | ((uint32_t)packet_size << 16);
+  ep[5] = 0;
   transfer_ring->trbs[USB_XHCI_RING_TRBS - 1].parameter = ring_phys;
   transfer_ring->trbs[USB_XHCI_RING_TRBS - 1].control =
       USB_XHCI_TRB_CYCLE | USB_XHCI_TRB_TOGGLE_CYCLE |
@@ -706,6 +711,11 @@ static int xhci_configure_boot_hid(uint8_t slot_id) {
       xhci_queue_interrupt_transfer(slot_id) < 0)
     return -1;
   device->configured = true;
+  if (device->hid_interface.protocol == 1) {
+    xhci_keyboard_configured = true;
+    keyboard_set_usb_active(true);
+    serial_set_input_enabled(0);
+  }
   serial_print("USB: configured boot HID ");
   serial_print(device->hid_interface.protocol == 1 ? "keyboard" : "mouse");
   serial_print(" on slot ");
@@ -857,15 +867,18 @@ static int xhci_initialize_controller(const pci_device_t *device, uint64_t bar,
   xhci_doorbell_regs =
       (volatile uint32_t *)phys_to_virt(bar + doorbell_offset);
   xhci_runtime_regs = (volatile uint32_t *)phys_to_virt(bar + runtime_offset);
+  xhci_boot_status = "usb: BIOS ownership handoff failed";
   if (xhci_legacy_handoff(bar, hccparams1) < 0) {
     serial_print("USB: xHCI BIOS ownership handoff failed\n");
     return -1;
   }
+  xhci_boot_status = "usb: controller halt/reset failed";
   if (xhci_controller_reset() < 0) {
     serial_print("USB: xHCI halt/reset timed out\n");
     return -1;
   }
 
+  xhci_boot_status = "usb: DMA/controller setup failed";
   usb_xhci_trb_segment_t *command_segment =
       (usb_xhci_trb_segment_t *)xhci_alloc_dma_page(ac64);
   usb_xhci_trb_segment_t *event_segment =
@@ -963,6 +976,7 @@ static int xhci_initialize_controller(const pci_device_t *device, uint64_t bar,
   }
   xhci_controller_started = true;
 
+  xhci_boot_status = "usb: command ring NOOP failed";
   if (xhci_submit_noop() < 0) {
     serial_print("USB: xHCI command-ring NOOP failed\n");
     if (xhci_stop_controller() == 0) {
@@ -988,12 +1002,15 @@ static int xhci_initialize_controller(const pci_device_t *device, uint64_t bar,
 }
 
 void usb_xhci_probe(void) {
+  xhci_keyboard_configured = false;
+  xhci_boot_status = "usb: no PCI xHCI controller found";
   pci_device_t *device = pci_get_usb(0x30);
   if (!device) {
     serial_print("USB: no PCI xHCI controller found; USB support inactive\n");
     return;
   }
 
+  xhci_boot_status = "usb: unusable xHCI BAR0";
   uint64_t bar = xhci_bar_base(device);
   if (!bar || bar >= DIRECT_MAP_SIZE) {
     serial_print("USB: xHCI has no usable memory BAR0\n");
@@ -1010,6 +1027,7 @@ void usb_xhci_probe(void) {
                    PCI_COMMAND_OFFSET,
                    (uint32_t)command);
 
+  xhci_boot_status = "usb: capability mapping failed";
   uint64_t page = bar & ~((uint64_t)PAGE_SIZE - 1);
   if (map_xhci_register_page(page) < 0) {
     serial_print("USB: could not map xHCI capability registers\n");
@@ -1030,6 +1048,7 @@ void usb_xhci_probe(void) {
   uint32_t max_slots = structural & 0xffu;
   uint8_t ports = (uint8_t)(structural >> 24);
 
+  xhci_boot_status = "usb: invalid xHCI capabilities";
   if (cap_length < 0x20 || cap_length > 0x80 || version == 0 ||
       version == 0xFFFF || ports == 0 || max_slots == 0) {
     serial_print("USB: invalid xHCI capabilities caplen=");
@@ -1071,10 +1090,23 @@ void usb_xhci_probe(void) {
   }
   serial_print(" connected=");
   serial_print_hex(connected);
+  xhci_boot_status = "usb: invalid controller register layout";
   if (xhci_initialize_controller(device, bar, cap_length, structural,
                                   hcsparams2, hccparams1, doorbell_offset,
                                   runtime_offset) < 0) {
     serial_print("USB: xHCI controller initialization failed; PS/2 remains active\n");
     return;
   }
+}
+
+int usb_xhci_controller_ready(void) {
+  return xhci_controller_started;
+}
+
+const char *usb_xhci_boot_status(void) {
+  return xhci_boot_status;
+}
+
+int usb_xhci_keyboard_ready(void) {
+  return xhci_keyboard_configured;
 }

@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 int init_serial();
+void serial_set_input_enabled(int enabled);
 void write_serial(char a);
 void serial_print(const char *str);
 void serial_print_hex(uint64_t n);

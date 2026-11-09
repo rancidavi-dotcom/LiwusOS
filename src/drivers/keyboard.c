@@ -13,6 +13,7 @@ static bool shift_pressed = false;
 static bool altgr_pressed = false;
 static bool ctrl_pressed = false;
 static bool extended = false;
+static bool usb_keyboard_active = false;
 volatile bool ctrl_c_pending = false;
 
 static char char_queue[256];
@@ -273,8 +274,21 @@ static void keyboard_process_scancode(uint8_t scancode) {
     }
 }
 
+void keyboard_tick(void) {
+}
+
 void keyboard_handler(void) {
-    keyboard_process_scancode(inb(0x60));
+    /* IRQ1 can be spuriously asserted by firmware/legacy USB emulation. Only
+     * consume port 0x60 when the controller says a fresh byte is available;
+     * reading an empty output buffer returns stale scancodes on some chipsets. */
+    if (!(inb(0x64) & 0x01)) return;
+    uint8_t scancode = inb(0x60);
+    if (usb_keyboard_active) return;
+    keyboard_process_scancode(scancode);
+}
+
+void keyboard_set_usb_active(bool active) {
+    usb_keyboard_active = active;
 }
 
 void keyboard_inject_set1(uint8_t scancode, bool is_extended, bool pressed) {

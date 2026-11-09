@@ -1,10 +1,10 @@
 # LIWUS Native Shell v0.1
 
 `liwsh.lxe` is a freestanding C ring-3 program linked against the Native SDK.
-It uses the existing native `read`, `write`, `fork`, `execve`, `waitpid`, and
-`exit` interfaces. The kernel does not parse shell commands. The normal boot
-path starts the userspace `liwus_init` supervisor, which starts `liwsh.lxe` and
-restarts it after it exits.
+It uses the native `read`, `write`, `fork`, `execve`, `waitpid`, and shutdown
+interfaces. The kernel does not parse shell commands. The normal boot path
+starts the userspace `liwus_init` supervisor, which restarts the shell after
+unexpected process exits.
 
 ## Build, install, and start
 
@@ -16,11 +16,11 @@ make all
 make run
 ```
 
-`make run` connects the guest COM1 serial console to the host terminal. Type at
-the `liwus>` prompt and press Enter. The PS/2 keyboard is also accepted by the
-existing kernel input path. The cooked kernel input echoes characters. While
-waiting for input, the kernel sleeps in 10 ms timer intervals rather than
-spinning continuously.
+`make run` displays the guest's VGA text console in the host terminal through
+QEMU curses. Type at the `liwus>` prompt and press Enter. The PS/2 keyboard is
+also accepted by the existing kernel input path. The cooked kernel input
+echoes characters. While waiting for input, the kernel sleeps in 10 ms timer
+intervals rather than spinning continuously.
 
 Example commands:
 
@@ -32,7 +32,9 @@ Hello from LIWUS OS SDK v0.1!
 liwus> external-test demo
 ```
 
-The shell provides `help`, `version`, `pwd`, `cd`, and `exit`. `cd` changes the
+The shell provides `help`, `version`, `pwd`, `cd`, and `exit`. `exit` requests
+ACPI poweroff so QEMU closes and returns to the host terminal; Ctrl-D exits
+only the shell and the init supervisor restarts it. `cd` changes the
 shell process directory, so later child applications inherit it. For a bare name without a
 suffix, it tries `name`, `name.lxe`, `/bin/name`, and `/bin/name.lxe`, in that
 order. A name already ending in `.lxe` is tried as-is in the current directory

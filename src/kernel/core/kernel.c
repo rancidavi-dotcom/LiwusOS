@@ -2,6 +2,8 @@
 #include "ahci.h"
 #include "sdfs.h"
 #include "mouse.h"
+#include "usb_xhci.h"
+#include "usb_ehci.h"
 #include "gdt.h"
 #include "idt.h"
 #include "apic.h"
@@ -134,7 +136,7 @@ static void parse_multiboot2(uint32_t mbi_addr) {
       acpi_set_rsdp((uint64_t)mbi_addr + offset + 8);
     } else if (tag->type == MB2_TAG_END) {
       break;
-    } else if (tag->type == 8) { /* Framebuffer */
+    } else if (tag->type == 8 && tag->size >= 32) { /* Framebuffer */
       struct {
         uint32_t type, size;
         uint64_t framebuffer_addr;
@@ -143,16 +145,34 @@ static void parse_multiboot2(uint32_t mbi_addr) {
         uint32_t framebuffer_height;
         uint8_t framebuffer_bpp;
         uint8_t framebuffer_type;
-        uint8_t reserved;
+        uint16_t reserved;
+        uint8_t red_field_position;
+        uint8_t red_mask_size;
+        uint8_t green_field_position;
+        uint8_t green_mask_size;
+        uint8_t blue_field_position;
+        uint8_t blue_mask_size;
       } __attribute__((packed)) *fb = (void *)tag;
       extern uint64_t vga_fb_addr;
       extern uint32_t vga_fb_width, vga_fb_height, vga_fb_pitch;
-      extern uint8_t vga_fb_bpp;
+      extern uint8_t vga_fb_bpp, vga_fb_type;
+      extern uint8_t vga_fb_red_pos, vga_fb_red_size;
+      extern uint8_t vga_fb_green_pos, vga_fb_green_size;
+      extern uint8_t vga_fb_blue_pos, vga_fb_blue_size;
       vga_fb_addr = fb->framebuffer_addr;
       vga_fb_pitch = fb->framebuffer_pitch;
       vga_fb_width = fb->framebuffer_width;
       vga_fb_height = fb->framebuffer_height;
       vga_fb_bpp = fb->framebuffer_bpp;
+      vga_fb_type = fb->framebuffer_type;
+      if (fb->size >= 38 && fb->framebuffer_type == 1) {
+        vga_fb_red_pos = fb->red_field_position;
+        vga_fb_red_size = fb->red_mask_size;
+        vga_fb_green_pos = fb->green_field_position;
+        vga_fb_green_size = fb->green_mask_size;
+        vga_fb_blue_pos = fb->blue_field_position;
+        vga_fb_blue_size = fb->blue_mask_size;
+      }
     }
 
     offset += (tag->size + 7) & ~7; /* align to 8 bytes */
@@ -574,15 +594,6 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
 
 void kernel_main_continue(void) __attribute__((noreturn));
 void kernel_main_continue(void) {
-  {
-    extern uint64_t vga_fb_addr;
-    extern uint32_t vga_fb_height, vga_fb_pitch;
-    if (vga_fb_addr != 0) {
-      extern void vmm_map_framebuffer(uint64_t phys_addr, uint64_t size);
-      vmm_map_framebuffer(vga_fb_addr, (uint64_t)vga_fb_pitch * vga_fb_height);
-    }
-  }
-
   vfs_init();
   serial_print("VFS initialized\n");
   vga_init();
@@ -593,7 +604,22 @@ void kernel_main_continue(void) {
   acpi_init();
   init_apic();
   pci_init();
+  pci_print_usb_inventory();
+  pci_probe_ehci_readonly();
   boot_stage("pci ok");
+  usb_xhci_probe();
+  if (usb_xhci_keyboard_ready())
+    boot_stage("usb keyboard ready");
+  else if (usb_xhci_controller_ready())
+    boot_stage("usb xhci active; no direct boot keyboard");
+  else {
+    boot_stage(usb_xhci_boot_status());
+    usb_ehci_probe();
+    if (usb_ehci_keyboard_ready())
+      boot_stage("usb keyboard ready via EHCI");
+    else
+      boot_stage(usb_ehci_boot_status());
+  }
 
   ahci_init();
   ata_bmide_init();

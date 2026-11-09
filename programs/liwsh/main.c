@@ -192,7 +192,7 @@ int main(int argc, char **argv, char **envp) {
             continue;
         }
         if (same(args[0], "help")) {
-            write_text("Built-ins: help, version, pwd, cd, exit\n");
+            write_text("Built-ins: help, version, pwd, cd, exit (power off)\n");
             write_text("Run an application as: program [arguments]\n");
             write_text("Exact paths are tried first; .lxe is the default suffix.\n");
             write_text("Bare names are also searched under /bin.\n");
@@ -221,7 +221,14 @@ int main(int argc, char **argv, char **envp) {
                 continue;
             }
         } else if (same(args[0], "exit")) {
-            liw_exit(0);
+            if (count != 1) {
+                write_text("usage: exit\n");
+                continue;
+            }
+            write_text("Shutting down LIWUS...\n");
+            if (liw_shutdown() < 0) {
+                write_text("liwsh: ACPI poweroff is unavailable\n");
+            }
         } else {
             run_program(args, envp);
         }

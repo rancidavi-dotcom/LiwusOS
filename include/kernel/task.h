@@ -79,7 +79,6 @@ typedef struct process {
   int spawn_job_id;
   char cwd[256];
   kfile_t file_descriptors[32];
-  void *gui;
   uint32_t uid, euid, gid, egid;
   uint32_t umask;
 } process_t;

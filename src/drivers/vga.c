@@ -1,21 +1,29 @@
 #include "vga.h"
 #include "io.h"
+#include "kheap.h"
 #include "serial.h"
 #include "string.h"
 #include "vmm.h"
 #include "kernel_layout.h"
 #include <stdbool.h>
 
+extern void fast_memcpy(void *dst, const void *src, uint64_t size);
+
 uint64_t vga_fb_addr = 0;
 uint32_t vga_fb_width = 0;
 uint32_t vga_fb_height = 0;
 uint32_t vga_fb_pitch = 0;
 uint8_t vga_fb_bpp = 0;
-
-/* GUI terminal output hook — when non-NULL, vga_puts redirects here */
-void (*vga_output_hook)(const char *str) = NULL;
+uint8_t vga_fb_type = 0;
+uint8_t vga_fb_red_pos = 0;
+uint8_t vga_fb_red_size = 0;
+uint8_t vga_fb_green_pos = 0;
+uint8_t vga_fb_green_size = 0;
+uint8_t vga_fb_blue_pos = 0;
+uint8_t vga_fb_blue_size = 0;
 
 static bool is_framebuffer = false;
+static uint32_t *vga_backbuffer = NULL;
 
 // Fallback text mode buffer
 static uint16_t *text_buffer;
@@ -75,55 +83,86 @@ static inline uint16_t vga_entry(unsigned char uc, uint8_t color) {
     return (uint16_t) uc | (uint16_t) color << 8;
 }
 
+static inline uint32_t vga_convert_color(uint32_t color) {
+    uint32_t red = (color >> 16) & 0xFF;
+    uint32_t green = (color >> 8) & 0xFF;
+    uint32_t blue = color & 0xFF;
+    return (red << vga_fb_red_pos) | (green << vga_fb_green_pos) |
+           (blue << vga_fb_blue_pos);
+}
+
 void vga_put_pixel(uint32_t x, uint32_t y, uint32_t color) {
     if (!is_framebuffer) return;
     if (x >= vga_fb_width || y >= vga_fb_height) return;
+    uint32_t px = vga_convert_color(color);
+    uint32_t stride_words = vga_fb_pitch / 4;
+    uint32_t offset = y * stride_words + x;
     uint32_t* fb = (uint32_t*)phys_to_virt(vga_fb_addr);
-    fb[y * (vga_fb_pitch / 4) + x] = color;
+    fb[offset] = px;
+    if (vga_backbuffer) {
+        vga_backbuffer[offset] = px;
+    }
 }
 
 void vga_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
     if (!is_framebuffer) return;
+    if (x >= vga_fb_width || y >= vga_fb_height) return;
+    if (x + w > vga_fb_width) w = vga_fb_width - x;
+    if (y + h > vga_fb_height) h = vga_fb_height - y;
+    if (!w || !h) return;
+
+    uint32_t px = vga_convert_color(color);
+    uint32_t stride_words = vga_fb_pitch / 4;
+    uint32_t* fb = (uint32_t*)phys_to_virt(vga_fb_addr);
+    uint32_t* dst = fb + (y * stride_words) + x;
+    uint32_t* back_dst = vga_backbuffer ? (vga_backbuffer + (y * stride_words) + x) : NULL;
+
     for (uint32_t j = 0; j < h; j++) {
         for (uint32_t i = 0; i < w; i++) {
-            vga_put_pixel(x + i, y + j, color);
+            dst[i] = px;
         }
+        if (back_dst) {
+            for (uint32_t i = 0; i < w; i++) {
+                back_dst[i] = px;
+            }
+            back_dst += stride_words;
+        }
+        dst += stride_words;
     }
 }
 
 static void vga_draw_char(char c, uint32_t x, uint32_t y, uint32_t fg, uint32_t bg) {
     if (!is_framebuffer || !font_data) return;
-    
-    uint8_t* glyph = font_data + (unsigned char)c * font_bpg;
-    
-    for (int j = 0; j < font_height; j++) {
-        uint8_t row = glyph[j];
-        for (int i = 0; i < font_width; i++) {
-            if ((row >> (7 - i)) & 1) {
-                vga_put_pixel(x + i, y + j, fg);
-            } else {
-                vga_put_pixel(x + i, y + j, bg);
-            }
-        }
-    }
-}
+    if (x + (uint32_t)font_width > vga_fb_width || y + (uint32_t)font_height > vga_fb_height) return;
 
-void vga_draw_char_scaled(uint32_t x, uint32_t y, char c, uint32_t color, int scale) {
-    if (!is_framebuffer || !font_data || scale <= 0) return;
-    
     uint8_t* glyph = font_data + (unsigned char)c * font_bpg;
-    
+    uint32_t fg_px = vga_convert_color(fg);
+    uint32_t bg_px = vga_convert_color(bg);
+    uint32_t stride_words = vga_fb_pitch / 4;
+    uint32_t* fb = (uint32_t*)phys_to_virt(vga_fb_addr);
+    uint32_t* dst = fb + (y * stride_words) + x;
+    uint32_t* back_dst = vga_backbuffer ? (vga_backbuffer + (y * stride_words) + x) : NULL;
+
     for (int j = 0; j < font_height; j++) {
         uint8_t row = glyph[j];
-        for (int i = 0; i < font_width; i++) {
-            if ((row >> (7 - i)) & 1) {
-                for (int sy = 0; sy < scale; sy++) {
-                    for (int sx = 0; sx < scale; sx++) {
-                        vga_put_pixel(x + i * scale + sx, y + j * scale + sy, color);
-                    }
-                }
-            }
+        uint32_t p0 = (row & 0x80) ? fg_px : bg_px;
+        uint32_t p1 = (row & 0x40) ? fg_px : bg_px;
+        uint32_t p2 = (row & 0x20) ? fg_px : bg_px;
+        uint32_t p3 = (row & 0x10) ? fg_px : bg_px;
+        uint32_t p4 = (row & 0x08) ? fg_px : bg_px;
+        uint32_t p5 = (row & 0x04) ? fg_px : bg_px;
+        uint32_t p6 = (row & 0x02) ? fg_px : bg_px;
+        uint32_t p7 = (row & 0x01) ? fg_px : bg_px;
+
+        dst[0] = p0; dst[1] = p1; dst[2] = p2; dst[3] = p3;
+        dst[4] = p4; dst[5] = p5; dst[6] = p6; dst[7] = p7;
+
+        if (back_dst) {
+            back_dst[0] = p0; back_dst[1] = p1; back_dst[2] = p2; back_dst[3] = p3;
+            back_dst[4] = p4; back_dst[5] = p5; back_dst[6] = p6; back_dst[7] = p7;
+            back_dst += stride_words;
         }
+        dst += stride_words;
     }
 }
 
@@ -341,26 +380,44 @@ void vga_clear_to_eol(void) {
 }
 
 void vga_init(void) {
-    vga_output_hook = NULL;
     text_buffer = (uint16_t *)phys_to_virt(0xB8000);
-    if (vga_fb_addr != 0) {
-        is_framebuffer = true;
-        
-        // Setup font
-        uint8_t* font_hdr = _binary_src_drivers_font_psf_start;
-        if (font_hdr[0] == 0x36 && font_hdr[1] == 0x04) {
-            font_bpg = font_hdr[3];
+    is_framebuffer = false;
+    max_cols = 80;
+    max_rows = 25;
+
+    /* UEFI machines commonly have no usable VGA text memory. Keep the UI
+     * text-only, but render those characters into GRUB's RGB framebuffer. */
+    if (vga_fb_addr && vga_fb_type == 1 && vga_fb_bpp == 32 &&
+        vga_fb_red_size == 8 && vga_fb_green_size == 8 &&
+        vga_fb_blue_size == 8 && vga_fb_red_pos <= 24 &&
+        vga_fb_green_pos <= 24 && vga_fb_blue_pos <= 24 &&
+        vga_fb_width >= 80 * 8 &&
+        vga_fb_height >= 25 * 16 && vga_fb_pitch >= vga_fb_width * 4U &&
+        vga_fb_addr < DIRECT_MAP_SIZE &&
+        (uint64_t)vga_fb_pitch * vga_fb_height <=
+            DIRECT_MAP_SIZE - vga_fb_addr) {
+        uint8_t *font_hdr = _binary_src_drivers_font_psf_start;
+        if (font_hdr[0] == 0x36 && font_hdr[1] == 0x04 && font_hdr[3] == 16) {
             font_data = font_hdr + 4;
+            font_bpg = font_hdr[3];
+            uint64_t fb_size = (uint64_t)vga_fb_pitch * vga_fb_height;
+            vmm_map_framebuffer(vga_fb_addr, fb_size);
+            is_framebuffer = true;
+            max_cols = vga_fb_width / (size_t)font_width;
+            max_rows = vga_fb_height / (size_t)font_height;
+            vga_backbuffer = (uint32_t *)kmalloc(fb_size);
+            if (vga_backbuffer) {
+                memset(vga_backbuffer, 0, fb_size);
+            }
+            serial_print("[console] text framebuffer active\n");
         }
-        
-        max_cols = vga_fb_width / font_width;
-        max_rows = vga_fb_height / font_height;
-    } else {
-        max_cols = 80;
-        max_rows = 25;
+    }
+
+    if (!is_framebuffer) {
         vmm_map_page_in(kernel_directory, (void *)0xB8000,
                         phys_to_virt(0xB8000),
                         PTE_P | PTE_W | PTE_PCD | PTE_NX);
+        serial_print("[console] VGA text fallback active\n");
     }
     
     vga_row = 0;
@@ -389,13 +446,26 @@ void vga_putentryat(char c, uint8_t color, size_t x, size_t y) {
 
 void vga_scroll() {
     if (is_framebuffer) {
-        uint32_t row_words = vga_fb_width * font_height;
-        uint32_t total_scroll_words = vga_fb_width * ((max_rows - 1) * font_height);
-        
+        uint32_t stride_words = vga_fb_pitch / 4;
+        uint32_t row_words = stride_words * (uint32_t)font_height;
+        uint32_t total_scroll_words =
+            stride_words * (uint32_t)((max_rows - 1) * font_height);
         uint32_t* fb = (uint32_t*)phys_to_virt(vga_fb_addr);
-        memmove(fb, fb + row_words, total_scroll_words * 4);
-        
-        vga_draw_rect(0, (max_rows - 1) * font_height, vga_fb_width, font_height, vga_bg_color);
+
+        if (vga_backbuffer) {
+            memmove(vga_backbuffer, vga_backbuffer + row_words,
+                    total_scroll_words * sizeof(uint32_t));
+            uint32_t bg_px = vga_convert_color(vga_bg_color);
+            uint32_t *bottom = vga_backbuffer + total_scroll_words;
+            for (uint32_t i = 0; i < row_words; i++) {
+                bottom[i] = bg_px;
+            }
+            fast_memcpy(fb, vga_backbuffer,
+                        (total_scroll_words + row_words) * sizeof(uint32_t));
+        } else {
+            memmove(fb, fb + row_words, total_scroll_words * 4);
+            vga_draw_rect(0, (max_rows - 1) * font_height, vga_fb_width, font_height, vga_bg_color);
+        }
     } else {
         for (size_t y = 0; y < max_rows - 1; y++) {
             for (size_t x = 0; x < max_cols; x++) {
@@ -471,10 +541,6 @@ void vga_puts(const char* str) {
     
     
     
-    if (vga_output_hook) {
-        vga_output_hook(str);
-        return;
-    }
     for (size_t i = 0; str[i] != '\0'; i++)
         vga_putc(str[i]);
 }
@@ -498,5 +564,7 @@ void vga_clear(enum vga_color fg, enum vga_color bg) {
     vga_set_cursor(0, 0);
 }
 
-/* Accessor used by gui/widgets/terminal_node.c */
-
+void vga_get_dimensions(size_t *cols, size_t *rows) {
+    if (cols) *cols = max_cols;
+    if (rows) *rows = max_rows;
+}

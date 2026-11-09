@@ -2,7 +2,9 @@
 #include "io.h"
 #include "vga.h"
 #include "serial.h"
+#include "keyboard.h"
 #include "usb_xhci.h"
+#include "usb_ehci.h"
 
 uint32_t timer_ticks = 0;
 
@@ -10,8 +12,10 @@ extern void keyboard_update_mouse(void);
 
 void timer_handler() {
     timer_ticks++;
+    keyboard_tick();
     keyboard_update_mouse();
     usb_xhci_poll();
+    usb_ehci_poll();
 }
 
 void init_timer(uint32_t frequency) {

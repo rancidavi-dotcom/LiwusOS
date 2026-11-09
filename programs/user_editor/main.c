@@ -9,7 +9,7 @@
 #define O_TRUNC 0x0400
 #define TCGETS 0x5401
 #define TCSETS 0x5402
-#define EDITOR_BODY_ROWS (SCREEN_ROWS - 3)
+#define EDITOR_BODY_ROWS (screen_rows > 3 ? screen_rows - 3 : 1)
 
 typedef struct {
     unsigned short rows;
@@ -377,8 +377,8 @@ int main(int argc, char **argv, char **envp) {
 
     winsize_t size;
     if (liw_ioctl(0, 0x5413, &size) == 0 && size.rows >= 8 && size.cols >= 24) {
-        screen_rows = size.rows < SCREEN_ROWS ? size.rows : SCREEN_ROWS;
-        screen_cols = size.cols < SCREEN_COLS ? size.cols : SCREEN_COLS;
+        screen_rows = size.rows;
+        screen_cols = size.cols;
     }
     int quit = 0;
     while (!quit) {

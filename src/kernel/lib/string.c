@@ -138,14 +138,36 @@ void *memcpy(void *dest, const void *src, size_t len) {
 }
 
 void *memmove(void *dest, const void *src, size_t len) {
+  if (dest == src || len == 0) return dest;
   char *d = (char *)dest;
   const char *s = (const char *)src;
   if (d < s) {
-    // Para d < s, o memcpy otimizado é seguro se não houver sobreposição crítica
-    // Mas por segurança usamos a lógica padrão
+    if (((uintptr_t)d % 8 == 0) && ((uintptr_t)s % 8 == 0)) {
+      size_t qwords = len >> 3;
+      uint64_t *d64 = (uint64_t *)d;
+      const uint64_t *s64 = (const uint64_t *)s;
+      while (qwords--)
+        *d64++ = *s64++;
+      d = (char *)d64;
+      s = (const char *)s64;
+      len &= 7;
+    }
     while (len--)
       *d++ = *s++;
   } else {
+    if (((uintptr_t)d % 8 == 0) && ((uintptr_t)s % 8 == 0) && (len >= 8)) {
+      size_t qwords = len >> 3;
+      size_t rem = len & 7;
+      char *lasts = (char *)s + (len - 1);
+      char *lastd = d + (len - 1);
+      while (rem--)
+        *lastd-- = *lasts--;
+      uint64_t *lastd64 = (uint64_t *)(d + (qwords << 3));
+      const uint64_t *lasts64 = (const uint64_t *)(s + (qwords << 3));
+      while (qwords--)
+        *--lastd64 = *--lasts64;
+      return dest;
+    }
     char *lasts = (char *)s + (len - 1);
     char *lastd = d + (len - 1);
     while (len--)
