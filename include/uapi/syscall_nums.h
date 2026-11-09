@@ -41,5 +41,6 @@
 #define SYS_SHUTDOWN   42
 #define SYS_NET_INFO   43
 #define SYS_NET_PING   44
+#define SYS_NET_NTP    45
 
 #endif

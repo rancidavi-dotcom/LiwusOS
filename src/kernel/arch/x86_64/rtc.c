@@ -56,3 +56,28 @@ rtc_time_t rtc_read_time(void) {
     t.second = s;
     return t;
 }
+
+static void cmos_write(uint8_t reg, uint8_t val) {
+    outb(0x70, reg);
+    __asm__ volatile("nop");
+    outb(0x71, val);
+}
+
+static uint8_t bin_to_bcd(uint8_t bin) {
+    return ((bin / 10) << 4) | (bin % 10);
+}
+
+void rtc_write_time(uint8_t hour, uint8_t min, uint8_t sec) {
+    uint8_t reg_b = cmos_read(0x0B);
+    int binary = (reg_b & 0x04) != 0;
+
+    if (!binary) {
+        hour = bin_to_bcd(hour);
+        min  = bin_to_bcd(min);
+        sec  = bin_to_bcd(sec);
+    }
+
+    cmos_write(0x00, sec);
+    cmos_write(0x02, min);
+    cmos_write(0x04, hour);
+}

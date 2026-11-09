@@ -22,4 +22,9 @@ void net_get_packet_counts(uint32_t *rx, uint32_t *tx);
 /* Utilitario simples de ping ICMP */
 int net_ping(const char *target_ip_str, uint32_t count);
 
+typedef void (*net_ping_output_fn)(const char *line, void *user_data);
+
+int net_ping_custom(const char *target_ip_str, uint32_t count,
+                    net_ping_output_fn output_cb, void *user_data);
+
 #endif /* NET_MANAGER_H */

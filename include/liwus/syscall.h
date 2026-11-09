@@ -66,6 +66,7 @@ typedef struct {
 
 long liw_net_info(liw_net_info_t *out_info);
 long liw_net_ping(const char *target_ip, uint32_t count);
+long liw_net_ntp(const char *server_ip, char *out_time_buf, uint32_t buf_len);
 
 #ifdef __cplusplus
 }

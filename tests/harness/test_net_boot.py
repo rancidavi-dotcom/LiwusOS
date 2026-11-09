@@ -15,7 +15,7 @@ def test_net():
         "-serial", f"tcp:127.0.0.1:{port},server=on,wait=off",
         "-no-reboot", "-drive", "file=liwus_disk.img,format=raw,if=none,id=disk",
         "-device", "ahci,id=ahci", "-device", "ide-hd,drive=disk,bus=ahci.0",
-        "-netdev", "user,id=net0", "-device", "e1000,netdev=net0",
+        "-netdev", "user,id=net0,hostfwd=tcp::2323-:23", "-device", "e1000,netdev=net0",
         "-cdrom", "liwusos.iso",
     ]
 
@@ -28,10 +28,11 @@ def test_net():
     buf = bytearray()
     start = time.time()
     sent_ifconfig = False
+    sent_date = False
     sent_ping = False
     boot_time = 0
 
-    while time.time() - start < 25.0:
+    while time.time() - start < 30.0:
         try:
             chunk = sock.recv(4096)
             if chunk:
@@ -48,14 +49,38 @@ def test_net():
                         sent_ifconfig = True
                         buf.clear()
 
-                elif b"liwus>" in buf and sent_ifconfig and not sent_ping:
-                    time.sleep(1.0)
+                elif b"liwus>" in buf and sent_ifconfig and not sent_date:
+                    time.sleep(0.5)
+                    print("\n[HOST -> LIWUS] Enviando: date\n")
+                    sock.sendall(b"date\n")
+                    sent_date = True
+                    buf.clear()
+
+                elif b"liwus>" in buf and sent_date and not sent_ping:
+                    time.sleep(0.5)
                     print("\n[HOST -> LIWUS] Enviando: ping 10.0.2.2 2\n")
                     sock.sendall(b"ping 10.0.2.2 2\n")
                     sent_ping = True
                     buf.clear()
 
                 elif sent_ping and b"liwus>" in buf:
+                    # Testa conexao Telnet na porta encaminhada 2323!
+                    print("\n[TEST] Testando conexao Telnet na porta 2323...")
+                    try:
+                        t_sock = socket.create_connection(("127.0.0.1", 2323), timeout=3.0)
+                        t_sock.settimeout(2.0)
+                        banner = t_sock.recv(1024)
+                        print(f"[TELNET RECEBIDO]:\n{banner.decode('utf-8', errors='replace')}")
+                        t_sock.sendall(b"version\r\n")
+                        time.sleep(0.5)
+                        reply = t_sock.recv(1024)
+                        print(f"[TELNET RESPOSTA]:\n{reply.decode('utf-8', errors='replace')}")
+                        t_sock.sendall(b"exit\r\n")
+                        time.sleep(0.2)
+                        t_sock.close()
+                        print("[TEST] Conexao Telnet validada com sucesso!")
+                    except Exception as e:
+                        print(f"[TEST] Erro no teste Telnet: {e}")
                     break
 
         except BlockingIOError:

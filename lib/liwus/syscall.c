@@ -178,3 +178,7 @@ long liw_net_info(liw_net_info_t *out_info) {
 long liw_net_ping(const char *target_ip, uint32_t count) {
     return liw_syscall2(SYS_NET_PING, (long)target_ip, (long)count);
 }
+
+long liw_net_ntp(const char *server_ip, char *out_time_buf, uint32_t buf_len) {
+    return liw_syscall3(SYS_NET_NTP, (long)server_ip, (long)out_time_buf, (long)buf_len);
+}

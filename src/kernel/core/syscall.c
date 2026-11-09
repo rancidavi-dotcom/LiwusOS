@@ -23,6 +23,7 @@
 #include "elf_loader.h"
 #include "usb_ehci.h"
 #include "net_manager.h"
+#include "ntp_client.h"
 
 extern uint64_t last_elf_heap_start;
 extern int last_elf_load_error;
@@ -1967,6 +1968,38 @@ void syscall_handler(registers_t *regs) {
         break;
       }
       regs->rax = net_ping(ip_str, count);
+      break;
+    }
+    case 45: { /* SYS_NET_NTP */
+      const char *server_str = (const char *)regs->rdi;
+      char *user_buf = (char *)regs->rsi;
+      uint32_t buf_len = (uint32_t)regs->rdx;
+
+      if (server_str && validate_user_pointer(server_str, 1) < 0) {
+        regs->rax = (uint64_t)-1;
+        break;
+      }
+      if (user_buf && validate_user_write(user_buf, buf_len) != 0) {
+        regs->rax = (uint64_t)-2;
+        break;
+      }
+
+      int res = 0;
+      if (server_str && server_str[0] != '\0') {
+        res = ntp_sync(server_str);
+      } else if (!ntp_is_synced()) {
+        res = ntp_sync(NULL);
+      }
+
+      if (user_buf && buf_len > 0) {
+        char time_str[64];
+        ntp_get_formatted_time(time_str, sizeof(time_str), -3);
+        size_t len = strlen(time_str);
+        if (len >= buf_len) len = buf_len - 1;
+        memcpy(user_buf, time_str, len);
+        user_buf[len] = '\0';
+      }
+      regs->rax = (uint64_t)res;
       break;
     }
   }

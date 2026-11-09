@@ -1,6 +1,8 @@
 #include "net_manager.h"
 #include "net_e1000.h"
 #include "net_rtl8168.h"
+#include "ntp_client.h"
+#include "telnet_server.h"
 #include "serial.h"
 #include "string.h"
 #include "timer.h"
@@ -126,6 +128,10 @@ int net_init(void) {
     dhcp_start(&main_netif);
 
     net_initialized = true;
+
+    /* 5. Inicia servidor Telnet na porta TCP 23 */
+    telnet_server_init(23);
+
     return 0;
 }
 
@@ -248,9 +254,15 @@ static u8_t ping_raw_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const 
 }
 
 int net_ping(const char *target_ip_str, uint32_t count) {
+    return net_ping_custom(target_ip_str, count, NULL, NULL);
+}
+
+int net_ping_custom(const char *target_ip_str, uint32_t count,
+                    net_ping_output_fn output_cb, void *user_data) {
     if (!net_initialized) {
         serial_printf("ping: rede nao inicializada\n");
         vga_puts("ping: rede nao inicializada\n");
+        if (output_cb) output_cb("ping: rede nao inicializada", user_data);
         return -1;
     }
 
@@ -260,6 +272,12 @@ int net_ping(const char *target_ip_str, uint32_t count) {
         vga_puts("ping: IP invalido: ");
         vga_puts(target_ip_str);
         vga_puts("\n");
+        if (output_cb) {
+            char err[64];
+            strcpy(err, "ping: IP invalido: ");
+            strcat(err, target_ip_str);
+            output_cb(err, user_data);
+        }
         return -2;
     }
 
@@ -267,6 +285,7 @@ int net_ping(const char *target_ip_str, uint32_t count) {
     if (!ping_pcb) {
         serial_printf("ping: erro ao alocar socket ICMP\n");
         vga_puts("ping: erro ao alocar socket ICMP\n");
+        if (output_cb) output_cb("ping: erro ao alocar socket ICMP", user_data);
         return -3;
     }
 
@@ -277,6 +296,13 @@ int net_ping(const char *target_ip_str, uint32_t count) {
     vga_puts("PING ");
     vga_puts(target_ip_str);
     vga_puts(" (ICMP Echo Request):\n");
+    if (output_cb) {
+        char hdr[64];
+        strcpy(hdr, "PING ");
+        strcat(hdr, target_ip_str);
+        strcat(hdr, " (ICMP Echo Request):");
+        output_cb(hdr, user_data);
+    }
 
     for (uint32_t i = 0; i < count; i++) {
         ping_seq++;
@@ -329,11 +355,31 @@ int net_ping(const char *target_ip_str, uint32_t count) {
             int_to_str(elapsed_ms, num_buf);
             vga_puts(num_buf);
             vga_puts(" ms\n");
+
+            if (output_cb) {
+                char msg[96];
+                strcpy(msg, "64 bytes de ");
+                strcat(msg, target_ip_str);
+                strcat(msg, ": icmp_seq=");
+                strcat(msg, num_buf);
+                strcat(msg, " tempo=");
+                int_to_str(elapsed_ms, num_buf);
+                strcat(msg, num_buf);
+                strcat(msg, " ms");
+                output_cb(msg, user_data);
+            }
         } else {
             serial_printf("Requisicao para %s expirou (Timeout).\n", target_ip_str);
             vga_puts("Requisicao para ");
             vga_puts(target_ip_str);
             vga_puts(" expirou (Timeout).\n");
+            if (output_cb) {
+                char msg[96];
+                strcpy(msg, "Requisicao para ");
+                strcat(msg, target_ip_str);
+                strcat(msg, " expirou (Timeout).");
+                output_cb(msg, user_data);
+            }
         }
 
         /* Pequena pausa entre pings */

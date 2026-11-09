@@ -192,7 +192,7 @@ int main(int argc, char **argv, char **envp) {
             continue;
         }
         if (same(args[0], "help")) {
-            write_text("Built-ins: help, version, pwd, cd, ifconfig, ping, exit (power off)\n");
+            write_text("Built-ins: help, version, pwd, cd, ifconfig, ping, date, ntp, exit (power off)\n");
             write_text("Run an application as: program [arguments]\n");
             write_text("Exact paths are tried first; .lxe is the default suffix.\n");
             write_text("Bare names are also searched under /bin.\n");
@@ -234,6 +234,29 @@ int main(int argc, char **argv, char **envp) {
                 if (c > 0) ping_count = c;
             }
             liw_net_ping(args[1], (uint32_t)ping_count);
+        } else if (same(args[0], "date")) {
+            char time_buf[64];
+            time_buf[0] = '\0';
+            long res = liw_net_ntp(NULL, time_buf, sizeof(time_buf));
+            if (res < 0 && time_buf[0] == '\0') {
+                write_text("date: relogio nao disponivel\n");
+            } else {
+                write_text(time_buf);
+                write_text("\n");
+            }
+        } else if (same(args[0], "ntp")) {
+            const char *server = (count >= 2) ? args[1] : "";
+            write_text("Sincronizando relogio com a Internet (NTP UDP 123)...\n");
+            char time_buf[64];
+            time_buf[0] = '\0';
+            long res = liw_net_ntp(server, time_buf, sizeof(time_buf));
+            if (res < 0) {
+                write_text("ntp: falha na sincronizacao\n");
+            } else {
+                write_text("Hora sincronizada: ");
+                write_text(time_buf);
+                write_text("\n");
+            }
         } else if (same(args[0], "pwd")) {
             if (count != 1) {
                 write_text("usage: pwd\n");
