@@ -1,0 +1,4 @@
+neofetch|1.2.0|Sistema|Logotipo ASCII e resumo de hardware, memoria e rede
+snake|1.0.0|Jogo|Jogo Snake grafico em tela cheia (320x200 Breeze Dark)
+matrix|1.1.0|Grafico|Protetor de tela Matrix Digital Rain (320x200)
+sysbench|1.0.0|Benchmark|Benchmark de CPU (primos/hash) e largura de banda RAM
