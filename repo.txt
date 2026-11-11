@@ -1,4 +1,6 @@
-neofetch|1.2.0|Sistema|Logotipo ASCII e resumo de hardware, memoria e rede
-snake|1.0.0|Jogo|Jogo Snake grafico em tela cheia (320x200 Breeze Dark)
+neofetch|1.3.0|Sistema|Logotipo ASCII, versao OTA do OS e resumo de hardware/rede
+snake|1.1.0|Jogo|Jogo Snake grafico em tela cheia (320x200 Breeze Dark)
 matrix|1.1.0|Grafico|Protetor de tela Matrix Digital Rain (320x200)
-sysbench|1.0.0|Benchmark|Benchmark de CPU (primos/hash) e largura de banda RAM
+sysbench|1.1.0|Benchmark|Benchmark de CPU (primos/hash) e largura de banda RAM
+kilo|0.2.0|Editor|Editor de texto de terminal com realce de sintaxe C
+c_demo|2.1.0|Sistema|Suite de demonstracao e verificacao da LibC em Ring 3

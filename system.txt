@@ -1,0 +1,7 @@
+VERSION=2.1.0
+DATE=2026-11-11
+PACKAGES=kilo,c_demo,neofetch,sysbench
+NOTES=- Sincronizacao automatica de pacotes e versoes via GitHub HTTPS
+NOTES=- Aba de Atualizacao de Sistema OTA (atualiza /bin e /etc/os-release)
+NOTES=- Pacotes atualizados: kilo v0.2.0, c_demo v2.1.0, neofetch v1.3.0, sysbench v1.1.0
+NOTES=- Subsistema SDFS preparado para instalacao definitiva em HD
