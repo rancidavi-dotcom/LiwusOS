@@ -1,10 +1,10 @@
-VERSION=2.2.11
+VERSION=2.2.12
 DATE=2026-11-13
 PACKAGES=kilo,c_demo,neofetch,sysbench
-NOTES=- Adiciona comando screenshot para enviar a tela do LIWUS ao PC pela rede local
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.11
+NOTES=- Corrige a ativacao dos amplificadores na rota analogica HDA para codecs como o Realtek ALC887
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.12
 BOOT_IMAGE_SIZE=5187584
-BOOT_IMAGE_CRC32=e0c200a3
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.11
+BOOT_IMAGE_CRC32=531a1122
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.12
 SYSTEM_ARCHIVE_SIZE=13854720
 SYSTEM_ARCHIVE_CRC32=0111036c
