@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>LIWUS JavaScript test: waiting</title>
+</head>
+<body>
+  <h1 id="result">FAIL: inline JavaScript did not run</h1>
+  <p id="details">If this text remains unchanged, the browser showed the source HTML.</p>
+  <script type="text/javascript">
+    document.getElementById('result').textContent = 'PASS: JavaScript executed';
+    document.getElementById('details').textContent = 'QuickJS changed this page before LiwusWeb rendered it.';
+    document.title = 'LIWUS JavaScript test: PASS';
+  </script>
+</body>
+</html>
