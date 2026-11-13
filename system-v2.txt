@@ -1,10 +1,10 @@
-VERSION=2.2.12
+VERSION=2.2.13
 DATE=2026-11-13
 PACKAGES=kilo,c_demo,neofetch,sysbench
-NOTES=- Corrige a ativacao dos amplificadores na rota analogica HDA para codecs como o Realtek ALC887
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.12
-BOOT_IMAGE_SIZE=5187584
-BOOT_IMAGE_CRC32=531a1122
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.12
-SYSTEM_ARCHIVE_SIZE=13854720
-SYSTEM_ARCHIVE_CRC32=0111036c
+NOTES=LiwusWeb: APIs basicas, modulos inline e CSS nth-child
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.13
+BOOT_IMAGE_SIZE=5201920
+BOOT_IMAGE_CRC32=4518d5e1
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.13
+SYSTEM_ARCHIVE_SIZE=14008320
+SYSTEM_ARCHIVE_CRC32=d23c3571
