@@ -1,10 +1,10 @@
-VERSION=2.2.4
+VERSION=2.2.5
 DATE=2026-11-13
 PACKAGES=kilo,c_demo,neofetch,sysbench
 NOTES=- Atualizacao completa: sistema de arquivos, aplicativos, GRUB e kernel
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.5
 BOOT_IMAGE_SIZE=5173248
-BOOT_IMAGE_CRC32=b6778337
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar
+BOOT_IMAGE_CRC32=466c7339
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.5
 SYSTEM_ARCHIVE_SIZE=13854720
 SYSTEM_ARCHIVE_CRC32=0111036c
