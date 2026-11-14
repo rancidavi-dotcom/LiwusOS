@@ -145,3 +145,13 @@ modo anunciado pelo monitor, sem limitar a seleção a uma lista fixa de quatro
 resoluções. O `hd_boot.img` tem 5.263.360 bytes (CRC32 `bf3ee3a3`) e o
 `system-update.tar` tem 14.376.960 bytes (CRC32 `6dcf7865`). Para instalar via
 OTA, execute `lpkg sysupdate` e reinicie.
+
+## Publicação 2.2.20 — 2026-11-14
+
+Remove a resolução fixa do cabeçalho Multiboot e a lista presumida do GRUB. O
+bootloader escolhe um modo disponível sem preferência de largura/altura. Se
+GRUB entregar 24 bpp e o adaptador oferecer EDID/VBE, o kernel muda para 32 bpp
+e o maior modo anunciado antes de iniciar o desktop. O `hd_boot.img` tem
+5.263.360 bytes (CRC32 `bbcda097`) e o
+`system-update.tar` tem 14.376.960 bytes (CRC32 `6dcf7865`). Para instalar via
+OTA, execute `lpkg sysupdate` e reinicie.

@@ -25,13 +25,13 @@ mb2_tags_start:
   .long 15     /* ACPI new RSDP */
   .long 8      /* framebuffer information */
 
-  /* Framebuffer tag (Type 5): solicita ao bootloader modo grafico linear */
+  /* Framebuffer tag (Type 5): solicita framebuffer sem fixar dimensoes */
   .align 8
   .word 5      /* type = 5 */
-  .word 1      /* flags = 1 (optional fallback) */
+  .word 1      /* framebuffer opcional para preservar fallback de texto */
   .long 20     /* size = 20 */
-  .long 1920   /* width: prefer desktop-class viewport where supported */
-  .long 1080   /* height; optional tag allows bootloader fallback */
+  .long 0      /* width: sem preferencia; GRUB escolhe um modo disponivel */
+  .long 0      /* height: sem preferencia */
   .long 32     /* depth (32-bit ARGB) */
 
   .align 8

@@ -21,7 +21,7 @@
 
 LiwusOS is an experimental, self-contained operating system for x86_64. It boots
 from Multiboot2/GRUB, runs its own kernel in long mode, and executes native
-ring-3 programs from SDFS. The current release line is 2.2.19. The tree includes
+ring-3 programs from SDFS. The current release line is 2.2.20. The tree includes
 an LVGL desktop, a native browser, networking, audio support, a native SDK and
 the `lpkg` system updater; this is an active experimental system, not a finished
 desktop distribution.
@@ -38,7 +38,7 @@ desktop distribution.
 | Web | LiwusWeb HTML/CSS renderer with JavaScript through QuickJS; support is bounded and documented in [docs/BROWSER_COMPATIBILITY.md](docs/BROWSER_COMPATIBILITY.md) |
 | Network | lwIP, e1000 and RTL8168 drivers, DHCP/DNS, HTTP(S), NTP, telnet and OTA updates |
 | Audio and input | HDA audio driver; USB xHCI/EHCI keyboard and mouse paths, with physical H61 USB keyboard evidence |
-| Display | GRUB RGB framebuffer and LVGL rendering. EDID/VBE live mode switching currently supports QEMU Standard VGA; physical GPU modesetting is not implemented yet |
+| Display | GRUB chooses a supported framebuffer mode without a fixed resolution request. The kernel reads EDID and selects the largest advertised mode on QEMU Standard VGA; physical GPU modesetting is not implemented yet |
 | System update | `lpkg sysupdate` downloads and validates the system archive and boot image from the `pkg-repo` feed |
 | Verification inventory | 51 named kernel/integration cases, 23 ring-3 markers and host VMA/parser/USB checks; see [docs/TEST_COVERAGE.md](docs/TEST_COVERAGE.md) |
 

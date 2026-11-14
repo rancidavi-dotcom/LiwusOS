@@ -732,6 +732,16 @@ void kernel_main_continue(void) {
   init_apic();
   pci_init();
   vga_display_init();
+  if (!vga_is_framebuffer() && vga_display_backend_ready()) {
+    vga_display_mode_t modes[VGA_DISPLAY_MAX_MODES];
+    int mode_count = vga_display_modes(modes, VGA_DISPLAY_MAX_MODES);
+    if (mode_count > 0 &&
+        vga_display_set_mode(modes[mode_count - 1].width,
+                             modes[mode_count - 1].height) == 0) {
+      vga_init();
+      serial_print("[display] initialized RGB framebuffer from EDID mode\n");
+    }
+  }
   pci_print_usb_inventory();
   pci_probe_ehci_readonly();
   boot_stage("pci ok");

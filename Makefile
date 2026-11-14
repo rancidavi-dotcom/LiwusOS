@@ -45,10 +45,10 @@ TEST_ISO_IMAGE = liwusos-test.iso
 # files. User-editable examples opt into UID/GID 1000 on their tar entries.
 export TAR_OPTIONS := --owner=0 --group=0 --numeric-owner
 UPDATE_FEED_DIR ?= build/update-feed
-UPDATE_VERSION ?= 2.2.19
+UPDATE_VERSION ?= 2.2.20
 UPDATE_DATE ?= 2026-11-14
 UPDATE_BASE_URL ?= https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo
-UPDATE_NOTES ?= LiwusOS 2.2.19: seleciona o maior modo anunciado via EDID; inclui correcao do Settings, OTA e shell da versao 2.2.18
+UPDATE_NOTES ?= LiwusOS 2.2.20: GRUB escolhe modo suportado sem resolucao fixa; kernel seleciona maior modo EDID; inclui correcao do Settings, OTA e shell
 LINUX_STATIC_TEST_DEP =
 LINUX_STATIC_EXPECT ?= Hello from an unmodified static GNU/Linux ELF
 ifneq ($(strip $(LINUX_STATIC_ELF)),)
@@ -586,7 +586,7 @@ $(USER_EDITOR_ELF): $(OBJ_DIR)/programs/user_editor/main.o $(OBJ_DIR)/programs/u
 $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) $(NATIVE_UTIL_LXES) $(PKG_REPO_LXES) $(KILO_LXE) $(DOOM_LXE) $(SNES_LXE) $(TCC_LXE) $(C_DEMO_LXE) assets/readme.txt assets/doom1.wad
 	@mkdir -p repo build/hd_isodir/boot/grub
 	cp $(KERNEL_BIN) build/hd_isodir/boot/kernel.bin
-	printf 'set timeout=1\nset default=0\ninsmod all_video\ninsmod gfxterm\ninsmod vbe\ninsmod vga\nmenuentry "LiwusOS x86_64 (Instalado no HD)" {\n\tset gfxpayload=1920x1080x32,1600x900x32,1366x768x32,1280x720x32,1024x768x32,auto\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\n' > build/hd_isodir/boot/grub/grub.cfg
+	printf 'set timeout=1\nset default=0\ninsmod all_video\ninsmod gfxterm\ninsmod vbe\ninsmod vga\nset gfxmode=auto\nset gfxpayload=keep\nterminal_output gfxterm\nmenuentry "LiwusOS x86_64 (Instalado no HD)" {\n\tset gfxpayload=keep\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\n' > build/hd_isodir/boot/grub/grub.cfg
 	$(GRUB) -d /usr/lib/grub/i386-pc --fonts="" --locales="" --themes="" -o build/hd_boot.img build/hd_isodir
 	tar -cf initrd.tar -C repo . --format=ustar
 	tar -rf initrd.tar --format=ustar --transform='s|hd_boot.img|boot/hd_boot.img|' -C build hd_boot.img

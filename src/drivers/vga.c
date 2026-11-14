@@ -657,13 +657,17 @@ void vga_clear_to_eol(void) {
 }
 
 void vga_init(void) {
+    if (vga_backbuffer) {
+        kfree(vga_backbuffer);
+        vga_backbuffer = NULL;
+    }
     text_buffer = (uint16_t *)phys_to_virt(0xB8000);
     is_framebuffer = false;
     max_cols = 80;
     max_rows = 25;
 
-    /* UEFI machines commonly have no usable VGA text memory. Keep the UI
-     * text-only, but render those characters into GRUB's RGB framebuffer. */
+    /* UEFI machines commonly have no usable VGA text memory. Render the
+     * console into GRUB's RGB framebuffer when its layout is supported. */
     if (vga_fb_addr && vga_fb_type == 1 && vga_fb_bpp == 32 &&
         vga_fb_red_size == 8 && vga_fb_green_size == 8 &&
         vga_fb_blue_size == 8 && vga_fb_red_pos <= 24 &&
