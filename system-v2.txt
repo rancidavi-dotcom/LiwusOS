@@ -1,10 +1,10 @@
-VERSION=2.2.13
-DATE=2026-11-13
+VERSION=2.2.14
+DATE=2026-11-14
 PACKAGES=kilo,c_demo,neofetch,sysbench
-NOTES=LiwusWeb: APIs basicas, modulos inline e CSS nth-child
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.13
-BOOT_IMAGE_SIZE=5201920
-BOOT_IMAGE_CRC32=4518d5e1
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.13
-SYSTEM_ARCHIVE_SIZE=14008320
-SYSTEM_ARCHIVE_CRC32=d23c3571
+NOTES=LiwusWeb: Flexbox width:auto/flex-grow, tabela desktop 3 colunas, precisao .0625rem (bordas 1px), cache 8 MiB sem eviccao por JS e fim do stall de layout
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.14
+BOOT_IMAGE_SIZE=5236736
+BOOT_IMAGE_CRC32=8087f423
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.14
+SYSTEM_ARCHIVE_SIZE=14059520
+SYSTEM_ARCHIVE_CRC32=3e36a4b0
