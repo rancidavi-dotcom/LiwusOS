@@ -45,10 +45,10 @@ TEST_ISO_IMAGE = liwusos-test.iso
 # files. User-editable examples opt into UID/GID 1000 on their tar entries.
 export TAR_OPTIONS := --owner=0 --group=0 --numeric-owner
 UPDATE_FEED_DIR ?= build/update-feed
-UPDATE_VERSION ?= 2.2.13
-UPDATE_DATE ?= 2026-11-13
+UPDATE_VERSION ?= 2.2.16
+UPDATE_DATE ?= 2026-11-14
 UPDATE_BASE_URL ?= https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo
-UPDATE_NOTES ?= LiwusWeb: APIs basicas, modulos inline e CSS nth-child
+UPDATE_NOTES ?= Settings: deteccao e diagnostico de adaptador de video; emulador SNES
 LINUX_STATIC_TEST_DEP =
 LINUX_STATIC_EXPECT ?= Hello from an unmodified static GNU/Linux ELF
 ifneq ($(strip $(LINUX_STATIC_ELF)),)

@@ -108,3 +108,13 @@ inline sem imports e seletores CSS `:nth-child()` com fórmulas `an+b`. Imports
 de módulos e APIs completas de navegador continuam fora deste incremento. O
 `hd_boot.img` tem 5.201.920 bytes (CRC32 `4518d5e1`) e o
 `system-update.tar` tem 14.008.320 bytes (CRC32 `d23c3571`).
+
+## Publicação 2.2.16 — 2026-11-14
+
+Publica o emulador SNES e a identificação PCI da GPU no Settings/log de boot,
+além do backend de modos EDID/VBE para QEMU Standard VGA. A troca de resolução
+em GPU física ainda depende de um driver próprio; esta atualização permite
+identificar o adaptador do PC H61 pelo Settings antes de implementar esse
+driver. O `hd_boot.img` tem 5.259.264 bytes (CRC32 `0aa1728e`) e o
+`system-update.tar` tem 14.376.960 bytes (CRC32 `e18adee4`). Em instalações
+com suporte OTA, instale pelo comando `lpkg sysupdate` e reinicie.
