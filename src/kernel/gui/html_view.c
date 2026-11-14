@@ -127,6 +127,14 @@ static const cp_fallback_t g_cp_fallbacks[] = {
     {0x2032, "'"}, {0x2033, "\""}, {0x2039, "<"}, {0x203A, ">"}, {0x2044, "/"},
     {0x2190, "<-"}, {0x2192, "->"}, {0x2215, "/"}, {0x2248, "~"}, {0x2260, "!="},
     {0x2264, "<="}, {0x2265, ">="}, {0x22C5, "*"},
+    /* Common UI / GitHub web symbols & icons */
+    {0x2605, "* "}, {0x2606, "* "},
+    {0x25BC, "v "}, {0x25BE, "v "}, {0x25BD, "v "}, {0x25B6, "> "}, {0x25B8, "> "},
+    {0x25C0, "< "}, {0x25C4, "< "}, {0x25BA, "> "}, {0x25B2, "^ "}, {0x25B4, "^ "},
+    {0x2191, "^ "}, {0x2193, "v "}, {0x2194, "<-> "}, {0x2195, "| "},
+    {0x2713, "v "}, {0x2714, "v "}, {0x2715, "x "}, {0x2716, "x "}, {0x2717, "x "}, {0x2718, "x "},
+    {0x2022, "* "}, {0x25E6, "- "}, {0x25AA, "- "}, {0x25AB, "- "}, {0x25CF, "* "}, {0x25CB, "o "},
+    {0x2699, "@ "}, {0x26A0, "! "}, {0x26A1, "! "}, {0x23F1, "o "}, {0x2325, "~ "},
     /* Stress marks and common IPA transcriptions (e.g. encyclopedias) */
     {0x02C8, "'"}, {0x02CC, ","}, {0x02D0, ":"}, {0x027E, "r"}, {0x0281, "r"},
     {0x0250, "a"}, {0x0251, "a"}, {0x0252, "a"},
@@ -179,8 +187,9 @@ static size_t encode_utf8_cp(uint32_t cp, char *out, size_t cap) {
             return take;
         }
     }
-    out[0] = '?';
-    return 1;
+    /* Unknown or decorative codepoints gracefully drop rather than displaying '?' */
+    out[0] = '\0';
+    return 0;
 }
 
 typedef struct {
@@ -2098,7 +2107,11 @@ static void handle_input_tag(html_parser_t *p, const char *attrs, size_t alen) {
         lv_obj_t *btn = lv_btn_create(parent);
         if (!btn) return;
         p->widget_count++;
-        lv_obj_set_size(btn, LV_SIZE_CONTENT, 30);
+        lv_obj_set_size(btn, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        lv_obj_set_style_min_height(btn, 28, 0);
+        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         if (input_style) {
             if (input_style->width_px >= 0 && input_style->width_px != HTML_CSS_UNSET)
                 lv_obj_set_width(btn, input_style->width_px);
@@ -2115,7 +2128,6 @@ static void handle_input_tag(html_parser_t *p, const char *attrs, size_t alen) {
         lv_obj_set_style_text_font(lbl, html_font_for_px(14), 0);
         lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
         lv_label_set_text(lbl, dec_val[0] ? dec_val : "Enviar");
-        lv_obj_center(lbl);
         add_dom_event_callback(p->pm, btn, element_id, "click", LV_EVENT_CLICKED);
 
         if (frm) {
@@ -3009,12 +3021,26 @@ static void handle_close_tag(html_parser_t *p, const char *tag) {
                 p->in_button = false;
                 box_frame_t *owner = NULL;
                 lv_obj_t *parent = current_flow_parent(p, &owner);
-                if (parent && owner && p->widget_count < HTML_MAX_WIDGETS && p->btn_text[0]) {
+                char clean_btn_text[128];
+                const char *b_src = p->btn_text;
+                while (*b_src == ' ' || *b_src == '\t' || *b_src == '\r' || *b_src == '\n') b_src++;
+                size_t b_len = strlen(b_src);
+                while (b_len > 0 && (b_src[b_len - 1] == ' ' || b_src[b_len - 1] == '\t' ||
+                                     b_src[b_len - 1] == '\r' || b_src[b_len - 1] == '\n')) b_len--;
+                if (b_len >= sizeof(clean_btn_text)) b_len = sizeof(clean_btn_text) - 1;
+                memcpy(clean_btn_text, b_src, b_len);
+                clean_btn_text[b_len] = '\0';
+
+                if (parent && owner && p->widget_count < HTML_MAX_WIDGETS && clean_btn_text[0]) {
                     close_cur_spangroup(owner);
                     lv_obj_t *btn = lv_btn_create(parent);
                     if (btn) {
                         p->widget_count++;
-                        lv_obj_set_size(btn, LV_SIZE_CONTENT, 30);
+                        lv_obj_set_size(btn, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+                        lv_obj_set_style_min_height(btn, 28, 0);
+                        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+                        lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
+                        lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
                         const css_style_t *bs = &p->style[d];
                         bool dark_canvas = p->ss && p->ss->prefer_dark_scheme;
                         lv_color_t def_bg = dark_canvas ? lv_color_hex(0x21262d) : lv_color_hex(0xe5e7eb);
@@ -3037,13 +3063,12 @@ static void handle_close_tag(html_parser_t *p, const char *tag) {
                         }
                         lv_obj_set_style_shadow_width(btn, 0, 0);
                         lv_obj_set_style_radius(btn, (bs->radius != HTML_CSS_UNSET) ? bs->radius : 6, 0);
-                        lv_obj_set_style_pad_hor(btn, 10, 0);
+                        lv_obj_set_style_pad_hor(btn, 12, 0);
                         lv_obj_set_style_pad_ver(btn, 4, 0);
                         lv_obj_t *lbl = lv_label_create(btn);
                         lv_obj_set_style_text_font(lbl, html_font_for_px(14), 0);
                         lv_obj_set_style_text_color(lbl, fg, 0);
-                        lv_label_set_text(lbl, p->btn_text);
-                        lv_obj_center(lbl);
+                        lv_label_set_text(lbl, clean_btn_text);
 
                         add_dom_event_callback(p->pm, btn, p->dom[d].id,
                                                "click", LV_EVENT_CLICKED);
@@ -3703,24 +3728,68 @@ void html_view_render(lv_obj_t *container, const char *content, size_t len,
             if (strcmp(tname, "svg") == 0 && p->hidden_depth == 0) {
                 char scls[128];
                 extract_attr(attrs, alen, "class", scls, sizeof(scls));
+                char aria[128];
+                extract_attr(attrs, alen, "aria-label", aria, sizeof(aria));
+                const char *sym = NULL;
                 if (scls[0]) {
-                    if (hc_contains_ci(scls, "octicon-file-directory")) {
-                        hc_copy(LV_SYMBOL_DIRECTORY " ", p->raw_buf, sizeof(p->raw_buf));
-                        p->raw_len = strlen(p->raw_buf);
-                        flush_text_buffer(p);
+                    if (hc_contains_ci(scls, "octicon-file-directory") || hc_contains_ci(scls, "octicon-file-submodule")) {
+                        sym = LV_SYMBOL_DIRECTORY " ";
                     } else if (hc_contains_ci(scls, "octicon-file")) {
-                        hc_copy(LV_SYMBOL_FILE " ", p->raw_buf, sizeof(p->raw_buf));
-                        p->raw_len = strlen(p->raw_buf);
-                        flush_text_buffer(p);
-                    } else if (hc_contains_ci(scls, "octicon-git-branch") || hc_contains_ci(scls, "octicon-repo-forked")) {
-                        hc_copy(LV_SYMBOL_SHUFFLE " ", p->raw_buf, sizeof(p->raw_buf));
-                        p->raw_len = strlen(p->raw_buf);
-                        flush_text_buffer(p);
+                        sym = LV_SYMBOL_FILE " ";
+                    } else if (hc_contains_ci(scls, "octicon-git-branch") || hc_contains_ci(scls, "octicon-repo-forked") ||
+                               hc_contains_ci(scls, "octicon-git-pull-request") || hc_contains_ci(scls, "octicon-git-commit")) {
+                        sym = LV_SYMBOL_SHUFFLE " ";
                     } else if (hc_contains_ci(scls, "octicon-check")) {
-                        hc_copy(LV_SYMBOL_OK " ", p->raw_buf, sizeof(p->raw_buf));
-                        p->raw_len = strlen(p->raw_buf);
-                        flush_text_buffer(p);
+                        sym = LV_SYMBOL_OK " ";
+                    } else if (hc_contains_ci(scls, "octicon-star")) {
+                        sym = "* ";
+                    } else if (hc_contains_ci(scls, "octicon-eye")) {
+                        sym = LV_SYMBOL_EYE_OPEN " ";
+                    } else if (hc_contains_ci(scls, "octicon-bell")) {
+                        sym = LV_SYMBOL_BELL " ";
+                    } else if (hc_contains_ci(scls, "octicon-triangle-down") || hc_contains_ci(scls, "octicon-chevron-down")) {
+                        sym = LV_SYMBOL_DOWN " ";
+                    } else if (hc_contains_ci(scls, "octicon-triangle-up") || hc_contains_ci(scls, "octicon-chevron-up")) {
+                        sym = LV_SYMBOL_UP " ";
+                    } else if (hc_contains_ci(scls, "octicon-triangle-right") || hc_contains_ci(scls, "octicon-chevron-right")) {
+                        sym = LV_SYMBOL_RIGHT " ";
+                    } else if (hc_contains_ci(scls, "octicon-plus")) {
+                        sym = LV_SYMBOL_PLUS " ";
+                    } else if (hc_contains_ci(scls, "octicon-x")) {
+                        sym = LV_SYMBOL_CLOSE " ";
+                    } else if (hc_contains_ci(scls, "octicon-copy") || hc_contains_ci(scls, "octicon-paste")) {
+                        sym = LV_SYMBOL_COPY " ";
+                    } else if (hc_contains_ci(scls, "octicon-download")) {
+                        sym = LV_SYMBOL_DOWNLOAD " ";
+                    } else if (hc_contains_ci(scls, "octicon-search")) {
+                        sym = LV_SYMBOL_RIGHT " ";
+                    } else if (hc_contains_ci(scls, "octicon-gear")) {
+                        sym = LV_SYMBOL_SETTINGS " ";
+                    } else if (hc_contains_ci(scls, "octicon-history") || hc_contains_ci(scls, "octicon-clock")) {
+                        sym = LV_SYMBOL_REFRESH " ";
+                    } else if (hc_contains_ci(scls, "octicon-repo") || hc_contains_ci(scls, "octicon-book")) {
+                        sym = LV_SYMBOL_DIRECTORY " ";
+                    } else if (hc_contains_ci(scls, "octicon-code")) {
+                        sym = "< > ";
+                    } else if (hc_contains_ci(scls, "octicon-tag") || hc_contains_ci(scls, "octicon-milestone")) {
+                        sym = "[#] ";
+                    } else if (hc_contains_ci(scls, "octicon-link")) {
+                        sym = LV_SYMBOL_SHUFFLE " ";
+                    } else if (hc_contains_ci(scls, "octicon-play")) {
+                        sym = LV_SYMBOL_PLAY " ";
                     }
+                }
+                if (!sym && aria[0]) {
+                    if (hc_contains_ci(aria, "star")) sym = "* ";
+                    else if (hc_contains_ci(aria, "watch") || hc_contains_ci(aria, "eye")) sym = LV_SYMBOL_EYE_OPEN " ";
+                    else if (hc_contains_ci(aria, "fork") || hc_contains_ci(aria, "branch")) sym = LV_SYMBOL_SHUFFLE " ";
+                    else if (hc_contains_ci(aria, "folder") || hc_contains_ci(aria, "directory")) sym = LV_SYMBOL_DIRECTORY " ";
+                    else if (hc_contains_ci(aria, "file")) sym = LV_SYMBOL_FILE " ";
+                }
+                if (sym) {
+                    hc_copy(sym, p->raw_buf, sizeof(p->raw_buf));
+                    p->raw_len = strlen(p->raw_buf);
+                    flush_text_buffer(p);
                 }
             }
             i = find_close_tag_pos(content, len, gt + 1, tname);

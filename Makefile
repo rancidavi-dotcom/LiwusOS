@@ -586,7 +586,7 @@ $(USER_EDITOR_ELF): $(OBJ_DIR)/programs/user_editor/main.o $(OBJ_DIR)/programs/u
 $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) $(NATIVE_UTIL_LXES) $(PKG_REPO_LXES) $(KILO_LXE) $(DOOM_LXE) $(SNES_LXE) $(TCC_LXE) $(C_DEMO_LXE) assets/readme.txt assets/doom1.wad
 	@mkdir -p repo build/hd_isodir/boot/grub
 	cp $(KERNEL_BIN) build/hd_isodir/boot/kernel.bin
-	printf 'set timeout=1\nset default=0\ninsmod all_video\ninsmod gfxterm\ninsmod vbe\ninsmod vga\nmenuentry "LiwusOS x86_64 (Instalado no HD)" {\n\tset gfxpayload=1920x1080x32,1600x900x32,1366x768x32,1024x768x32,800x600x32,auto\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\n' > build/hd_isodir/boot/grub/grub.cfg
+	printf 'set timeout=1\nset default=0\ninsmod all_video\ninsmod gfxterm\ninsmod vbe\ninsmod vga\nmenuentry "LiwusOS x86_64 (Instalado no HD)" {\n\tset gfxpayload=1920x1080x32,1600x900x32,1366x768x32,1280x720x32,1024x768x32,auto\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\n' > build/hd_isodir/boot/grub/grub.cfg
 	$(GRUB) -d /usr/lib/grub/i386-pc --fonts="" --locales="" --themes="" -o build/hd_boot.img build/hd_isodir
 	tar -cf initrd.tar -C repo . --format=ustar
 	tar -rf initrd.tar --format=ustar --transform='s|hd_boot.img|boot/hd_boot.img|' -C build hd_boot.img
@@ -884,6 +884,7 @@ test: test-unit $(TEST_ISO_IMAGE)
 # ------------------------------------------------------------
 
 QEMU_COMMON = -m 2048 -no-reboot \
+              -vga std -global VGA.vgamem_mb=64 \
               -drive file=$(DISK_IMAGE),format=raw,if=none,id=disk \
               -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 \
               -netdev user,id=net0 -device e1000,netdev=net0

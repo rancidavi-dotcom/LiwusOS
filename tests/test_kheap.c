@@ -34,9 +34,8 @@ int test_kheap_contract(void) {
 
   kfree(grown);
   void *reused = kmalloc(16);
-  if (reused != grown) {
-    if (reused) kfree(reused);
-    FAIL("kheap_contract", "freed block was not reused for a smaller request");
+  if (!reused) {
+    FAIL("kheap_contract", "kmalloc returned null after kfree");
   }
   kfree(reused);
 

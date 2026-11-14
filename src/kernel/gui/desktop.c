@@ -4284,6 +4284,31 @@ void desktop_init(void) {
     lvgl_port_init();
     html_fonts_init();
 
+    /* Auto-promocao para a melhor resolucao de tela suportada pelo hardware / monitor */
+    if (vga_display_backend_ready()) {
+        vga_display_mode_t modes[VGA_DISPLAY_MAX_MODES];
+        int nmodes = vga_display_modes(modes, VGA_DISPLAY_MAX_MODES);
+        uint16_t cur_w = (uint16_t)desktop_screen_w();
+        uint16_t cur_h = (uint16_t)desktop_screen_h();
+        uint16_t best_w = cur_w;
+        uint16_t best_h = cur_h;
+        for (int i = 0; i < nmodes; i++) {
+            if (modes[i].width == 1920 && modes[i].height == 1080) {
+                best_w = 1920; best_h = 1080;
+                break;
+            } else if (modes[i].width == 1600 && modes[i].height == 900 && best_w < 1600) {
+                best_w = 1600; best_h = 900;
+            } else if (modes[i].width == 1366 && modes[i].height == 768 && best_w < 1366) {
+                best_w = 1366; best_h = 768;
+            } else if (modes[i].width == 1280 && modes[i].height == 720 && best_w < 1280) {
+                best_w = 1280; best_h = 720;
+            }
+        }
+        if (best_w > cur_w || best_h > cur_h) {
+            lvgl_port_set_resolution(best_w, best_h);
+        }
+    }
+
     lv_obj_t *scr = lv_scr_act();
     /* Papel de parede: gradiente vertical escuro azul-acinzentado */
     lv_obj_set_style_bg_color(scr, lv_color_hex(BZ_WALL_TOP), 0);
