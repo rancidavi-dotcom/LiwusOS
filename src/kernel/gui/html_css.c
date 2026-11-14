@@ -4,13 +4,14 @@
 #include "kheap.h"
 #include "string.h"
 #include <limits.h>
-#ifndef HTML_CSS_HOST_TEST
+#if !defined(HTML_CSS_HOST_TEST) && !defined(HTML_VIEW_HOST_TEST) && !defined(__linux__)
 #include "serial.h"
+#define CSS_HAS_SERIAL_LOG 1
 #endif
 
 /* Bounded and deduplicated: large stylesheets are applied to many nodes. */
 static void css_log_drop(const char *reason, const char *prop, const char *val) {
-#ifndef HTML_CSS_HOST_TEST
+#ifdef CSS_HAS_SERIAL_LOG
     static uint64_t seen[96];
     static unsigned count;
     uint64_t h = 1469598103934665603ULL;
@@ -30,7 +31,7 @@ static void css_log_drop(const char *reason, const char *prop, const char *val) 
 }
 
 static void css_trace_grid(const char *reason, const char *prop, const char *val) {
-#ifndef HTML_CSS_HOST_TEST
+#ifdef CSS_HAS_SERIAL_LOG
     static uint64_t seen[48];
     static unsigned count;
     uint64_t h = 1469598103934665603ULL;
@@ -313,13 +314,24 @@ static const char *lookup_var(const html_stylesheet_t *ss, const char *name) {
     return NULL;
 }
 
-static void set_scoped_var(css_style_t *st, const char *name, const char *value) {
+static void set_scoped_var(const html_stylesheet_t *ss, css_style_t *st,
+                           const char *name, const char *value) {
     if (!st || !name || !name[0] || !value || !value[0]) return;
     for (uint16_t i = 0; i < st->scoped_var_count; ++i) {
         if (strcmp(st->scoped_vars[i].name, name) == 0) {
             copy_slice(value, strlen(value), st->scoped_vars[i].value,
                        sizeof(st->scoped_vars[i].value));
             return;
+        }
+    }
+    /* Avoid duplicating root/body variables already present with the exact
+     * same value in the stylesheet-level token table. */
+    if (ss) {
+        for (int i = ss->var_count - 1; i >= 0; --i) {
+            if (strcmp(ss->vars[i].name, name) == 0) {
+                if (strcmp(ss->vars[i].value, value) == 0) return;
+                break;
+            }
         }
     }
     if (st->scoped_var_count >= HTML_CSS_MAX_SCOPED_VARS) return;
@@ -491,13 +503,18 @@ static const css_named_color_t g_named_colors[] = {
     {NULL, 0}
 };
 
-static lv_color_t blend_on_white(uint8_t r, uint8_t g, uint8_t b, int alpha_255) {
+static lv_color_t blend_on_canvas(const html_stylesheet_t *ss,
+                                  uint8_t r, uint8_t g, uint8_t b, int alpha_255) {
     if (alpha_255 >= 255) return lv_color_make(r, g, b);
-    if (alpha_255 <= 0) return lv_color_make(255, 255, 255);
+    bool dark = ss && ss->prefer_dark_scheme;
+    int base_r = dark ? 13 : 255;
+    int base_g = dark ? 17 : 255;
+    int base_b = dark ? 23 : 255;
+    if (alpha_255 <= 0) return lv_color_make((uint8_t)base_r, (uint8_t)base_g, (uint8_t)base_b);
     int inv = 255 - alpha_255;
-    uint8_t br = (uint8_t)((r * alpha_255 + 255 * inv) / 255);
-    uint8_t bg = (uint8_t)((g * alpha_255 + 255 * inv) / 255);
-    uint8_t bb = (uint8_t)((b * alpha_255 + 255 * inv) / 255);
+    uint8_t br = (uint8_t)((r * alpha_255 + base_r * inv) / 255);
+    uint8_t bg = (uint8_t)((g * alpha_255 + base_g * inv) / 255);
+    uint8_t bb = (uint8_t)((b * alpha_255 + base_b * inv) / 255);
     return lv_color_make(br, bg, bb);
 }
 
@@ -579,7 +596,7 @@ bool html_css_parse_color(const html_stylesheet_t *ss, const char *expr,
                 return true;
             }
             if (is_transparent) *is_transparent = false;
-            if (out) *out = blend_on_white((uint8_t)r, (uint8_t)g, (uint8_t)b, a);
+            if (out) *out = blend_on_canvas(ss, (uint8_t)r, (uint8_t)g, (uint8_t)b, a);
             return true;
         }
         if (hlen == 6 || hlen == 8) {
@@ -592,7 +609,7 @@ bool html_css_parse_color(const html_stylesheet_t *ss, const char *expr,
                 return true;
             }
             if (is_transparent) *is_transparent = false;
-            if (out) *out = blend_on_white((uint8_t)r, (uint8_t)g, (uint8_t)b, a);
+            if (out) *out = blend_on_canvas(ss, (uint8_t)r, (uint8_t)g, (uint8_t)b, a);
             return true;
         }
         return false;
@@ -630,7 +647,7 @@ bool html_css_parse_color(const html_stylesheet_t *ss, const char *expr,
             return true;
         }
         if (is_transparent) *is_transparent = false;
-        if (out) *out = blend_on_white((uint8_t)comp[0], (uint8_t)comp[1], (uint8_t)comp[2], alpha);
+        if (out) *out = blend_on_canvas(ss, (uint8_t)comp[0], (uint8_t)comp[1], (uint8_t)comp[2], alpha);
         return true;
     }
 
@@ -754,17 +771,20 @@ static bool parse_css_length_depth(const html_stylesheet_t *ss, const char *expr
             int_part = 100000000000LL;
         p++;
     }
-    int64_t frac_tenths = 0;
+    int64_t frac_10000 = 0;
     if (*p == '.') {
         p++;
-        if (c_isdigit(*p)) {
-            frac_tenths = *p - '0';
+        int scale = 1000;
+        while (c_isdigit(*p)) {
+            if (scale > 0) {
+                frac_10000 += (*p - '0') * scale;
+                scale /= 10;
+            }
             p++;
         }
-        while (c_isdigit(*p)) p++;
     }
 
-    int64_t tenths = sign * (int_part * 10 + frac_tenths);
+    int64_t scaled = sign * (int_part * 10000 + frac_10000);
     while (*p && c_isspace(*p)) p++;
 
     /* Saturate before storing in the renderer's bounded style values. */
@@ -776,24 +796,24 @@ static bool parse_css_length_depth(const html_stylesheet_t *ss, const char *expr
 } while (0)
 
     if (*p == '\0' || ci_prefix(p, "px")) {
-        int64_t px = tenths / 10;
-        if (px == 0 && tenths != 0) px = (tenths > 0) ? 1 : -1;
+        int64_t px = scaled / 10000;
+        if (px == 0 && scaled != 0) px = (scaled > 0) ? 1 : -1;
         CSS_LENGTH_STORE(px);
         return true;
     }
     if (ci_prefix(p, "rem") || ci_prefix(p, "em")) {
-        int64_t px = (tenths * 16 + (tenths >= 0 ? 5 : -5)) / 10;
-        if (px == 0 && tenths != 0) px = (tenths > 0) ? 1 : -1;
+        int64_t px = (scaled * 16 + (scaled >= 0 ? 5000 : -5000)) / 10000;
+        if (px == 0 && scaled != 0) px = (scaled > 0) ? 1 : -1;
         CSS_LENGTH_STORE(px);
         return true;
     }
     if (ci_prefix(p, "pt")) {
-        int64_t px = (tenths * 4) / 30;
+        int64_t px = (scaled * 4) / 30000;
         CSS_LENGTH_STORE(px);
         return true;
     }
     if (*p == '%') {
-        int pct = tenths / 10;
+        int pct = (int)(scaled / 10000);
         if (pct < 0) pct = 0;
         if (pct > 100) pct = 100;
         if (pct_out) *pct_out = (int16_t)pct;
@@ -801,14 +821,14 @@ static bool parse_css_length_depth(const html_stylesheet_t *ss, const char *expr
     }
     if (ci_prefix(p, "vw")) {
         int vw = (ss && ss->viewport_w > 0) ? ss->viewport_w : 960;
-        int64_t px = (tenths * vw) / 1000;
+        int64_t px = (scaled * vw) / 1000000;
         CSS_LENGTH_STORE(px);
         return true;
     }
     if (ci_prefix(p, "vh")) {
         int vh = (ss && ss->viewport_h > 0) ? ss->viewport_h
                : ((ss && ss->viewport_w > 0) ? ((ss->viewport_w * 56) / 100) : 520);
-        int64_t px = (tenths * vh) / 1000;
+        int64_t px = (scaled * vh) / 1000000;
         CSS_LENGTH_STORE(px);
         return true;
     }
@@ -1643,7 +1663,7 @@ static void apply_decl_block(const html_stylesheet_t *ss, const char *block, siz
         else copy_lower_slice(ps, plen, prop, sizeof(prop));
         copy_slice(vs, vlen, val, sizeof(val));
         if (is_custom) {
-            set_scoped_var(st, prop, val);
+            set_scoped_var(ss, st, prop, val);
         } else if (prop[0] && val[0]) {
             apply_single_decl(ss, prop, val, st, sr);
         }
@@ -3103,7 +3123,7 @@ void html_css_collect_matched_vars(html_stylesheet_t *ss,
 }
 
 void html_css_style_init(css_style_t *st, const css_style_t *parent) {
-    memset(st, 0, sizeof(*st));
+    memset(st, 0, offsetof(css_style_t, scoped_vars));
     st->grid_col_span = 1;
     for (int i = 0; i < 4; i++) {
         st->border_w[i] = HTML_CSS_UNSET;
@@ -3279,6 +3299,12 @@ void html_css_compute(const html_stylesheet_t *ss,
          out_style->position_mode == CSS_POS_FIXED ||
          sr.seen_zero_h)) {
         out_style->offscreen_hidden = true;
+    }
+    if (out_style->height_px == 0 && ancestors && depth > 0) {
+        const char *t = ancestors[depth - 1].tag;
+        if (strcmp(t, "thead") == 0 || strcmp(t, "tr") == 0) {
+            out_style->is_sr_only = true;
+        }
     }
     g_css_var_scope = previous_var_scope;
 }

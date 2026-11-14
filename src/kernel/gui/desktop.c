@@ -641,8 +641,8 @@ static char g_browser_hist[BROWSER_HIST_MAX][BROWSER_URL_MAX];
 static int g_browser_hist_count = 0;
 static int g_browser_hist_idx = -1;
 
-#define WEB_CACHE_SLOTS 24
-#define WEB_CACHE_MAX_TOTAL (6U * 1024U * 1024U)
+#define WEB_CACHE_SLOTS 40
+#define WEB_CACHE_MAX_TOTAL (8U * 1024U * 1024U)
 typedef struct {
     char url[BROWSER_URL_MAX];
     uint8_t *data;
@@ -972,6 +972,14 @@ static void dock_doom_cb(lv_event_t *e) {
     set_browser_url_focus(false);
     set_pkg_input_focus(false);
     run_doom_app(0, NULL);
+}
+
+static void dock_snes_cb(lv_event_t *e) {
+    (void)e;
+    extern int run_snes_app(int argc, char **argv);
+    set_browser_url_focus(false);
+    set_pkg_input_focus(false);
+    run_snes_app(0, NULL);
 }
 
 static void dock_about_cb(lv_event_t *e) {
@@ -1354,7 +1362,7 @@ static void browser_reload_cb(lv_event_t *e) {
 }
 
 static void web_cache_store(const char *url, uint8_t *data, size_t len) {
-    if (!url || !data || len == 0 || len > 512U * 1024U) return;
+    if (!url || !data || len == 0 || len > 1024U * 1024U) return;
 
     while (g_web_cache_bytes + len > WEB_CACHE_MAX_TOTAL) {
         int evict = -1;
@@ -1641,13 +1649,54 @@ static uint8_t *browser_run_scripts(const uint8_t *source, size_t length,
     return NULL;
 }
 
+static bool browser_fetch_script_resource(const char *url, uint8_t **out_data,
+                                          size_t *out_len, bool *out_caller_free,
+                                          void *user_data) {
+    (void)user_data;
+    if (!url || !out_data || !out_len || !out_caller_free) return false;
+    *out_data = NULL;
+    *out_len = 0;
+    *out_caller_free = false;
+
+    for (int i = 0; i < WEB_CACHE_SLOTS; i++) {
+        if (g_web_cache[i].used && strcmp(g_web_cache[i].url, url) == 0) {
+            g_web_cache[i].last_used = ++g_web_cache_clock;
+            *out_data = g_web_cache[i].data;
+            *out_len = g_web_cache[i].len;
+            *out_caller_free = false;
+            return true;
+        }
+    }
+
+    uint8_t *raw = NULL;
+    size_t sz = 0;
+    int status = 0;
+    int res = http_get_mem_progress(url, &raw, &sz, &status,
+                                    NULL, NULL, NULL, NULL);
+    net_poll();
+    usb_ehci_service();
+    usb_xhci_poll();
+
+    if (res <= 0 || !raw || sz == 0 || status >= 400) {
+        if (raw) kfree(raw);
+        return false;
+    }
+
+    /* Do not store external JS bundles in g_web_cache so they never evict
+     * stylesheets or images needed by the post-JS re-render pass. */
+    *out_data = raw;
+    *out_len = sz;
+    *out_caller_free = true;
+    return true;
+}
+
 static uint8_t *browser_execute_scripts(const uint8_t *source, size_t length,
                                        const char *base_url,
                                        size_t *result_length) {
     uint8_t *expanded = NULL;
     size_t expanded_length = 0;
     int expand_rc = html_view_inline_external_scripts(
-        (const char *)source, length, base_url, browser_fetch_resource, NULL,
+        (const char *)source, length, base_url, browser_fetch_script_resource, NULL,
         &expanded, &expanded_length);
     if (expand_rc > 0 && expanded) {
         uint8_t *result = browser_run_scripts(expanded, expanded_length,
@@ -1702,8 +1751,13 @@ static void browser_runtime_poll_update(void) {
         browser_runtime_send("ack\n");
         return;
     }
+    /* Free the previous widget tree's page_mem BEFORE reading the 2-3 MB
+     * runtime DOM snapshot from VFS so KHeap does not peak with two full
+     * page trees plus the serialized DOM buffer simultaneously. */
+    lv_obj_clean(obj_browser_view);
     size_t html_length = 0;
     uint8_t *html = browser_read_runtime_dom(&html_length);
+    (void)vfs_unlink(g_web_runtime_output_path);
     if (html) {
         browser_render_document(html, html_length);
         kfree(html);
@@ -1976,6 +2030,10 @@ static void browser_fetch_poll(void) {
         if (transformed) {
             browser_render_document(transformed, transformed_size);
             kfree(transformed);
+        } else {
+            browser_update_window_title(NULL);
+            lv_refr_now(NULL);
+            vga_flip();
         }
         kfree(body);
         return;
@@ -3519,6 +3577,7 @@ static task_item_t g_task_items[] = {
     { LV_SYMBOL_SETTINGS, "Monitor",  dock_sysmon_cb,    &win_sysmon,    NULL, NULL, -1, false },
     { LV_SYMBOL_PLUS,     "Calc",     dock_calc_cb,      &win_calc,      NULL, NULL, -1, false },
     { LV_SYMBOL_PLAY,     "DOOM",     dock_doom_cb,      NULL,           NULL, NULL, -1, false },
+    { LV_SYMBOL_PLAY,     "SNES",     dock_snes_cb,      NULL,           NULL, NULL, -1, false },
 };
 #define TASK_ITEM_COUNT ((int)(sizeof(g_task_items) / sizeof(g_task_items[0])))
 
@@ -3867,6 +3926,7 @@ static void create_start_menu(void) {
     menu_add_entry(list, LV_SYMBOL_SETTINGS, "Monitor do Sistema", "Memoria, tarefas e uptime", menu_item_cb, (void *)dock_sysmon_cb);
     menu_add_entry(list, LV_SYMBOL_PLUS, "Calculadora", "Operacoes basicas", menu_item_cb, (void *)dock_calc_cb);
     menu_add_entry(list, LV_SYMBOL_PLAY, "DOOM", "Shareware (id Software, 1993)", menu_item_cb, (void *)dock_doom_cb);
+    menu_add_entry(list, LV_SYMBOL_PLAY, "Emulador de SNES", "Jogar ROMs proprias de Super Nintendo", menu_item_cb, (void *)dock_snes_cb);
     menu_add_entry(list, LV_SYMBOL_FILE, "Sobre o LiwusOS", NULL, menu_item_cb, (void *)dock_about_cb);
 
     /* Rodape com energia */

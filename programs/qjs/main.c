@@ -5186,6 +5186,14 @@ static int qjs_run_inline_script_pass(JSContext *ctx, int modules,
                  * task. Run Promise reactions and queueMicrotask callbacks
                  * before moving to the next script in document order. */
                 qjs_drain_microtasks(ctx);
+                /* Once an inlined external bundle has executed in the
+                 * persistent browser runtime, drop its raw source text from
+                 * the DOM tree so serializing output.html back to the kernel
+                 * does not carry megabytes of dead JavaScript text. */
+                if (qjs_persistent_page && source.length > 4096U) {
+                    (void)liw_webdom_set_text(qjs_dom_document, id, "", 0);
+                }
+                break;
             }
             child = liw_webdom_next_sibling(qjs_dom_document, child);
         }

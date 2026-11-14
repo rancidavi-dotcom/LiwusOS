@@ -13,7 +13,7 @@
  * root custom-property set and add more variables on each nested region.
  * Keep a larger stylesheet-level token table, but a bounded per-element
  * environment so parser frames do not grow without bound. */
-#define HTML_CSS_MAX_SCOPED_VARS 512
+#define HTML_CSS_MAX_SCOPED_VARS 48
 #define HTML_CSS_MAX_SEL_CHAIN  5
 #define HTML_CSS_MAX_SEL_CLS    4
 #define HTML_CSS_MAX_SEL_ATTRS  3
@@ -252,7 +252,6 @@ typedef struct {
     /* CSS custom properties inherit through the element tree. Keep a bounded
      * per-element environment so component-scoped variables don't leak across
      * unrelated selectors or siblings. */
-    css_var_t scoped_vars[HTML_CSS_MAX_SCOPED_VARS];
     uint16_t scoped_var_count;
 
     /* Non-inherited box & layout */
@@ -302,6 +301,7 @@ typedef struct {
     bool offscreen_hidden;
     bool is_sr_only;
     bool opacity_zero;
+    css_var_t scoped_vars[HTML_CSS_MAX_SCOPED_VARS];
 } css_style_t;
 
 html_stylesheet_t *html_css_create(int viewport_w);

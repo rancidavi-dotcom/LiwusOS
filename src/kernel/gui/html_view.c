@@ -7,7 +7,7 @@
 #include "string.h"
 
 #define HTML_MAX_DEPTH         44
-#define HTML_MAX_WIDGETS       8192
+#define HTML_MAX_WIDGETS       12288
 #define HTML_MAX_SIBLING_MAP   32768U
 #define HTML_MAX_EXT_CSS       24
 #define HTML_MAX_CSS_BYTES     (1024U * 1024U)
@@ -1325,18 +1325,32 @@ static void prescan_table_cols(const char *html, size_t len, size_t start_pos,
                 cur_row_cols = 0;
                 row_first_cell = true;
             } else if (!closing && (strcmp(tn, "td") == 0 || strcmp(tn, "th") == 0)) {
-                char cs_str[12];
-                int cs = 1;
-                if (extract_attr(html + tend, gt - tend, "colspan", cs_str, sizeof(cs_str))) {
-                    int parsed = hc_parse_int(cs_str);
-                    if (parsed > 1 && parsed <= HTML_MAX_TCOLS) cs = parsed;
+                const char *cell_attrs = html + tend;
+                size_t cell_alen = gt - tend;
+                char cls_str[256], style_str[256];
+                cls_str[0] = style_str[0] = '\0';
+                (void)extract_attr(cell_attrs, cell_alen, "class", cls_str, sizeof(cls_str));
+                (void)extract_attr(cell_attrs, cell_alen, "style", style_str, sizeof(style_str));
+                bool cell_hidden = has_bool_attr(cell_attrs, cell_alen, "hidden") ||
+                                   hc_contains_ci(cls_str, "small-screen") ||
+                                   hc_contains_ci(cls_str, "d-none") ||
+                                   hc_contains_ci(cls_str, "sr-only") ||
+                                   hc_contains_ci(style_str, "display:none") ||
+                                   hc_contains_ci(style_str, "display: none");
+                if (!cell_hidden) {
+                    char cs_str[12];
+                    int cs = 1;
+                    if (extract_attr(cell_attrs, cell_alen, "colspan", cs_str, sizeof(cs_str))) {
+                        int parsed = hc_parse_int(cs_str);
+                        if (parsed > 1 && parsed <= HTML_MAX_TCOLS) cs = parsed;
+                    }
+                    if (row_first_cell && strcmp(tn, "th") == 0 && cs == 1) {
+                        has_leading_th = true;
+                    }
+                    row_first_cell = false;
+                    cur_row_cols += cs;
+                    if (cur_row_cols > max_cols) max_cols = cur_row_cols;
                 }
-                if (row_first_cell && strcmp(tn, "th") == 0 && cs == 1) {
-                    has_leading_th = true;
-                }
-                row_first_cell = false;
-                cur_row_cols += cs;
-                if (cur_row_cols > max_cols) max_cols = cur_row_cols;
             }
         }
         i = gt + 1;
@@ -1349,6 +1363,10 @@ static void prescan_table_cols(const char *html, size_t len, size_t start_pos,
     if (max_cols == 2 && has_leading_th) {
         col_pct[0] = 36;
         col_pct[1] = 64;
+    } else if (max_cols == 3) {
+        col_pct[0] = 42;
+        col_pct[1] = 42;
+        col_pct[2] = 16;
     } else {
         int base = 100 / max_cols;
         int rem = 100 - base * max_cols;
@@ -1526,10 +1544,12 @@ static void apply_lv_box_style(lv_obj_t *obj, const css_style_t *st,
     }
 
     int bw = 0;
+    bool any_explicit_border = false;
     for (int i = 0; i < 4; i++) {
+        if (st->border_w[i] != HTML_CSS_UNSET) any_explicit_border = true;
         if (st->border_w[i] > bw) bw = st->border_w[i];
     }
-    if (st->border_w[0] == HTML_CSS_UNSET && is_cell) bw = 1;
+    if (!any_explicit_border && is_cell) bw = 1;
 
     lv_obj_set_style_border_width(obj, bw, 0);
     if (bw > 0) {
@@ -1538,10 +1558,14 @@ static void apply_lv_box_style(lv_obj_t *obj, const css_style_t *st,
         lv_obj_set_style_border_opa(obj, LV_OPA_COVER, 0);
         /* Partial-border support for single bottom divider (e.g. heading/hr/row) */
         lv_border_side_t sides = LV_BORDER_SIDE_NONE;
-        if (st->border_w[0] > 0 || (st->border_w[0] == HTML_CSS_UNSET && is_cell)) sides |= LV_BORDER_SIDE_TOP;
-        if (st->border_w[1] > 0 || (st->border_w[1] == HTML_CSS_UNSET && is_cell)) sides |= LV_BORDER_SIDE_RIGHT;
-        if (st->border_w[2] > 0 || (st->border_w[2] == HTML_CSS_UNSET && is_cell)) sides |= LV_BORDER_SIDE_BOTTOM;
-        if (st->border_w[3] > 0 || (st->border_w[3] == HTML_CSS_UNSET && is_cell)) sides |= LV_BORDER_SIDE_LEFT;
+        if (!any_explicit_border && is_cell) {
+            sides = LV_BORDER_SIDE_FULL;
+        } else {
+            if (st->border_w[0] > 0) sides |= LV_BORDER_SIDE_TOP;
+            if (st->border_w[1] > 0) sides |= LV_BORDER_SIDE_RIGHT;
+            if (st->border_w[2] > 0) sides |= LV_BORDER_SIDE_BOTTOM;
+            if (st->border_w[3] > 0) sides |= LV_BORDER_SIDE_LEFT;
+        }
         if (sides != LV_BORDER_SIDE_NONE) lv_obj_set_style_border_side(obj, sides, 0);
     } else {
         lv_obj_set_style_border_opa(obj, LV_OPA_TRANSP, 0);
@@ -1592,6 +1616,10 @@ static bool is_inline_tag(const char *t) {
 }
 
 static bool style_needs_box(const css_style_t *st, const char *tag, const css_style_t *parent_st) {
+    if (strcmp(tag, "thead") == 0 || strcmp(tag, "tbody") == 0 ||
+        strcmp(tag, "tfoot") == 0) {
+        return false;
+    }
     if (strcmp(tag, "body") == 0) {
         if (st->display == CSS_DISP_FLEX || st->display == CSS_DISP_GRID) return true;
         if (st->margin[1] == HTML_CSS_LEN_AUTO && st->margin[3] == HTML_CSS_LEN_AUTO) return true;
@@ -1902,8 +1930,7 @@ static void handle_input_tag(html_parser_t *p, const char *attrs, size_t alen) {
 
     int fidx = p->active_form_idx;
     html_form_t *frm = (fidx >= 0 && fidx < p->pm->form_count) ? &p->pm->forms[fidx] : NULL;
-    css_style_t input_style;
-    bool have_input_style = false;
+    const css_style_t *input_style = NULL;
 
     if (hc_eq_ci(type, "hidden")) {
         if (frm && frm->field_count < HTML_MAX_FORM_FIELDS && name[0]) {
@@ -1933,16 +1960,15 @@ static void handle_input_tag(html_parser_t *p, const char *attrs, size_t alen) {
         capture_css_attributes(p->ss, nd, attrs, alen);
         char inline_style[512];
         extract_attr(attrs, alen, "style", inline_style, sizeof(inline_style));
-        css_style_t ics;
+        css_style_t *ics = &p->style[p->depth];
         html_css_compute(p->ss, p->dom, p->depth + 1, inline_style,
-                         (p->depth > 0) ? &p->style[p->depth - 1] : NULL, &ics);
-        if (ics.display == CSS_DISP_NONE || ics.visibility == CSS_VIS_HIDDEN ||
-            ics.offscreen_hidden || ics.is_sr_only ||
-            (ics.opacity_zero && (hc_eq_ci(type, "checkbox") || hc_eq_ci(type, "radio")))) {
+                         (p->depth > 0) ? &p->style[p->depth - 1] : NULL, ics);
+        if (ics->display == CSS_DISP_NONE || ics->visibility == CSS_VIS_HIDDEN ||
+            ics->offscreen_hidden || ics->is_sr_only ||
+            (ics->opacity_zero && (hc_eq_ci(type, "checkbox") || hc_eq_ci(type, "radio")))) {
             return;
         }
         input_style = ics;
-        have_input_style = true;
     }
 
     box_frame_t *owner = NULL;
@@ -1955,13 +1981,13 @@ static void handle_input_tag(html_parser_t *p, const char *attrs, size_t alen) {
         if (!btn) return;
         p->widget_count++;
         lv_obj_set_size(btn, LV_SIZE_CONTENT, 30);
-        if (have_input_style) {
-            if (input_style.width_px >= 0 && input_style.width_px != HTML_CSS_UNSET)
-                lv_obj_set_width(btn, input_style.width_px);
-            else if (input_style.width_pct > 0 && input_style.width_pct <= 100)
-                lv_obj_set_width(btn, (owner->avail_w * input_style.width_pct) / 100);
-            if (input_style.flex_grow)
-                lv_obj_set_flex_grow(btn, input_style.flex_grow);
+        if (input_style) {
+            if (input_style->width_px >= 0 && input_style->width_px != HTML_CSS_UNSET)
+                lv_obj_set_width(btn, input_style->width_px);
+            else if (input_style->width_pct > 0 && input_style->width_pct <= 100)
+                lv_obj_set_width(btn, (owner->avail_w * input_style->width_pct) / 100);
+            if (input_style->flex_grow)
+                lv_obj_set_flex_grow(btn, input_style->flex_grow);
         }
         lv_obj_set_style_bg_color(btn, lv_color_hex(0x0b57d0), 0);
         lv_obj_set_style_radius(btn, 6, 0);
@@ -2002,19 +2028,19 @@ static void handle_input_tag(html_parser_t *p, const char *attrs, size_t alen) {
     int iw = owner->avail_w - 24;
     if (iw > 260) iw = 260;
     if (iw < 110) iw = 110;
-    if (have_input_style) {
-        if (input_style.width_px >= 0 && input_style.width_px != HTML_CSS_UNSET)
-            iw = input_style.width_px;
-        else if (input_style.width_pct > 0 && input_style.width_pct <= 100)
-            iw = (owner->avail_w * input_style.width_pct) / 100;
-        if (input_style.max_width_px > 0 && iw > input_style.max_width_px)
-            iw = input_style.max_width_px;
+    if (input_style) {
+        if (input_style->width_px >= 0 && input_style->width_px != HTML_CSS_UNSET)
+            iw = input_style->width_px;
+        else if (input_style->width_pct > 0 && input_style->width_pct <= 100)
+            iw = (owner->avail_w * input_style->width_pct) / 100;
+        if (input_style->max_width_px > 0 && iw > input_style->max_width_px)
+            iw = input_style->max_width_px;
         if (iw < 40) iw = 40;
         if (iw > owner->avail_w) iw = owner->avail_w;
     }
     lv_obj_set_width(ta, iw);
-    if (have_input_style && input_style.flex_grow)
-        lv_obj_set_flex_grow(ta, input_style.flex_grow);
+    if (input_style && input_style->flex_grow)
+        lv_obj_set_flex_grow(ta, input_style->flex_grow);
     lv_obj_set_style_bg_color(ta, lv_color_white(), 0);
     lv_obj_set_style_text_color(ta, lv_color_hex(0x111827), 0);
     lv_obj_set_style_text_font(ta, html_font_for_px(14), 0);
@@ -2128,6 +2154,13 @@ static void html_place_ordered_flex_child(lv_obj_t *parent, lv_obj_t *child,
         }
     }
     lv_obj_move_to_index(child, insert_at);
+}
+
+static box_frame_t *find_enclosing_table(html_parser_t *p) {
+    for (int i = p->depth - 2; i >= 0; i--) {
+        if (p->box[i].is_table) return &p->box[i];
+    }
+    return NULL;
 }
 
 static lv_obj_t *create_container_box(html_parser_t *p, const char *tag,
@@ -2369,8 +2402,10 @@ static lv_obj_t *create_container_box(html_parser_t *p, const char *tag,
     }
 
     /* Handle real HTML tables & cells */
-    if (strcmp(tag, "tr") == 0 && owner->is_table) {
-        lv_obj_t *row = lv_obj_create(owner->lv_box);
+    box_frame_t *enclosing_table = find_enclosing_table(p);
+    if (strcmp(tag, "tr") == 0 && (owner->is_table || enclosing_table)) {
+        box_frame_t *tbl_owner = owner->is_table ? owner : enclosing_table;
+        lv_obj_t *row = lv_obj_create(tbl_owner->lv_box);
         if (!row) return NULL;
         p->widget_count++;
         lv_obj_add_flag(row, LV_OBJ_FLAG_USER_1);
@@ -2383,16 +2418,14 @@ static lv_obj_t *create_container_box(html_parser_t *p, const char *tag,
         lv_obj_set_style_pad_column(row, 0, 0);
         frame->is_tr = true;
         frame->row_cur_col = 0;
-        frame->avail_w = owner->avail_w;
+        frame->avail_w = tbl_owner->avail_w;
         frame->lv_box = row;
         frame->active_flow = row;
         return row;
     }
 
     if ((strcmp(tag, "td") == 0 || strcmp(tag, "th") == 0) && owner->is_tr) {
-        box_frame_t *tbl = (p->depth >= 3 && p->box[p->depth - 3].is_table) ? &p->box[p->depth - 3]
-                         : (p->depth >= 4 && p->box[p->depth - 4].is_table) ? &p->box[p->depth - 4]
-                         : NULL;
+        box_frame_t *tbl = enclosing_table;
         int pct = 100;
         if (tbl && tbl->table_cols > 0) {
             char cs_buf[12];
@@ -2436,6 +2469,10 @@ static lv_obj_t *create_container_box(html_parser_t *p, const char *tag,
     if (st->flex_grow && !full_track_flex_item)
         lv_obj_set_flex_grow(box, st->flex_grow);
 
+    /* A later desktop rule setting `width: auto` clears `st->width_pct` and
+     * sets `st->width_px = HTML_CSS_LEN_AUTO` (-32767). Never lock a flex-grow
+     * item into `width_is_content` (which would overwrite flex_grow with a
+     * fixed pixel width on close). */
     bool has_explicit_w = (st->width_px > 0 || st->width_pct > 0 ||
                            row_flex_basis ||
                            st->max_width_px > 0 || is_floating || grid_track_applied);
@@ -2443,10 +2480,13 @@ static lv_obj_t *create_container_box(html_parser_t *p, const char *tag,
         lv_obj_set_width(box, LV_PCT(100));
     } else if (has_explicit_w) {
         lv_obj_set_width(box, box_w);
-    } else if (st->display == CSS_DISP_INLINE_BLOCK || st->display == CSS_DISP_INLINE_FLEX || parent_is_flex) {
+    } else if (st->display == CSS_DISP_INLINE_BLOCK || st->display == CSS_DISP_INLINE_FLEX ||
+               (parent_is_flex && st->flex_grow == 0)) {
         lv_obj_set_width(box, LV_SIZE_CONTENT);
         lv_obj_set_style_max_width(box, owner->avail_w, 0);
         frame->width_is_content = true;
+    } else if (parent_is_flex && st->flex_grow > 0) {
+        lv_obj_set_width(box, 0);
     } else {
         lv_obj_set_width(box, LV_PCT(100));
     }
@@ -2500,11 +2540,13 @@ static lv_obj_t *create_container_box(html_parser_t *p, const char *tag,
 
     int pad_h = ((st->pad[1] > 0) ? st->pad[1] : 0) + ((st->pad[3] > 0) ? st->pad[3] : 0);
     frame->avail_w = box_w - pad_h;
-    /* A zero-basis grow item has no final width during this streaming parse.
-     * Give its descendants the containing flex line's available width so
-     * nested width:100% boxes are not permanently built at the 60 px floor. */
-    if (row_flex_basis && st->flex_basis_zero && st->flex_grow &&
-        owner->avail_w - pad_h > frame->avail_w) {
+    /* A zero-basis or auto-basis grow item has no final width during this
+     * streaming parse. Give its descendants the containing flex line's
+     * available width so nested width:100% boxes are not permanently built at
+     * the 60 px floor. */
+    if (((row_flex_basis && st->flex_basis_zero) ||
+         (parent_is_flex && !has_explicit_w)) &&
+        st->flex_grow && owner->avail_w - pad_h > frame->avail_w) {
         frame->avail_w = owner->avail_w - pad_h;
     }
     if (frame->avail_w < 60) frame->avail_w = 60;
@@ -2693,32 +2735,6 @@ static void handle_open_tag(html_parser_t *p, const char *tag, const char *attrs
     }
 }
 
-static int html_measure_intrinsic_child_width(lv_obj_t *obj, bool row,
-                                               unsigned depth) {
-    if (!obj || depth >= 8) return 0;
-    int own_width = (int)lv_obj_get_width(obj);
-    if (own_width > 0) return own_width;
-
-    uint32_t child_count = lv_obj_get_child_cnt(obj);
-    int total = 0;
-    int maximum = 0;
-    for (uint32_t i = 0; i < child_count && i < 64; ++i) {
-        lv_obj_t *child = lv_obj_get_child(obj, (int32_t)i);
-        int child_width = child ? (int)lv_obj_get_width(child) : 0;
-        if (child_width <= 0)
-            child_width = html_measure_intrinsic_child_width(child, false,
-                                                              depth + 1);
-        if (child_width <= 0) continue;
-        if (row) {
-            if (child_width > INT32_MAX - total) return INT32_MAX;
-            total += child_width;
-        } else if (child_width > maximum) {
-            maximum = child_width;
-        }
-    }
-    return row ? total : maximum;
-}
-
 /* Measure auto-sized flex items from rendered content. LVGL's provisional
  * SIZE_CONTENT width can inherit the containing width while the page is still
  * being streamed; that is especially visible when an unsupported SVG icon has
@@ -2803,10 +2819,27 @@ static void handle_close_tag(html_parser_t *p, const char *tag) {
                         p->widget_count++;
                         lv_obj_set_size(btn, LV_SIZE_CONTENT, 30);
                         const css_style_t *bs = &p->style[d];
-                        lv_color_t bg = (bs->has_bg && !bs->bg_transparent) ? bs->bg : lv_color_hex(0xe5e7eb);
-                        lv_color_t fg = bs->has_color ? bs->color : lv_color_hex(0x111827);
+                        bool dark_canvas = p->ss && p->ss->prefer_dark_scheme;
+                        lv_color_t def_bg = dark_canvas ? lv_color_hex(0x21262d) : lv_color_hex(0xe5e7eb);
+                        lv_color_t def_fg = dark_canvas ? lv_color_hex(0xf0f6fc) : lv_color_hex(0x111827);
+                        lv_color_t bg = (bs->has_bg && !bs->bg_transparent) ? bs->bg : def_bg;
+                        lv_color_t fg = bs->has_color ? bs->color : def_fg;
                         lv_obj_set_style_bg_color(btn, bg, 0);
-                        lv_obj_set_style_radius(btn, 6, 0);
+                        lv_obj_set_style_bg_opa(btn,
+                            (bs->has_bg && bs->bg_transparent) ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+                        int bw = 0;
+                        for (int bi = 0; bi < 4; bi++) {
+                            if (bs->border_w[bi] > bw) bw = bs->border_w[bi];
+                        }
+                        if (bw > 0) {
+                            lv_obj_set_style_border_width(btn, bw, 0);
+                            lv_obj_set_style_border_color(btn,
+                                bs->has_border_color ? bs->border_color : lv_color_hex(0x30363d), 0);
+                        } else {
+                            lv_obj_set_style_border_width(btn, 0, 0);
+                        }
+                        lv_obj_set_style_shadow_width(btn, 0, 0);
+                        lv_obj_set_style_radius(btn, (bs->radius != HTML_CSS_UNSET) ? bs->radius : 6, 0);
                         lv_obj_set_style_pad_hor(btn, 10, 0);
                         lv_obj_set_style_pad_ver(btn, 4, 0);
                         lv_obj_t *lbl = lv_label_create(btn);
@@ -2855,23 +2888,15 @@ static void handle_close_tag(html_parser_t *p, const char *tag) {
         }
         if (p->hidden_depth == 0 && p->box[d].lv_box &&
             p->box[d].width_is_content) {
-            /* LVGL may have measured an inline/flex child before its nested
-             * descendants were parsed. Recompute intrinsic width at close so
-             * descendants do not remain clipped by a zero-width ancestor. */
-            lv_obj_update_layout(p->box[d].lv_box);
+            /* Measure auto-sized inline/flex children from font/child metrics
+             * at close without triggering a full-screen LVGL layout pass on
+             * every closing tag (which was O(N^2) across 5,000+ widgets). */
             if (d > 0 && p->box[d - 1].is_flex_row) {
                 int intrinsic = html_measure_intrinsic_flex_width(
                     p->box[d].lv_box, 0);
                 if (intrinsic > 0 && intrinsic <= p->box[d].avail_w) {
                     lv_obj_set_width(p->box[d].lv_box, intrinsic);
                 }
-            } else if (lv_obj_get_width(p->box[d].lv_box) <= 0 &&
-                       p->box[d].avail_w > 0) {
-                int intrinsic = html_measure_intrinsic_child_width(
-                    p->box[d].lv_box, p->box[d].is_flex_row, 0);
-                if (intrinsic <= 0 || intrinsic > p->box[d].avail_w)
-                    intrinsic = p->box[d].avail_w;
-                lv_obj_set_width(p->box[d].lv_box, intrinsic);
             }
         }
         p->depth--;
