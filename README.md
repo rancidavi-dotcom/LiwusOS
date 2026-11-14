@@ -20,45 +20,38 @@
 ## What this is
 
 LiwusOS is an experimental, self-contained operating system for x86_64. It boots
-from Multiboot2/GRUB, runs its own kernel in long mode, and executes ring-3
-programs loaded from its own on-disk filesystem.
-
-The current tree is deliberately **lean and text-mode only**. A previous version
-had an in-kernel GUI, SMP bring-up, networking and audio; it was retired because
-it could not be maintained or tested. It is preserved as the `legacy-gui` tag and
-is **not** part of the build.
-
-The project is now focused on its native ABI, SDK, userspace and hardware
-support. The existing Linux ABI personality remains isolated and preserved,
-but its expansion is temporarily paused. See [docs/ROADMAP.md](docs/ROADMAP.md).
+from Multiboot2/GRUB, runs its own kernel in long mode, and executes native
+ring-3 programs from SDFS. The current release line is 2.2.18. The tree includes
+an LVGL desktop, a native browser, networking, audio support, a native SDK and
+the `lpkg` system updater; this is an active experimental system, not a finished
+desktop distribution.
 
 ## Implemented
 
 | Area | State |
 |---|---|
-| Boot | Multiboot2 + GRUB, 32→64-bit transition, higher-half kernel and temporary identity map |
-| CPU | GDT, IDT, ISR/IRQ, PIC, LAPIC, PIT at 100 Hz, RTC |
-| Memory | Bitmap PMM, 4-level paging, direct map, VMAs, NXE/W^X and usercopy protections |
-| Processes | Preemptive thread scheduler, `fork`, `execve`, `waitpid`, blocking pipes, jobs |
-| Syscalls | 41 calls through `int $0x80` (see [docs/ABI.md](docs/ABI.md)) |
-| Userspace | Ring 3 with validated user/kernel copies |
-| Binaries | Static ELF32 and ELF64 (`PT_LOAD` only) |
-| Filesystem | VFS + SDFS on ATA/AHCI disks: journal, CRC32, permissions, rename |
-| Initrd | tar archive installed into SDFS on first boot |
-| Drivers | ACPI, PCI, AHCI, ATA, PS/2 input, serial, USB xHCI/EHCI boot HID and framebuffer/VGA text console |
-| Shell | LIWUS SDK v0.1 process shell in ring 3; serial/keyboard input, built-ins and `.lxe` fork/exec/wait |
-| Tests | 51 named kernel/integration cases, 23 ring-3 subcases and host VMA/parser/USB tests |
+| Boot and CPU | Multiboot2/GRUB, x86-64 long mode, higher-half kernel, GDT/IDT, interrupts, LAPIC/PIT/RTC |
+| Memory and processes | Bitmap PMM, 4-level paging, direct map, VMAs, NXE/W^X, ring-3 processes and threads, blocking pipes |
+| Native interface | LIWUS syscall ABI, `.lxe` ELF applications, SDK, shell, editor and command-line utilities |
+| Storage | VFS + SDFS on ATA/AHCI, journal, CRC32, permissions, rename and first-boot installation |
+| Desktop | LVGL desktop, windows, launcher/taskbar, Settings, calculator, DOOM and SNES emulator |
+| Web | LiwusWeb HTML/CSS renderer with JavaScript through QuickJS; support is bounded and documented in [docs/BROWSER_COMPATIBILITY.md](docs/BROWSER_COMPATIBILITY.md) |
+| Network | lwIP, e1000 and RTL8168 drivers, DHCP/DNS, HTTP(S), NTP, telnet and OTA updates |
+| Audio and input | HDA audio driver; USB xHCI/EHCI keyboard and mouse paths, with physical H61 USB keyboard evidence |
+| Display | GRUB RGB framebuffer and LVGL rendering. EDID/VBE live mode switching currently supports QEMU Standard VGA; physical GPU modesetting is not implemented yet |
+| System update | `lpkg sysupdate` downloads and validates the system archive and boot image from the `pkg-repo` feed |
+| Verification inventory | 51 named kernel/integration cases, 23 ring-3 markers and host VMA/parser/USB checks; see [docs/TEST_COVERAGE.md](docs/TEST_COVERAGE.md) |
 
 ## Not implemented (yet)
 
-GUI, a GPU/KMS driver, networking, audio, USB mass storage and general USB
-hot-plug, SMP task scheduling, signal delivery, demand paging, COW,
-file-backed `mmap`, dynamic linking, `/proc`, `/dev`, PTYs, and broad Linux
-application compatibility remain incomplete. The framebuffer text console has
-a RAM shadow buffer and optimized flush/scroll path; this is console rendering,
-not hardware GPU acceleration.
-The Linux x86-64 personality and native ABI exist, but Linux compatibility is
-partial and paused for expansion. The roadmap explains the remaining gates.
+LiwusOS does not have a general GPU/KMS driver or hardware acceleration. The
+Settings app can change modes on QEMU Standard VGA; on the physical H61 PC it
+reports the PCI graphics adapter so a matching driver can be implemented.
+USB mass-storage support, general USB hot-plug, SMP task migration, signals,
+demand paging, COW, file-backed `mmap`, dynamic linking, `/proc`, `/dev`, PTYs,
+and broad Linux application compatibility remain incomplete. The Linux x86-64
+personality is an isolated, partial compatibility layer; the native Liwus ABI
+remains primary. See [docs/ROADMAP.md](docs/ROADMAP.md) for open gates.
 
 ## Repository layout
 
@@ -68,10 +61,12 @@ src/kernel/arch/ GDT, IDT, ISR, APIC, PIT, RTC, context switch
 src/kernel/core/ kernel init, syscalls, ELF loader
 src/kernel/mm/   PMM, VMM, kernel heap, user/kernel copy
 src/kernel/sched/scheduler, fork, wait, exit
-src/kernel/terminal/ in-kernel text terminal and built-in commands
+src/kernel/gui/     LVGL desktop and LiwusWeb renderer
+src/kernel/terminal/ in-kernel terminal, package manager and built-in commands
 src/fs/          VFS, SDFS, journal, CRC32, initrd
-src/drivers/     ACPI, PCI, storage, USB HID, keyboard, mouse, serial, console
-programs/        ring-3 init, shell, editor and C example
+src/net/         lwIP, TLS and network services
+src/drivers/     ACPI, PCI, storage, USB HID, audio, keyboard, mouse, framebuffer
+programs/        ring-3 utilities, SDK apps, browser runtime and SNES emulator
 tests/           in-kernel tests and the ring-3 integration suite
 docs/            ABI, roadmap and memory model
 ```
@@ -134,9 +129,9 @@ data-integrity guarantee.
 
 MIT. See [LICENSE](LICENSE).
 
-## Linux compatibility (paused) & native ABI development
+## Native ABI and Linux compatibility
 
-- **Linux x86-64 compatibility (PAUSED)**: The isolated Linux personality implements a limited, tested subset. The current probes are regression evidence, not general Linux application compatibility. Expansion is paused to prioritize the native Liwus ABI. Documentation for resuming: [docs/linux-compat/HANDOFF.md](docs/linux-compat/HANDOFF.md), [docs/linux-compat/IMPLEMENTATION_STATUS.md](docs/linux-compat/IMPLEMENTATION_STATUS.md), [docs/linux-compat/RESUME_PLAN.md](docs/linux-compat/RESUME_PLAN.md), [docs/linux-compat/KNOWN_ISSUES.md](docs/linux-compat/KNOWN_ISSUES.md), [docs/linux-compat/REPRODUCIBILITY.md](docs/linux-compat/REPRODUCIBILITY.md). See also [docs/ABI_LINUX.md](docs/ABI_LINUX.md).
+- **Linux x86-64 compatibility**: The isolated personality implements a partial, tested syscall/ELF subset. QEMU probes are regression evidence, not general Linux application compatibility. Open work and limitations: [docs/linux-compat/HANDOFF.md](docs/linux-compat/HANDOFF.md), [docs/linux-compat/IMPLEMENTATION_STATUS.md](docs/linux-compat/IMPLEMENTATION_STATUS.md), [docs/linux-compat/RESUME_PLAN.md](docs/linux-compat/RESUME_PLAN.md), [docs/linux-compat/KNOWN_ISSUES.md](docs/linux-compat/KNOWN_ISSUES.md), [docs/linux-compat/REPRODUCIBILITY.md](docs/linux-compat/REPRODUCIBILITY.md). See also [docs/ABI_LINUX.md](docs/ABI_LINUX.md).
 - **Native Liwus ABI**: Native ABI is primary. Development docs: [docs/native-abi/ARCHITECTURE.md](docs/native-abi/ARCHITECTURE.md), [docs/native-abi/SYSCALL_REFERENCE.md](docs/native-abi/SYSCALL_REFERENCE.md), [docs/native-abi/DEVELOPMENT_PLAN.md](docs/native-abi/DEVELOPMENT_PLAN.md), [docs/native-abi/GETTING_STARTED.md](docs/native-abi/GETTING_STARTED.md).
 - **Project handoff (central entry)**: [docs/PROJECT_HANDOFF.md](docs/PROJECT_HANDOFF.md)
 # Install native applications

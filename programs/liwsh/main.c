@@ -118,7 +118,7 @@ static int is_builtin(const char *name) {
            same(name, "demo") || same(name, "libc");
 }
 
-static void run_builtin(liwsh_cmd_t *cmd, char **envp) {
+static int run_builtin(liwsh_cmd_t *cmd, char **envp) {
     (void)envp;
     char **args = cmd->argv;
     int count = cmd->argc;
@@ -131,10 +131,15 @@ static void run_builtin(liwsh_cmd_t *cmd, char **envp) {
             write_text("liwsh: cannot open output file: ");
             write_text(cmd->output_file);
             write_text("\n");
-            return;
+            return 1;
         }
         saved_stdout = liw_dup(1);
-        liw_dup2(fd, 1);
+        if (saved_stdout < 0 || liw_dup2(fd, 1) < 0) {
+            if (saved_stdout >= 0) liw_close(saved_stdout);
+            liw_close(fd);
+            write_text("liwsh: cannot redirect standard output\n");
+            return 1;
+        }
         liw_close(fd);
     }
 
@@ -263,7 +268,7 @@ static void run_builtin(liwsh_cmd_t *cmd, char **envp) {
     } else if (same(args[0], "c_demo") || same(args[0], "cdemo") || same(args[0], "demo") || same(args[0], "libc")) {
         char *d_argv[] = { "/bin/c_demo.lxe", NULL };
         child_exec(d_argv, envp);
-        return;
+        return 1;
     } else if (same(args[0], "shutdown") || same(args[0], "poweroff")) {
         if (count != 1) {
             write_text("usage: shutdown\n");
@@ -276,9 +281,47 @@ static void run_builtin(liwsh_cmd_t *cmd, char **envp) {
     }
 
     if (saved_stdout >= 0) {
-        liw_dup2(saved_stdout, 1);
+        int restored = liw_dup2(saved_stdout, 1) >= 0;
         liw_close(saved_stdout);
+        if (!restored) return 1;
     }
+    return 0;
+}
+
+static int redirect_input_file(const char *path) {
+    int fd = liw_open(path, LIW_O_RDONLY);
+    if (fd < 0) {
+        write_text("liwsh: cannot open input file: ");
+        write_text(path);
+        write_text("\n");
+        return -1;
+    }
+    if (fd != 0 && liw_dup2(fd, 0) < 0) {
+        liw_close(fd);
+        write_text("liwsh: cannot redirect standard input\n");
+        return -1;
+    }
+    if (fd != 0) liw_close(fd);
+    return 0;
+}
+
+static int redirect_output_file(const char *path, int append) {
+    int flags = LIW_O_WRONLY | LIW_O_CREAT |
+                (append ? LIW_O_APPEND : LIW_O_TRUNC);
+    int fd = liw_open(path, flags);
+    if (fd < 0) {
+        write_text("liwsh: cannot open output file: ");
+        write_text(path);
+        write_text("\n");
+        return -1;
+    }
+    if (fd != 1 && liw_dup2(fd, 1) < 0) {
+        liw_close(fd);
+        write_text("liwsh: cannot redirect standard output\n");
+        return -1;
+    }
+    if (fd != 1) liw_close(fd);
+    return 0;
 }
 
 static void run_pipeline(liwsh_pipeline_t *pipe, char **envp) {
@@ -287,7 +330,11 @@ static void run_pipeline(liwsh_pipeline_t *pipe, char **envp) {
         if (cmd->argc == 0) return;
 
         if (is_builtin(cmd->argv[0])) {
-            run_builtin(cmd, envp);
+            if (cmd->input_file) {
+                write_text("liwsh: input redirection is unavailable for built-ins\n");
+                return;
+            }
+            (void)run_builtin(cmd, envp);
             return;
         }
 
@@ -297,29 +344,10 @@ static void run_pipeline(liwsh_pipeline_t *pipe, char **envp) {
             return;
         }
         if (child == 0) {
-            if (cmd->input_file) {
-                int fdin = liw_open(cmd->input_file, LIW_O_RDONLY);
-                if (fdin < 0) {
-                    write_text("liwsh: cannot open input file: ");
-                    write_text(cmd->input_file);
-                    write_text("\n");
-                    liw_exit(1);
-                }
-                liw_dup2(fdin, 0);
-                liw_close(fdin);
-            }
-            if (cmd->output_file) {
-                int flags = LIW_O_WRONLY | LIW_O_CREAT | (cmd->append ? LIW_O_APPEND : LIW_O_TRUNC);
-                int fdout = liw_open(cmd->output_file, flags);
-                if (fdout < 0) {
-                    write_text("liwsh: cannot open output file: ");
-                    write_text(cmd->output_file);
-                    write_text("\n");
-                    liw_exit(1);
-                }
-                liw_dup2(fdout, 1);
-                liw_close(fdout);
-            }
+            if (cmd->input_file && redirect_input_file(cmd->input_file) < 0)
+                liw_exit(1);
+            if (cmd->output_file && redirect_output_file(cmd->output_file, cmd->append) < 0)
+                liw_exit(1);
             child_exec(cmd->argv, envp);
         }
 
@@ -349,16 +377,17 @@ static void run_pipeline(liwsh_pipeline_t *pipe, char **envp) {
             return;
         }
         if (child1 == 0) {
-            if (c1->input_file) {
-                int fdin = liw_open(c1->input_file, LIW_O_RDONLY);
-                if (fdin >= 0) { liw_dup2(fdin, 0); liw_close(fdin); }
+            if (c1->input_file && is_builtin(c1->argv[0])) {
+                write_text("liwsh: input redirection is unavailable for built-ins\n");
+                liw_exit(1);
             }
+            if (c1->input_file && redirect_input_file(c1->input_file) < 0)
+                liw_exit(1);
             liw_dup2(pipefd[1], 1);
             liw_close(pipefd[0]);
             liw_close(pipefd[1]);
             if (is_builtin(c1->argv[0])) {
-                run_builtin(c1, envp);
-                liw_exit(0);
+                liw_exit(run_builtin(c1, envp));
             } else {
                 child_exec(c1->argv, envp);
             }
@@ -377,14 +406,11 @@ static void run_pipeline(liwsh_pipeline_t *pipe, char **envp) {
             liw_dup2(pipefd[0], 0);
             liw_close(pipefd[0]);
             liw_close(pipefd[1]);
-            if (c2->output_file) {
-                int flags = LIW_O_WRONLY | LIW_O_CREAT | (c2->append ? LIW_O_APPEND : LIW_O_TRUNC);
-                int fdout = liw_open(c2->output_file, flags);
-                if (fdout >= 0) { liw_dup2(fdout, 1); liw_close(fdout); }
-            }
+            if (c2->output_file && !is_builtin(c2->argv[0]) &&
+                redirect_output_file(c2->output_file, c2->append) < 0)
+                liw_exit(1);
             if (is_builtin(c2->argv[0])) {
-                run_builtin(c2, envp);
-                liw_exit(0);
+                liw_exit(run_builtin(c2, envp));
             } else {
                 child_exec(c2->argv, envp);
             }
@@ -460,7 +486,7 @@ int main(int argc, char **argv, char **envp) {
         int count = liwsh_parse_pipeline(line, sizeof(line), &pipeline);
         if (count == 0) continue;
         if (count == LIWSH_PARSE_UNSUPPORTED) {
-            write_text("liwsh: quotes, escapes, and shell operators are unsupported\n");
+            write_text("liwsh: quotes, escapes, or unsupported operator\n");
             continue;
         }
         if (count == LIWSH_PARSE_SYNTAX_ERROR) {

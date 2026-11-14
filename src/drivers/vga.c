@@ -101,13 +101,12 @@ static void edid_parse_base(const uint8_t *edid) {
     static const uint8_t bitpos[] = {7,6,5,4,3,2,1,0};
     for (int b = 0; b < 3; b++) {
         for (int bit = 0; bit < 8; bit++)
-            if (edid[35 + b] & (1u << bit)) {
+            if (edid[35 + b] & (1u << bitpos[bit])) {
                 int idx = b * 8 + bit;
                 if (idx < (int)(sizeof(established) / sizeof(established[0])))
                     display_add_mode(established[idx][0], established[idx][1]);
             }
     }
-    (void)bitpos;
     for (int i = 0; i < 8; i++) {
         uint8_t a = edid[38 + i * 2], b = edid[39 + i * 2];
         if (a == 1 && b == 1) continue;

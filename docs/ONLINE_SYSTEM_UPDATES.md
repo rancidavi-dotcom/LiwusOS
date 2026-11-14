@@ -118,3 +118,21 @@ identificar o adaptador do PC H61 pelo Settings antes de implementar esse
 driver. O `hd_boot.img` tem 5.259.264 bytes (CRC32 `0aa1728e`) e o
 `system-update.tar` tem 14.376.960 bytes (CRC32 `e18adee4`). Em instalações
 com suporte OTA, instale pelo comando `lpkg sysupdate` e reinicie.
+
+## Publicação 2.2.17 — 2026-11-14
+
+Promove a resolução widescreen automática e corrige ícones de fallback e
+alinhamento de botões no LiwusWeb. O `hd_boot.img` tem 5.259.264 bytes
+(CRC32 `c935ea6d`); o `system-update.tar` permanece com 14.376.960 bytes
+(CRC32 `e18adee4`). O feed foi publicado na branch `pkg-repo`. Para receber
+esta versão em uma instalação com OTA habilitado, execute `lpkg sysupdate` e
+reinicie.
+
+## Publicação 2.2.18 — 2026-11-14
+
+Corrige a ordem dos bits dos modos EDID estabelecidos, permite rolar o conteúdo
+do Settings em telas pequenas, impede downgrade pelo LPkg e trata falhas de
+redirecionamento e sintaxe incompatível no `liwsh`. O `hd_boot.img` tem
+5.263.360 bytes (CRC32 `18a73753`) e o `system-update.tar` tem 14.376.960 bytes
+(CRC32 `6dcf7865`). Para receber esta versão em uma instalação com OTA
+habilitado, execute `lpkg sysupdate` e reinicie.

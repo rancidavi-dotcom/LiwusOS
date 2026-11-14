@@ -1238,7 +1238,7 @@ static void create_settings_window(void) {
     add_window_controls(win_settings, "Settings - Configuracoes do Sistema");
 
     lv_obj_t *content = lv_win_get_content(win_settings);
-    lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_layout(content, 0);
     lv_obj_set_style_pad_all(content, 14, 0);
 

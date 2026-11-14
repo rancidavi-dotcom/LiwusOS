@@ -69,28 +69,28 @@ ten lines. These are not shell or kernel built-ins.
 
 ## Command language
 
-The parser supports an executable and up to 14 arguments (15 words total)
-separated by spaces or tabs. Empty lines are ignored. Input is limited to 255 characters; an
-overlong line is drained through Enter before the next prompt. A read error is
-reported and the prompt remains available. Ctrl-D on an empty line exits the
-shell; the init supervisor then starts a fresh shell. Ctrl-D after text submits
-that text as a command line.
+The parser supports an executable and up to 14 arguments (15 words total) per
+stage, separated by spaces or tabs. It runs one command or a pipeline of two
+commands. A command can redirect standard input with `<`, standard output with
+`>` or `>>`; a pipeline can redirect input on its first stage and output on its
+second stage. Built-ins support standard-output redirection. Empty lines are
+ignored. Input is limited to 255 characters; an overlong line is drained through
+Enter before the next prompt. Ctrl-D on an empty line exits the shell; the init
+supervisor then starts a fresh shell.
 
-Quotes, escapes, pipes, redirection, environment expansion, globbing, scripts,
-background jobs, and job control are not implemented. Quote, escape, and
-operator characters are rejected explicitly. There is no configurable `PATH`;
-`ls` and `cat` are ordinary programs installed in `/bin`, not shell built-ins.
+Quotes, backslash escapes, environment expansion, globbing, scripts, pipelines
+with more than two commands, `2>` redirection, background jobs, and job control
+are not implemented. Filenames and arguments cannot contain whitespace. There
+is no configurable `PATH`; bare names are searched in the current directory and
+the supported `/bin` locations. `ls` and `cat` are ordinary programs, not shell
+built-ins.
 
-## Planned v0.2 milestone
-
-The next recommended increment is deliberately smaller than a POSIX shell:
-quoted/escaped arguments, bounded pipelines, and `<`, `>`, `>>`, and `2>`
-redirection using the existing native `pipe`, `dup2`, `fork`, `execve`,
-`close`, and `waitpid` calls. Stream-oriented utilities should accept standard
-input where appropriate. Background execution and job control remain deferred
-until signals and process-group semantics exist. Completion requires host
-parser cases plus QEMU integration that proves descriptor closure, command
-failure recovery, and repeated pipelines without leaking file or pipe state.
+The next shell increment should add quoted/escaped arguments and handle every
+redirection failure consistently. Stream-oriented utilities should accept
+standard input where appropriate. Background execution and job control remain
+deferred until signals and process-group semantics exist. Existing parser cases
+cover the supported two-stage syntax; the separate QEMU shell integration
+exercises real serial input and process execution.
 
 ## Add an application
 

@@ -15,6 +15,18 @@ BIOS tenham sido alteradas depois das fotos.
 - O inventário `lspci`/`lsusb` do computador de desenvolvimento não identifica
   este PC. Não atribuir a ele os controladores AMD/NVIDIA vistos no host Linux.
 
+## Vídeo e monitor
+
+- A controladora gráfica e a saída usada pelo monitor ainda não foram
+  registradas. Não inferir uma Intel HD integrada só a partir de “H61”: o CPU
+  instalado e a possível presença de uma placa PCIe não estão documentados.
+- O GRUB entrega ao kernel o framebuffer UEFI atualmente selecionado. O modo
+  gráfico ao vivo implementado no Settings usa EDID + VBE DISPI do QEMU Standard
+  VGA (`1234:1111`); isso não troca modos em GPU física.
+- O Settings/log de boot informa o ID PCI da GPU para orientar o próximo driver.
+  Ao testar no H61, registrar também se o monitor está conectado à VGA, DVI ou
+  HDMI da placa-mãe ou de uma placa de vídeo separada.
+
 ## BIOS/UEFI — foto da aba Main
 
 | Campo | Valor observado |

@@ -136,6 +136,13 @@ int liwsh_parse_pipeline(char *line, size_t capacity, liwsh_pipeline_t *pipeline
         return LIWSH_PARSE_SYNTAX_ERROR; /* "cmd |" sem segundo comando */
     }
 
+    /* These two combinations override a pipe endpoint. Until the shell models
+     * that behavior explicitly, reject them instead of silently ignoring a
+     * redirection or leaving the producer blocked on an unread pipe. */
+    if (pipeline->num_stages == 1 &&
+        (pipeline->stages[0].output_file || pipeline->stages[1].input_file))
+        return LIWSH_PARSE_UNSUPPORTED;
+
     if (pipeline->stages[0].argc > 0) {
         pipeline->num_stages++;
     }

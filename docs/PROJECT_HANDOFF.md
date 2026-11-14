@@ -1,17 +1,23 @@
 # PROJECT_HANDOFF.md - Central Entry Point
 
 ## Identity and objectives
-LiwusOS is an independent, bare-metal x86_64 OS with its own kernel, architecture, memory management, scheduler, and native ABI. Linux x86-64 binary compatibility is an optional compatibility layer (paused for expansion). Native ABI is the primary interface.
+LiwusOS is an independent, bare-metal x86_64 OS with its own kernel, architecture, memory management, scheduler, and native ABI. The current release line is 2.2.18. Native ABI is primary; Linux x86-64 compatibility is a partial, isolated layer.
 
 ## Current state
 - **Branch:** `lean-kernel`
-- **Last reviewed commit:** `2b96f7d` - "feat(hardware): suporte completo a teclado USB EHCI em hardware real e aceleracao grafica"
-- **Build:** Clean with `-Werror`
-- **Tests:** active manifests contain 51 top-level cases and 23 ring-3 markers; the hardware checkpoint preserved the existing automated USB/QEMU regressions
-- **Environment:** QEMU with 4 CPUs, SMAP active
+- **Last reviewed baseline:** `54a64d8` (before the 2.2.18 polish in this working tree)
+- **Build policy:** `-Werror`; build/release details are in the root Makefile and `docs/ONLINE_SYSTEM_UPDATES.md`
+- **Test inventory:** active manifests contain 51 top-level cases and 23 ring-3 markers; see `docs/TEST_COVERAGE.md` for their scope and gaps
+- **QEMU evidence:** the project has 4-CPU and SMAP configurations; do not treat those as physical GPU validation
 - **Physical evidence:** an Intel H61/PCH machine enumerates its integrated
   `8087:0024` Rate Matching Hub through EHCI and accepts USB-keyboard input in
   the ring-3 shell. See `docs/HARDWARE_PC_H61.md`.
+- **Physical graphics:** GPU model/PCI ID and display connector are not yet
+  recorded. Settings now reports the PCI adapter; its live modesetting backend
+  supports QEMU Standard VGA only. Do not claim physical resolution switching.
+- **Current product:** LVGL desktop, LiwusWeb, networking, HDA, native shell,
+  Settings, SDK apps and SNES emulator are in the current build. The README is
+  the feature summary; the browser and hardware docs describe limitations.
 
 ## Directory structure (key)
 ```
@@ -51,22 +57,22 @@ docs/             Documentation
 
 ## Incomplete functionality
 - Linux: PT_INTERP/dynamic linking, broad syscalls, signals, full wait4, futex extensions, robust lists, general clone/pthreads, demand paging/COW/file-backed mmap, vDSO/auxv completeness, SMP thread migration/TLB shootdown validation, AVX-512/AMX and complete CPU-feature policy. Current external evidence covers static musl caller/default stacks, four pthreads with mutex/condvar/name, and a static glibc x86-64-v3 greeting on QEMU `-cpu max`; this remains partial compatibility.
-- Native: Shell command composition is still minimal: no quotes, pipelines,
-  redirection, scripts, background jobs or job control. USB mass storage and a
-  generic block-device layer are also absent.
+- Native: The shell supports two-stage pipelines and basic `<`, `>` and `>>`
+  redirection. Quotes, escapes, more than two pipeline stages, `2>`, scripts,
+  background jobs and job control remain absent. USB mass storage and a generic
+  block-device layer are also absent.
 
 ## Known bugs/risks
 - Native ABI has mixed error return conventions (-1 vs -errno)
 - a static glibc `puts` smoke now passes with x87/SSE/AVX XSAVE state; dynamic glibc, broader libc coverage, AVX-512/AMX remain unverified
 - Some Linux features intentionally unimplemented
 
-## Next priority (native)
-Implement Native Shell v0.2 command composition: quoting/escaping, bounded
-pipelines and `<`, `>`, `>>`, `2>` redirection. Reuse the existing native
-`pipe`, `dup2`, `fork`, `execve`, `close` and `waitpid` mechanisms. Keep
-background jobs and full job control deferred until signals and process-group
-semantics exist. See `docs/NATIVE_SHELL.md` and
-`docs/native-abi/DEVELOPMENT_PLAN.md`.
+## Next priority
+Use the physical H61 boot to capture the graphics adapter PCI ID from Settings
+or the `[display]` boot log. Identify the active video path and connector before
+choosing a GPU driver. The current EDID/VBE mode setter is specific to QEMU
+Standard VGA. After that hardware gate, finish quoted arguments and consistent
+redirection error handling as described in `docs/NATIVE_SHELL.md`.
 
 ## How to resume Linux compatibility
 **Read first:** `docs/linux-compat/HANDOFF.md` → `docs/linux-compat/IMPLEMENTATION_STATUS.md` → `docs/linux-compat/RESUME_PLAN.md` → `docs/linux-compat/KNOWN_ISSUES.md` → `docs/linux-compat/REPRODUCIBILITY.md` → `docs/ABI_LINUX.md` → `docs/ROADMAP.md`
@@ -76,15 +82,14 @@ semantics exist. See `docs/NATIVE_SHELL.md` and
 **Rules:** Stay in frozen scope (no new Linux features), update docs on changes, preserve separation, no regressions.
 
 ## INSTRUÇÕES PARA O PRÓXIMO AGENTE
-- **Concluído:** Linux compatibility paused but fully preserved/documented; native ABI audited/documented; project handoff created.
-- **Pausado:** Linux expansion (new syscalls/features). All existing Linux code/tests remain active.
-- **Próximo milestone recomendado:** Native Shell v0.2 sobre o SDK e a ABI nativa já utilizáveis.
+- **Estado:** desktop LVGL, LiwusWeb, rede/OTA e aplicativos nativos fazem parte do build; não descrever a árvore como somente texto.
+- **Próximo dado físico:** GPU/saída de vídeo do H61, ainda não identificadas; capturar o PCI ID exibido pelo Settings.
+- **Próximo milestone recomendado:** driver de vídeo físico escolhido a partir do hardware medido; depois, polir aspas e erros de redirecionamento do shell.
 - **Não modificar sem investigação:** `src/compat/linux/*`, Linux tests/probes, core shared mechanisms if changing for Linux reasons. Native ABI numbers/contracts - changes need justification.
 - **Ler primeiro:** This file, then native-abi docs and linux-compat docs as needed.
-- **Próximo objetivo concreto:** Add quotes/escapes, bounded pipelines and file
-  redirection to `liwsh`, plus stdin support in stream-oriented utilities such
-  as `cat`/`head`. Prove descriptor closure, failure recovery and repeated
-  pipelines in host parser tests and the QEMU shell integration.
+- **Próximo objetivo concreto:** Add quoted/escaped arguments and consistent
+  redirection errors to the existing two-stage `liwsh` pipeline. Then add stdin
+  support to utilities such as `cat`/`head`.
 - **Verificar ambiente:** Build with `-Werror`, run `make test`, `make ring3-test`, `make smap-test`. All must stay green.
 
 ## Verification project update (2026-11-02)

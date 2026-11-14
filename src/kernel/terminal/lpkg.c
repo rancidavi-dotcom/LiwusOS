@@ -19,7 +19,7 @@ extern int sys_waitpid(int pid, int *status, int options);
 #define LPKG_REPO_FILE   "/etc/lpkg.repo"
 #define LPKG_DB_FILE     "/etc/lpkg.db"
 #define LPKG_OS_RELEASE  "/etc/os-release"
-#define LPKG_BUILD_VERSION "2.2.17"
+#define LPKG_BUILD_VERSION "2.2.18"
 #define LPKG_DEFAULT_REPO "https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo"
 #define LPKG_SYSTEM_MANIFEST "system-v2.txt"
 
@@ -128,6 +128,40 @@ static uint32_t lpkg_parse_u32(const char *s, int base) {
         value = value * (uint32_t)base + digit;
     }
     return value;
+}
+
+static int lpkg_parse_version(const char *text, uint32_t parts[4]) {
+    if (!text || !text[0]) return -1;
+    for (size_t i = 0; i < 4; i++) parts[i] = 0;
+    const char *p = text;
+    for (size_t part = 0; part < 4; part++) {
+        if (*p < '0' || *p > '9') return -1;
+        uint32_t value = 0;
+        do {
+            uint32_t digit = (uint32_t)(*p - '0');
+            if (value > (UINT32_MAX - digit) / 10U) return -1;
+            value = value * 10U + digit;
+            p++;
+        } while (*p >= '0' && *p <= '9');
+        parts[part] = value;
+        if (!*p) return 0;
+        if (*p++ != '.' || !*p) return -1;
+    }
+    return -1;
+}
+
+static int lpkg_compare_versions(const char *a, const char *b, int *valid) {
+    uint32_t av[4], bv[4];
+    if (lpkg_parse_version(a, av) != 0 || lpkg_parse_version(b, bv) != 0) {
+        if (valid) *valid = 0;
+        return 0;
+    }
+    if (valid) *valid = 1;
+    for (size_t i = 0; i < 4; i++) {
+        if (av[i] < bv[i]) return -1;
+        if (av[i] > bv[i]) return 1;
+    }
+    return 0;
 }
 
 static int lpkg_tar_octal(const char *field, size_t width, uint32_t *out) {
@@ -1065,7 +1099,11 @@ static int lpkg_check_system_update_progress(lpkg_sysupdate_info_t *info_out,
         info_out->system_archive_size >= 1024U && info_out->system_archive_size <= (64U * 1024U * 1024U);
 
     info_out->checked_online = true;
-    info_out->update_available = (strcmp(info_out->current_version, info_out->remote_version) != 0);
+    int version_valid = 0;
+    int version_order = lpkg_compare_versions(info_out->remote_version,
+                                               info_out->current_version,
+                                               &version_valid);
+    info_out->update_available = version_valid && version_order > 0;
 
     if (info_out->update_available) {
         char tmp[160];
@@ -1078,12 +1116,22 @@ static int lpkg_check_system_update_progress(lpkg_sysupdate_info_t *info_out,
             strcat(tmp, ").");
         }
         copy_str_safe(msg_out, tmp, msg_max);
-    } else {
+    } else if (version_valid && version_order < 0) {
+        char tmp[160];
+        strcpy(tmp, "A versao local (v");
+        strcat(tmp, info_out->current_version);
+        strcat(tmp, ") e mais nova que o feed (v");
+        strcat(tmp, info_out->remote_version);
+        strcat(tmp, "); nenhum downgrade sera oferecido.");
+        copy_str_safe(msg_out, tmp, msg_max);
+    } else if (version_valid) {
         char tmp[160];
         strcpy(tmp, "O sistema ja esta na versao mais recente (v");
         strcat(tmp, info_out->current_version);
         strcat(tmp, ").");
         copy_str_safe(msg_out, tmp, msg_max);
+    } else {
+        copy_str_safe(msg_out, "Versao invalida no sistema ou no manifesto; atualizacao bloqueada.", msg_max);
     }
     return 0;
 }
@@ -1234,6 +1282,11 @@ int lpkg_perform_system_update(lpkg_progress_fn progress_cb, void *user_data,
     lpkg_sysupdate_info_t info;
     if (lpkg_check_system_update_progress(&info, sync_msg, sizeof(sync_msg),
                                           progress_cb, user_data, 3, 7) < 0) {
+        copy_str_safe(msg_out, sync_msg, msg_max);
+        return -1;
+    }
+
+    if (!info.update_available) {
         copy_str_safe(msg_out, sync_msg, msg_max);
         return -1;
     }
