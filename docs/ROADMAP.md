@@ -1,12 +1,17 @@
 # Roadmap da ABI Linux
 
+Este documento trata dos gates de compatibilidade Linux. A Fase 0 e os estados
+anteriores são marcos históricos, não uma descrição do produto atual. Para o
+estado do desktop, rede, áudio, vídeo e aplicativos nativos, consulte o
+[README](../README.md) e o [handoff](PROJECT_HANDOFF.md).
+
 Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verificáveis. A compatibilidade traduz a ABI na borda e reutiliza o mesmo motor de processos, memória virtual e VFS do sistema. Cada fase começa somente depois do gate anterior passar.
 
 > **Estado desta revisão:** Gate 0 permanece como marco histórico (`6402de8`). Os passos 9a/9b (`6bbb7cf`, `7fd8184`), 9c–14 e 16 estão implementados; 12–13 incluem VMAs ordenadas, NXE e W^X. O passo 15 foi implementado com stacks de kernel guardadas, stacks distintas por tarefa, IRQ por CPU e IST para page fault/double fault. O passo 17 foi migrado nos caminhos de ELF/VM e nos mapeamentos de kernel/MMIO; wrappers legados ainda existem dentro da camada VMM para operações de boot. A Fase 2 está aberta: Incrementos A/B separam processo e thread; Incremento C implementa wait queues, bloqueio nativo de waitpid/pipes e FUTEX_WAIT/WAKE/WAIT_BITSET/REQUEUE privados, ainda com cobertura incremental. A personalidade Linux passa probes para timeout relativo de FUTEX_WAIT e WAIT_BITSET absoluto, `uname`/`sysinfo`, getters de processo, relógio, `fork`/`wait4` básicos, TID de filho, `pipe`/vectored I/O e `getdents64`. ELFs estáticos `puts` e pthread musl com stack fornecida/padrão também passaram no QEMU. A suíte confirmou 51 casos de topo e 23 marcadores ring-3 com SMAP/4 CPUs. Testes de quatro pthreads com mutex, condvar e nomes de thread passaram; usuários seguem no BSP, bitsets incompatíveis e requeue ainda carecem de stress concorrente. Futex compartilhado, robust lists, sinais e dynamic linking seguem pendentes. O smoke glibc estático x86-64-v3 passa com QEMU `-cpu max`, mas esse ELF executa AVX e falha sob o CPU QEMU padrão sem AVX.
 
 ## Fase 0 — Congelar e descrever a base
 
-1. Guardar a versão GUI antiga em uma tag `legacy-gui` apontada para `f15c120`, sem trazê-la de volta para a árvore de trabalho.
+1. **Marco histórico:** guardar a versão GUI antiga em uma tag `legacy-gui` apontada para `f15c120`; esta instrução precede o desktop LVGL atual e não descreve o estado presente da árvore.
 2. Consolidar as remoções e modificações da versão enxuta em um commit da branch de trabalho `lean-kernel`.
 3. Reescrever `README.md` para descrever apenas o sistema enxuto que existe nesta árvore.
 4. Adicionar CI mínima que execute `make`, `make test` e `make ring3-test` em cada push.
@@ -89,10 +94,16 @@ Este roadmap organiza a compatibilidade x86-64 Linux do LiwusOS em gates verific
 
 ## Fase 6 — Rede, áudio e gráficos
 
-52. Implementar virtio-net/e1000 e TCP/IP para sockets AF_INET.
-53. Adicionar HDA/virtio-sound e API de PCM; compatibilidade com ioctls ALSA é um projeto separado.
-54. Adicionar framebuffer/KMS e entrada; mirar um protocolo de superfícies compatível com Wayland para aplicações Linux.
-55. Priorizar virtio-gpu com virgl/venus antes de drivers gráficos bare-metal.
+52. **Parcial/implementado no sistema nativo:** drivers e1000/RTL8168 e serviços
+    TCP/IP sobre lwIP estão na árvore. Sockets AF_INET para programas Linux
+    ainda não fazem parte da personality.
+53. **Parcial:** existe driver HDA e áudio nativo; virtio-sound, uma API PCM
+    genérica e ioctls ALSA continuam fora do escopo atual.
+54. **Parcial:** o sistema tem framebuffer RGB, entrada e desktop LVGL; a troca
+    de modo EDID/VBE é específica do QEMU Standard VGA. Um driver KMS genérico
+    e protocolo de superfícies para aplicações Linux não existem.
+55. Virtio-gpu com virgl/venus e aceleração 3D permanecem trabalho futuro; não
+    há aceleração gráfica nesta versão.
 
 ## Fase 7 — Windows
 

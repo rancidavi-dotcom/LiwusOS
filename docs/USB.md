@@ -115,17 +115,19 @@ zero control transfers and a periodic keyboard report queue after controller
 ownership and setup. A controller that is absent or unsupported must not
 prevent normal LIWUS boot.
 
-## Text-only shell
+## Desktop and console fallback
 
-The current system starts the native command shell; there is no desktop,
-window manager, or compositor in this source tree. Kernel output stays textual.
-When GRUB supplies a 32-bit RGB framebuffer, the kernel draws the text console
-there; otherwise it falls back to the 80x25 VGA text buffer. This lets UEFI
-machines display the shell even when legacy VGA text memory is unavailable.
-`make run` displays the console through QEMU's curses backend and reuses
-`liwus_disk.img`, so the disk's installed applications persist across builds.
-To keep the shell in that existing image aligned with the current text-only
-initrd, rebuild the shell and replace only `/bin/liwsh.lxe` while QEMU is off:
+When GRUB supplies a 32-bit RGB framebuffer, the kernel starts the LVGL desktop
+and the network background task. If graphical framebuffer startup is
+unavailable or text mode is requested, LIWUS falls back to the native ring-3
+shell. The kernel console can render into the RGB framebuffer or fall back to
+the 80x25 VGA text buffer. This lets UEFI machines display the fallback shell
+even when legacy VGA text memory is unavailable. `make run` deliberately uses
+QEMU's curses backend to exercise the console path; it reuses `liwus_disk.img`,
+so applications installed on that disk persist across builds.
+
+For development, an updated native shell can be copied into an existing SDFS
+image while QEMU is off:
 
 ```sh
 make all
