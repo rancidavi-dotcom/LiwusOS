@@ -155,3 +155,11 @@ e o maior modo anunciado antes de iniciar o desktop. O `hd_boot.img` tem
 5.263.360 bytes (CRC32 `bbcda097`) e o
 `system-update.tar` tem 14.376.960 bytes (CRC32 `6dcf7865`). Para instalar via
 OTA, execute `lpkg sysupdate` e reinicie.
+
+## Publicação 2.2.21 — 2026-11-14
+
+Adiciona controle de volume HDA ao Settings, com aplicação imediata e
+persistência no SDFS. O carregador aplica a preferência salva depois de montar
+o sistema de arquivos. O `hd_boot.img` tem 5.263.360 bytes (CRC32
+`a9c4a1c0`) e o `system-update.tar` tem 14.376.960 bytes (CRC32 `6dcf7865`).
+Para instalar via OTA, execute `lpkg sysupdate` e reinicie.

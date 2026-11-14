@@ -1,11 +1,11 @@
 # PROJECT_HANDOFF.md - Central Entry Point
 
 ## Identity and objectives
-LiwusOS is an independent, bare-metal x86_64 OS with its own kernel, architecture, memory management, scheduler, and native ABI. The current release line is 2.2.20. Native ABI is primary; Linux x86-64 compatibility is a partial, isolated layer.
+LiwusOS is an independent, bare-metal x86_64 OS with its own kernel, architecture, memory management, scheduler, and native ABI. The current release line is 2.2.21. Native ABI is primary; Linux x86-64 compatibility is a partial, isolated layer.
 
 ## Current state
 - **Branch:** `lean-kernel`
-- **Last reviewed baseline:** `90ee94a` (before the 2.2.20 boot-mode selection change)
+- **Last reviewed baseline:** `93412ce` (before the 2.2.21 audio setting)
 - **Build policy:** `-Werror`; build/release details are in the root Makefile and `docs/ONLINE_SYSTEM_UPDATES.md`
 - **Test inventory:** active manifests contain 51 top-level cases and 23 ring-3 markers; see `docs/TEST_COVERAGE.md` for their scope and gaps
 - **QEMU evidence:** the project has 4-CPU and SMAP configurations; do not treat those as physical GPU validation

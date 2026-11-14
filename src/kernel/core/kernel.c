@@ -567,6 +567,36 @@ static void init_filesystem(int kernel_test_mode) {
     sdfs_flush_bitmap();
 }
 
+static void load_audio_volume_config(void) {
+  uint32_t size = 0;
+  char *saved = (char *)sdfs_read_file("/etc/sound.conf", &size);
+  if (!saved) return;
+  if (size < 7 || size >= 64) {
+    kfree(saved);
+    return;
+  }
+
+  char config[64];
+  memcpy(config, saved, size);
+  config[size] = '\0';
+  kfree(saved);
+  char *value = strstr(config, "VOLUME=");
+  if (!value) return;
+  value += 7;
+  uint32_t volume = 0;
+  uint32_t digits = 0;
+  while (*value >= '0' && *value <= '9') {
+    uint32_t digit = (uint32_t)(*value - '0');
+    if (volume > (100U - digit) / 10U) return;
+    volume = volume * 10U + digit;
+    value++;
+    digits++;
+  }
+  if (digits && volume <= 100U &&
+      (*value == '\0' || *value == '\n' || *value == '\r'))
+    hda_set_volume((uint8_t)volume);
+}
+
 /* The kernel starts only the user-mode init process. Init owns shell restart
  * policy; the kernel supervisor is retained as a boot recovery path. */
 static void user_init_supervisor_task(void) {
@@ -820,6 +850,7 @@ void kernel_main_continue(void) {
   }
 
   init_filesystem(kernel_test_mode);
+  load_audio_volume_config();
 
   init_tasking();
   init_timer(100);

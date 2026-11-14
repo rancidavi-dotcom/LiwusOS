@@ -556,6 +556,9 @@ static lv_obj_t *win_about = NULL;
 static lv_obj_t *win_settings = NULL;
 static lv_obj_t *lbl_settings_network = NULL;
 static lv_obj_t *lbl_settings_status = NULL;
+static lv_obj_t *lbl_settings_volume = NULL;
+static lv_obj_t *slider_settings_volume = NULL;
+static bool g_settings_volume_loaded = false;
 static lv_obj_t *btn_settings_layout[3];
 static lv_obj_t *dd_settings_resolution = NULL;
 static lv_obj_t *lbl_settings_display = NULL;
@@ -840,6 +843,42 @@ static void settings_refresh_choices(void) {
                                   lv_color_hex(active ? 0x215d80 : BZ_BUTTON), 0);
         lv_obj_set_style_border_color(btn_settings_layout[i],
                                       lv_color_hex(active ? BZ_ACCENT : BZ_BUTTON_LINE), 0);
+    }
+}
+
+static void settings_load_volume(void) {
+    if (g_settings_volume_loaded) return;
+    g_settings_volume_loaded = true;
+    uint8_t volume = hda_get_volume();
+    if (slider_settings_volume)
+        lv_slider_set_value(slider_settings_volume, volume, LV_ANIM_OFF);
+    if (lbl_settings_volume)
+        lv_label_set_text_fmt(lbl_settings_volume, "%u%%", (unsigned)volume);
+}
+
+static void settings_volume_cb(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (!slider_settings_volume) return;
+    uint8_t volume = (uint8_t)lv_slider_get_value(slider_settings_volume);
+    hda_set_volume(volume);
+    if (lbl_settings_volume)
+        lv_label_set_text_fmt(lbl_settings_volume, "%u%%", (unsigned)volume);
+    if (code != LV_EVENT_RELEASED) return;
+
+    sdfs_create_dir("/etc");
+    char value[8];
+    itoa((int)volume, value, 10);
+    char saved[24] = "VOLUME=";
+    strcat(saved, value);
+    strcat(saved, "\n");
+    uint32_t size = (uint32_t)strlen(saved);
+    if (sdfs_write_file("/etc/sound.conf", (uint8_t *)saved, size) != size) {
+        if (lbl_settings_status)
+            lv_label_set_text(lbl_settings_status,
+                "Volume aplicado agora; nao foi possivel salvar no disco.");
+    } else if (lbl_settings_status) {
+        lv_label_set_text(lbl_settings_status,
+            "Volume aplicado e salvo para os proximos boots.");
     }
 }
 
@@ -1228,7 +1267,7 @@ static void create_settings_window(void) {
     uint32_t sw = desktop_screen_w();
     uint32_t sh = desktop_screen_h();
     lv_coord_t ww = sw >= 1100 ? 700 : 660;
-    lv_coord_t wh = 450;
+    lv_coord_t wh = sh >= 800 ? 600 : 450;
     lv_coord_t x = ((lv_coord_t)sw - ww) / 2;
     lv_coord_t y = ((lv_coord_t)sh - PANEL_H - wh) / 2;
     if (x < 0) x = 8;
@@ -1331,15 +1370,48 @@ static void create_settings_window(void) {
     lv_obj_set_style_text_color(display_note, lv_color_hex(BZ_TEXT_DIM), 0);
     lv_obj_align(display_note, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
+    lv_obj_t *sound_card = lv_obj_create(content);
+    lv_obj_set_size(sound_card, 616, 100);
+    lv_obj_set_pos(sound_card, 0, 362);
+    lv_obj_clear_flag(sound_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(sound_card, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_bg_opa(sound_card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(sound_card, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_radius(sound_card, 4, 0);
+    lv_obj_set_style_pad_all(sound_card, 12, 0);
+    lv_obj_t *sound_title = lv_label_create(sound_card);
+    lv_label_set_text(sound_title, "AUDIO");
+    lv_obj_set_style_text_color(sound_title, lv_color_hex(BZ_ACCENT), 0);
+    lv_obj_align(sound_title, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_t *sound_note = lv_label_create(sound_card);
+    lv_label_set_text(sound_note, hda_is_available() ?
+        "Volume dos novos sons; alteracao imediata." :
+        "HDA indisponivel; preferencia salva para o proximo boot.");
+    lv_obj_set_style_text_color(sound_note, lv_color_hex(BZ_TEXT_DIM), 0);
+    lv_obj_align(sound_note, LV_ALIGN_TOP_LEFT, 0, 23);
+    slider_settings_volume = lv_slider_create(sound_card);
+    lv_obj_set_size(slider_settings_volume, 500, 18);
+    lv_obj_set_pos(slider_settings_volume, 0, 54);
+    lv_slider_set_range(slider_settings_volume, 0, 100);
+    lv_obj_set_style_bg_color(slider_settings_volume, lv_color_hex(BZ_BUTTON), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(slider_settings_volume, lv_color_hex(BZ_ACCENT), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider_settings_volume, lv_color_hex(BZ_TEXT), LV_PART_KNOB);
+    lbl_settings_volume = lv_label_create(sound_card);
+    lv_obj_set_width(lbl_settings_volume, 54);
+    lv_obj_align(lbl_settings_volume, LV_ALIGN_TOP_RIGHT, 0, 52);
+
     lbl_settings_status = lv_label_create(content);
     lv_obj_set_width(lbl_settings_status, lv_pct(100));
     lv_label_set_long_mode(lbl_settings_status, LV_LABEL_LONG_DOT);
     lv_label_set_text(lbl_settings_status, "Escolha uma resolucao anunciada pelo monitor e aplique.");
-    lv_obj_align(lbl_settings_status, LV_ALIGN_TOP_LEFT, 0, 356);
+    lv_obj_align(lbl_settings_status, LV_ALIGN_TOP_LEFT, 0, 474);
     lv_obj_set_style_text_color(lbl_settings_status, lv_color_hex(BZ_TEXT_DIM), 0);
     settings_refresh_choices();
     settings_load_display_modes();
     settings_refresh_network();
+    settings_load_volume();
+    lv_obj_add_event_cb(slider_settings_volume, settings_volume_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(slider_settings_volume, settings_volume_cb, LV_EVENT_RELEASED, NULL);
     lv_obj_add_flag(win_settings, LV_OBJ_FLAG_HIDDEN);
 }
 
