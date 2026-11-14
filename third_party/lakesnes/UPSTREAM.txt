@@ -1,0 +1,5 @@
+LakeSnes emulator core
+Upstream: https://github.com/dinkc64/LakeSnes
+Upstream revision: 048a0d72568668f74e0cdf371dcd9e8efd614965
+License: MIT (see LICENSE.txt)
+LiwusOS adapter: programs/snes/

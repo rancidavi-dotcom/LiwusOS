@@ -731,6 +731,7 @@ void kernel_main_continue(void) {
   acpi_init();
   init_apic();
   pci_init();
+  vga_display_init();
   pci_print_usb_inventory();
   pci_probe_ehci_readonly();
   boot_stage("pci ok");

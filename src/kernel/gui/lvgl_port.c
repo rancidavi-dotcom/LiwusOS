@@ -83,6 +83,31 @@ void lvgl_port_update(void) {
     lv_timer_handler();
 }
 
+int lvgl_port_set_resolution(uint16_t width, uint16_t height) {
+    if (!width || !height || !g_buf1) return -1;
+    uint32_t pixels = (uint32_t)width * DISP_BUF_LINES;
+    lv_color_t *new_buf = (lv_color_t *)kmalloc(pixels * sizeof(lv_color_t));
+    if (!new_buf) return -2;
+    if (vga_display_set_mode(width, height) < 0) {
+        kfree(new_buf);
+        return -3;
+    }
+    lv_color_t *old_buf = g_buf1;
+    g_buf1 = new_buf;
+    lv_disp_draw_buf_init(&g_disp_buf, g_buf1, NULL, pixels);
+    g_disp_drv.hor_res = width;
+    g_disp_drv.ver_res = height;
+    g_disp_drv.draw_buf = &g_disp_buf;
+    lv_disp_t *disp = lv_disp_get_default();
+    if (!disp) {
+        kfree(old_buf);
+        return -4;
+    }
+    lv_disp_drv_update(disp, &g_disp_drv);
+    kfree(old_buf);
+    return 0;
+}
+
 lv_indev_t *lvgl_get_mouse_indev(void) {
     return g_mouse_indev;
 }

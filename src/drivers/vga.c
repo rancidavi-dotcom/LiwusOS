@@ -5,6 +5,7 @@
 #include "string.h"
 #include "vmm.h"
 #include "kernel_layout.h"
+#include "pci.h"
 #include <stdbool.h>
 
 extern void fast_memcpy(void *dst, const void *src, uint64_t size);
@@ -24,12 +25,293 @@ uint8_t vga_fb_blue_size = 0;
 
 static bool is_framebuffer = false;
 static uint32_t *vga_backbuffer = NULL;
+static size_t vga_row = 0;
+static size_t vga_column = 0;
+static int font_width = 8;
+static int font_height = 16;
+static size_t max_cols = 80;
+static size_t max_rows = 25;
+static vga_display_mode_t display_modes[VGA_DISPLAY_MAX_MODES];
+static size_t display_mode_count = 0;
+static uint16_t display_max_x = 0, display_max_y = 0, display_vram_kb = 0;
+static bool display_backend_ready = false;
+static uint16_t display_gpu_vendor = 0, display_gpu_device = 0;
+
+#define VBE_INDEX_PORT 0x01CE
+#define VBE_DATA_PORT  0x01CF
+#define VBE_XRES       0x01
+#define VBE_YRES       0x02
+#define VBE_BPP        0x03
+#define VBE_ENABLE     0x04
+#define VBE_VIDEO_MEM  0x0A
+#define VBE_ID         0x00
+#define VBE_GETCAPS    0x02
+#define VBE_ENABLED    0x01
+#define VBE_LFB        0x40
+#define VBE_NOCLEARMEM 0x80
+
+static uint16_t vbe_read(uint16_t index) {
+    outw(VBE_INDEX_PORT, index);
+    return inw(VBE_DATA_PORT);
+}
+
+static void vbe_write(uint16_t index, uint16_t value) {
+    outw(VBE_INDEX_PORT, index);
+    outw(VBE_DATA_PORT, value);
+}
+
+static int edid_checksum_valid(const uint8_t *block) {
+    uint8_t sum = 0;
+    for (int i = 0; i < 128; i++) sum = (uint8_t)(sum + block[i]);
+    return sum == 0;
+}
+
+static void display_add_mode(uint16_t width, uint16_t height) {
+    if (!display_backend_ready || width < 320 || height < 200 ||
+        width > display_max_x || height > display_max_y || (width & 7) ||
+        (uint64_t)width * height * 4 > (uint64_t)display_vram_kb * 1024)
+        return;
+    for (size_t i = 0; i < display_mode_count; i++)
+        if (display_modes[i].width == width && display_modes[i].height == height) return;
+    if (display_mode_count >= VGA_DISPLAY_MAX_MODES) return;
+    size_t at = display_mode_count++;
+    while (at && (uint32_t)display_modes[at - 1].width * display_modes[at - 1].height >
+                  (uint32_t)width * height) {
+        display_modes[at] = display_modes[at - 1];
+        at--;
+    }
+    display_modes[at].width = width;
+    display_modes[at].height = height;
+}
+
+static void edid_add_detailed(const uint8_t *d) {
+    uint32_t clock = (uint32_t)d[0] | ((uint32_t)d[1] << 8);
+    if (!clock) return;
+    uint16_t h = (uint16_t)(d[2] | ((d[4] & 0xF0) << 4));
+    uint16_t v = (uint16_t)(d[5] | ((d[7] & 0xF0) << 4));
+    display_add_mode(h, v);
+}
+
+static void edid_parse_base(const uint8_t *edid) {
+    static const uint16_t established[][2] = {
+        {720,400},{720,400},{640,480},{640,480},{640,480},{640,480},
+        {800,600},{800,600},{800,600},{800,600},{832,624},{1024,768},
+        {1024,768},{1024,768},{1024,768},{1280,1024},{1152,870}
+    };
+    static const uint8_t bitpos[] = {7,6,5,4,3,2,1,0};
+    for (int b = 0; b < 3; b++) {
+        for (int bit = 0; bit < 8; bit++)
+            if (edid[35 + b] & (1u << bit)) {
+                int idx = b * 8 + bit;
+                if (idx < (int)(sizeof(established) / sizeof(established[0])))
+                    display_add_mode(established[idx][0], established[idx][1]);
+            }
+    }
+    (void)bitpos;
+    for (int i = 0; i < 8; i++) {
+        uint8_t a = edid[38 + i * 2], b = edid[39 + i * 2];
+        if (a == 1 && b == 1) continue;
+        uint16_t w = (uint16_t)(a * 8 + 248);
+        uint8_t aspect = b >> 6;
+        uint16_t h = aspect == 0 ? (uint16_t)(w * 10 / 16) :
+                     aspect == 1 ? (uint16_t)(w * 3 / 4) :
+                     aspect == 2 ? (uint16_t)(w * 4 / 5) : (uint16_t)(w * 9 / 16);
+        display_add_mode(w, h);
+    }
+    for (int i = 0; i < 4; i++) edid_add_detailed(edid + 54 + i * 18);
+}
+
+static void edid_parse_cta(const uint8_t *block) {
+    static const uint16_t vic[][2] = {
+        {0,0},{640,480},{720,480},{720,480},{1280,720},{1920,1080},
+        {720,480},{720,480},{720,240},{720,240},{2880,480},{2880,480},
+        {2880,240},{2880,240},{1440,480},{1440,480},{1920,1080},
+        {720,576},{720,576},{1280,720},{1920,1080},{720,576},{720,576},
+        {720,288},{720,288},{2880,576},{2880,576},{2880,288},{2880,288},
+        {1440,576},{1440,576},{1920,1080},{1920,1080},{1920,1080},
+        {1920,1080},{1920,1080},{1920,1080},{1920,1080},{1920,1080},
+        {1920,1080},{1920,1080},{1280,720},{1280,720},{1280,720},
+        {1280,720},{1280,720},{1280,720},{1280,720},{1280,720},
+        {1280,720},{1280,720},{720,576},{720,576},{720,576},{720,576},
+        {720,576},{720,576},{720,576},{720,576},{720,576},{720,576},
+        {720,480},{720,480},{720,480},{720,480},{720,480},{720,480},
+        {720,480},{720,480},{720,480},{720,480},{1920,1080},{1920,1080},
+        {1920,1080},{1920,1080},{1920,1080},{1920,1080},{1920,1080},
+        {1920,1080},{1920,1080},{1920,1080},{1920,1080},{1920,1080},
+        {1920,1080},{1920,1080},{1920,1080},{1920,1080},{1920,1080},
+        {3840,2160},{3840,2160},{3840,2160},{3840,2160},{3840,2160},
+        {3840,2160},{3840,2160},{3840,2160},{3840,2160},{3840,2160},
+        {4096,2160},{4096,2160},{4096,2160},{4096,2160},{4096,2160},
+        {4096,2160},{4096,2160},{4096,2160},{4096,2160},{4096,2160}
+    };
+    uint8_t end = block[2];
+    if (end < 4 || end > 127) end = 127;
+    for (uint8_t p = 4; p < end;) {
+        uint8_t header = block[p++];
+        uint8_t tag = header >> 5, len = header & 0x1F;
+        if ((uint16_t)p + len > end) break;
+        if (tag == 2) {
+            for (uint8_t i = 0; i < len; i++) {
+                uint8_t code = block[p + i] & 0x7F;
+                if (code && code < sizeof(vic) / sizeof(vic[0]))
+                    display_add_mode(vic[code][0], vic[code][1]);
+            }
+        }
+        p = (uint8_t)(p + len);
+    }
+    for (uint8_t p = end; p + 18 <= 127; p += 18) edid_add_detailed(block + p);
+}
+
+bool vga_display_backend_ready(void) { return display_backend_ready; }
+
+int vga_display_adapter_ids(uint16_t *vendor_id, uint16_t *device_id) {
+    if (!display_gpu_vendor || !display_gpu_device) return 0;
+    if (vendor_id) *vendor_id = display_gpu_vendor;
+    if (device_id) *device_id = display_gpu_device;
+    return 1;
+}
+
+int vga_display_modes(vga_display_mode_t *out, size_t capacity) {
+    if (!display_backend_ready || !out || !capacity) return -1;
+    size_t n = display_mode_count < capacity ? display_mode_count : capacity;
+    memcpy(out, display_modes, n * sizeof(*out));
+    return (int)n;
+}
+
+static void vbe_restore_mode(uint16_t x, uint16_t y, uint16_t bpp, uint16_t enabled) {
+    vbe_write(VBE_ENABLE, 0);
+    vbe_write(VBE_XRES, x);
+    vbe_write(VBE_YRES, y);
+    vbe_write(VBE_BPP, bpp);
+    vbe_write(VBE_ENABLE, enabled);
+}
+
+int vga_display_set_mode(uint16_t width, uint16_t height) {
+    bool advertised = false;
+    for (size_t i = 0; i < display_mode_count; i++)
+        if (display_modes[i].width == width && display_modes[i].height == height) advertised = true;
+    if (!display_backend_ready || !advertised || width > display_max_x || height > display_max_y) return -1;
+    uint32_t pitch = (uint32_t)width * 4U;
+    uint64_t size = (uint64_t)pitch * height;
+    uint32_t *new_back = (uint32_t *)kmalloc((size_t)size);
+    if (!new_back) return -2;
+    memset(new_back, 0, (size_t)size);
+
+    uint16_t old_x = vbe_read(VBE_XRES), old_y = vbe_read(VBE_YRES);
+    uint16_t old_bpp = vbe_read(VBE_BPP), old_en = vbe_read(VBE_ENABLE);
+    vbe_restore_mode(width, height, 32, VBE_ENABLED | VBE_LFB | VBE_NOCLEARMEM);
+    uint16_t actual_x = vbe_read(VBE_XRES), actual_y = vbe_read(VBE_YRES);
+    if (actual_x != width || actual_y != height || vga_fb_addr == 0) {
+        vbe_restore_mode(old_x, old_y, old_bpp, old_en);
+        kfree(new_back);
+        return -3;
+    }
+
+    vmm_map_framebuffer(vga_fb_addr, size);
+    uint32_t *old_back = vga_backbuffer;
+    vga_fb_width = width;
+    vga_fb_height = height;
+    vga_fb_pitch = pitch;
+    vga_fb_bpp = 32;
+    vga_backbuffer = new_back;
+    max_cols = width / (size_t)font_width;
+    max_rows = height / (size_t)font_height;
+    vga_row = vga_column = 0;
+    if (old_back) kfree(old_back);
+    vga_clear_framebuffer(0x00111A24U);
+    vga_flip();
+    return 0;
+}
+
+void vga_display_init(void) {
+    display_backend_ready = false;
+    display_mode_count = 0;
+    pci_device_t *gpu = pci_get_gpu();
+    display_gpu_vendor = gpu ? gpu->vendor_id : 0;
+    display_gpu_device = gpu ? gpu->device_id : 0;
+    if (gpu) {
+        serial_print("[display] PCI adapter ");
+        serial_print_hex(gpu->vendor_id);
+        serial_print(":");
+        serial_print_hex(gpu->device_id);
+        serial_print(" at ");
+        serial_print_hex(gpu->bus);
+        serial_print(":");
+        serial_print_hex(gpu->device);
+        serial_print(".");
+        serial_print_hex(gpu->function);
+        serial_print("\n");
+    } else {
+        serial_print("[display] no PCI display adapter found\n");
+    }
+    if (!gpu || gpu->vendor_id != 0x1234 || gpu->device_id != 0x1111) {
+        serial_print("[display] EDID/VBE backend unavailable: unsupported GPU\n");
+        return;
+    }
+
+    uint16_t command = (uint16_t)pci_read_config(gpu->bus, gpu->device, gpu->function, 0x04);
+    pci_write_config(gpu->bus, gpu->device, gpu->function, 0x04, command | 0x0003);
+    uint32_t bar_low = pci_read_config(gpu->bus, gpu->device, gpu->function, 0x18);
+    if ((bar_low & 1) || (bar_low & 6) != 0) {
+        serial_print("[display] VGA EDID BAR is not a 32-bit MMIO region\n");
+        return;
+    }
+    uint64_t edid_phys = (uint64_t)(bar_low & ~0xFULL);
+    if (bar_low & 4) edid_phys |= (uint64_t)pci_read_config(gpu->bus, gpu->device, gpu->function, 0x1C) << 32;
+    if (!edid_phys || edid_phys > DIRECT_MAP_SIZE - 4096) {
+        serial_print("[display] VGA EDID BAR address is invalid\n");
+        return;
+    }
+    vmm_map_framebuffer(edid_phys, 4096);
+    volatile const uint8_t *mmio = (volatile const uint8_t *)phys_to_virt(edid_phys);
+    static uint8_t edid[4 * 128];
+    for (size_t i = 0; i < sizeof(edid); i++) edid[i] = mmio[i];
+    static const uint8_t signature[8] = {0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00};
+    if (memcmp(edid, signature, sizeof(signature)) || !edid_checksum_valid(edid)) {
+        serial_print("[display] VGA EDID signature/checksum invalid\n");
+        return;
+    }
+
+    uint16_t enable = vbe_read(VBE_ENABLE);
+    uint16_t id = vbe_read(VBE_ID);
+    if (id < 0xB0C0 || id > 0xB0C5) {
+        serial_print("[display] Bochs VBE DISPI registers not detected\n");
+        return;
+    }
+    vbe_write(VBE_ENABLE, VBE_GETCAPS);
+    display_max_x = vbe_read(VBE_XRES);
+    display_max_y = vbe_read(VBE_YRES);
+    uint16_t max_bpp = vbe_read(VBE_BPP);
+    display_vram_kb = (uint16_t)(vbe_read(VBE_VIDEO_MEM) * 64U);
+    vbe_write(VBE_ENABLE, enable);
+    if (max_bpp < 32 || !display_max_x || !display_max_y || !display_vram_kb) {
+        serial_print("[display] VBE reports no usable 32-bit mode\n");
+        return;
+    }
+
+    display_backend_ready = true;
+    edid_parse_base(edid);
+    uint8_t extensions = edid[126];
+    if (extensions > 3) extensions = 3;
+    for (uint8_t i = 1; i <= extensions; i++) {
+        const uint8_t *block = edid + (size_t)i * 128;
+        if (edid_checksum_valid(block) && block[0] == 0x02) edid_parse_cta(block);
+    }
+    display_add_mode((uint16_t)vga_fb_width, (uint16_t)vga_fb_height);
+    if (!display_mode_count) {
+        display_backend_ready = false;
+        serial_print("[display] monitor EDID contains no usable modes\n");
+        return;
+    }
+    serial_print("[display] QEMU VBE + EDID modes=");
+    char count_buf[16]; itoa((int)display_mode_count, count_buf, 10); serial_print(count_buf);
+    serial_print(" max="); itoa(display_max_x, count_buf, 10); serial_print(count_buf);
+    serial_print("x"); itoa(display_max_y, count_buf, 10); serial_print(count_buf); serial_print("\n");
+}
 
 // Fallback text mode buffer
 static uint16_t *text_buffer;
 
-static size_t vga_row = 0;
-static size_t vga_column = 0;
 static uint8_t vga_color = 0;
 static uint32_t vga_fg_color = 0xFFFFFF; // White
 static uint32_t vga_bg_color = 0x000000; // Black
@@ -38,13 +320,9 @@ static uint32_t vga_bg_color = 0x000000; // Black
 extern uint8_t _binary_src_drivers_font_psf_start[];
 extern char _binary_src_drivers_font_psf_end;
 static uint8_t* font_data = NULL;
-static int font_width = 8;
-static int font_height = 16;
 static int font_bpg = 16; // bytes per glyph
 
 // Columns and rows available
-static size_t max_cols = 80;
-static size_t max_rows = 25;
 
 // ANSI escape sequence parser state
 static int vga_esc_state = 0; 

@@ -85,6 +85,7 @@ void cmd_help(int argc, char **argv) {
     }
     vga_puts("\n=== Programas Executáveis (/bin) ===\n");
     vga_puts("  doom        - Jogo DOOM Shareware em tela cheia\n");
+    vga_puts("  snes        - Emulador de SNES em tela cheia\n");
     vga_puts("  kilo        - Editor de texto em tela cheia (Kilo)\n");
     vga_puts("  cat         - Exibir conteúdo de arquivos\n");
     vga_puts("  head        - Exibir primeiras linhas de arquivo\n");

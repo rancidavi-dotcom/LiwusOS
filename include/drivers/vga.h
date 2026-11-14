@@ -5,6 +5,12 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#define VGA_DISPLAY_MAX_MODES 32
+typedef struct {
+    uint16_t width;
+    uint16_t height;
+} vga_display_mode_t;
+
 #define VGA_WIDTH 80
 #define VGA_HEIGHT 25
 #define VGA_ADDRESS 0xB8000
@@ -55,6 +61,13 @@ uint32_t vga_get_fb_pitch(void);
 void vga_flip(void);
 void vga_clear_framebuffer(uint32_t xrgb);
 int vga_blit_rgb32(const uint32_t *src, uint32_t src_w, uint32_t src_h);
+
+/* QEMU/Bochs Standard VGA: advertised EDID modes and live VBE mode setting. */
+int vga_display_modes(vga_display_mode_t *out, size_t capacity);
+int vga_display_set_mode(uint16_t width, uint16_t height);
+bool vga_display_backend_ready(void);
+int vga_display_adapter_ids(uint16_t *vendor_id, uint16_t *device_id);
+void vga_display_init(void);
 
 /* Allocates a 24-bit BMP snapshot of the current RGB framebuffer with kmalloc. */
 int vga_capture_bmp(uint8_t **out_data, uint32_t *out_size);

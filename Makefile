@@ -152,6 +152,7 @@ C_DEMO_LXE = build/liwus-sdk/bin/c_demo.lxe
 TCC_LXE = build/liwus-sdk/bin/tcc.lxe
 KILO_LXE = build/liwus-sdk/bin/kilo.lxe
 DOOM_LXE = build/liwus-sdk/bin/doom.lxe
+SNES_LXE = build/liwus-sdk/bin/snes.lxe
 NEOFETCH_LXE = build/liwus-sdk/bin/neofetch.lxe
 SNAKE_LXE = build/liwus-sdk/bin/snake.lxe
 MATRIX_LXE = build/liwus-sdk/bin/matrix.lxe
@@ -173,7 +174,7 @@ SDK_HEADERS_STAMP = build/liwus-sdk/include/.headers-installed
 user-c-example: $(RING3_C_APP_ELF)
 
 sdk: $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) \
-	$(NATIVE_UTIL_LXES) $(PKG_REPO_LXES) $(SDK_LIBRARY) $(SDK_CRT0) \
+	$(NATIVE_UTIL_LXES) $(PKG_REPO_LXES) $(SNES_LXE) $(SDK_LIBRARY) $(SDK_CRT0) \
 	$(SDK_HEADERS_STAMP) $(SDK_LINKER_SCRIPT)
 
 # Install only the public SDK artifacts. SDK_PREFIX is deliberately explicit
@@ -253,6 +254,13 @@ $(KILO_LXE): $(wildcard programs/kilo/*.c) programs/kilo/Makefile $(SDK_LIBRARY)
 
 $(DOOM_LXE): $(wildcard programs/doom/*.c) $(wildcard programs/doom/*.h) programs/doom/Makefile $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
 	$(MAKE) -j$(shell nproc) -C programs/doom all
+
+$(SNES_LXE): $(wildcard programs/snes/*.c) programs/snes/Makefile \
+		$(wildcard third_party/lakesnes/snes/*.c) \
+		$(wildcard third_party/lakesnes/snes/*.h) \
+		$(SDK_LIBRARY) $(SDK_OPENLIBM) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
+	$(MAKE) -C programs/snes all
+
 
 $(NEOFETCH_LXE): programs/neofetch/main.c programs/neofetch/Makefile programs/native-app.mk $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
 	$(MAKE) -C programs/neofetch all
@@ -575,7 +583,7 @@ $(USER_EDITOR_ELF): $(OBJ_DIR)/programs/user_editor/main.o $(OBJ_DIR)/programs/u
 		-Wl,-T,programs/user_editor/linker.ld -o $@ \
 		$(OBJ_DIR)/programs/user_editor/start.o $(OBJ_DIR)/programs/user_editor/runtime.o $(OBJ_DIR)/programs/user_editor/main.o
 
-$(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) $(NATIVE_UTIL_LXES) $(PKG_REPO_LXES) $(KILO_LXE) $(DOOM_LXE) $(TCC_LXE) $(C_DEMO_LXE) assets/readme.txt assets/doom1.wad
+$(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) $(NATIVE_UTIL_LXES) $(PKG_REPO_LXES) $(KILO_LXE) $(DOOM_LXE) $(SNES_LXE) $(TCC_LXE) $(C_DEMO_LXE) assets/readme.txt assets/doom1.wad
 	@mkdir -p repo build/hd_isodir/boot/grub
 	cp $(KERNEL_BIN) build/hd_isodir/boot/kernel.bin
 	printf 'set timeout=1\nset default=0\ninsmod all_video\ninsmod gfxterm\ninsmod vbe\ninsmod vga\nmenuentry "LiwusOS x86_64 (Instalado no HD)" {\n\tset gfxpayload=1920x1080x32,1600x900x32,1366x768x32,1024x768x32,800x600x32,auto\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\n' > build/hd_isodir/boot/grub/grub.cfg
@@ -590,6 +598,8 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 	tar -rf initrd.tar --format=ustar --transform='s|doom.lxe|doom.lxe|' -C build/liwus-sdk/bin doom.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|doom.lxe|bin/doom|' -C build/liwus-sdk/bin doom.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|doom.lxe|bin/doom.lxe|' -C build/liwus-sdk/bin doom.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|snes.lxe|bin/snes|' -C build/liwus-sdk/bin snes.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|snes.lxe|bin/snes.lxe|' -C build/liwus-sdk/bin snes.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|native-hello.lxe|bin/native-hello.lxe|' -C build/liwus-sdk/bin native-hello.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|liwsh.lxe|liwsh.lxe|' -C build/liwus-sdk/bin liwsh.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|liwsh.lxe|bin/liwsh.lxe|' -C build/liwus-sdk/bin liwsh.lxe
