@@ -21,7 +21,7 @@
 
 LiwusOS is an experimental, self-contained operating system for x86_64. It boots
 from Multiboot2/GRUB, runs its own kernel in long mode, and executes native
-ring-3 programs from SDFS. The current release line is 2.2.18. The tree includes
+ring-3 programs from SDFS. The current release line is 2.2.19. The tree includes
 an LVGL desktop, a native browser, networking, audio support, a native SDK and
 the `lpkg` system updater; this is an active experimental system, not a finished
 desktop distribution.

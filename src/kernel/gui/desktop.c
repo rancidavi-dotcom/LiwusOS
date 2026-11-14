@@ -4284,28 +4284,18 @@ void desktop_init(void) {
     lvgl_port_init();
     html_fonts_init();
 
-    /* Auto-promocao para a melhor resolucao de tela suportada pelo hardware / monitor */
+    /* Seleciona a maior resolucao anunciada pelo monitor via EDID. */
     if (vga_display_backend_ready()) {
         vga_display_mode_t modes[VGA_DISPLAY_MAX_MODES];
         int nmodes = vga_display_modes(modes, VGA_DISPLAY_MAX_MODES);
         uint16_t cur_w = (uint16_t)desktop_screen_w();
         uint16_t cur_h = (uint16_t)desktop_screen_h();
-        uint16_t best_w = cur_w;
-        uint16_t best_h = cur_h;
-        for (int i = 0; i < nmodes; i++) {
-            if (modes[i].width == 1920 && modes[i].height == 1080) {
-                best_w = 1920; best_h = 1080;
-                break;
-            } else if (modes[i].width == 1600 && modes[i].height == 900 && best_w < 1600) {
-                best_w = 1600; best_h = 900;
-            } else if (modes[i].width == 1366 && modes[i].height == 768 && best_w < 1366) {
-                best_w = 1366; best_h = 768;
-            } else if (modes[i].width == 1280 && modes[i].height == 720 && best_w < 1280) {
-                best_w = 1280; best_h = 720;
-            }
-        }
-        if (best_w > cur_w || best_h > cur_h) {
-            lvgl_port_set_resolution(best_w, best_h);
+        if (nmodes > 0) {
+            const vga_display_mode_t *largest = &modes[nmodes - 1];
+            uint64_t current_pixels = (uint64_t)cur_w * cur_h;
+            uint64_t largest_pixels = (uint64_t)largest->width * largest->height;
+            if (largest_pixels > current_pixels)
+                lvgl_port_set_resolution(largest->width, largest->height);
         }
     }
 

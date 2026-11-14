@@ -135,4 +135,13 @@ do Settings em telas pequenas, impede downgrade pelo LPkg e trata falhas de
 redirecionamento e sintaxe incompatível no `liwsh`. O `hd_boot.img` tem
 5.263.360 bytes (CRC32 `18a73753`) e o `system-update.tar` tem 14.376.960 bytes
 (CRC32 `6dcf7865`). Para receber esta versão em uma instalação com OTA
-habilitado, execute `lpkg sysupdate` e reinicie.
+habilitado, execute `lpkg sysupdate` e reinicie. A publicação 2.2.19 abaixo
+inclui a seleção automática do maior modo efetivamente anunciado pelo monitor.
+
+## Publicação 2.2.19 — 2026-11-14
+
+Ao iniciar com o backend EDID/VBE disponível, o desktop agora escolhe o maior
+modo anunciado pelo monitor, sem limitar a seleção a uma lista fixa de quatro
+resoluções. O `hd_boot.img` tem 5.263.360 bytes (CRC32 `bf3ee3a3`) e o
+`system-update.tar` tem 14.376.960 bytes (CRC32 `6dcf7865`). Para instalar via
+OTA, execute `lpkg sysupdate` e reinicie.
