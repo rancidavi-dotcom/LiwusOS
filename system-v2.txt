@@ -1,10 +1,10 @@
-VERSION=2.2.16
+VERSION=2.2.17
 DATE=2026-11-14
 PACKAGES=kilo,c_demo,neofetch,sysbench
-NOTES=LiwusOS 2.2.16: resolucao widescreen automatica, icones e alinhamento de botoes
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.16
+NOTES=LiwusOS 2.2.17: resolucao widescreen automatica, correcao de icones e alinhamento de botoes
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.17
 BOOT_IMAGE_SIZE=5259264
-BOOT_IMAGE_CRC32=731f2b59
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.16
+BOOT_IMAGE_CRC32=c935ea6d
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.17
 SYSTEM_ARCHIVE_SIZE=14376960
 SYSTEM_ARCHIVE_CRC32=e18adee4
