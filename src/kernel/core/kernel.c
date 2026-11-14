@@ -1,6 +1,7 @@
 #include "ata.h"
 #include "ahci.h"
 #include "sdfs.h"
+#include "usb_msc.h"
 #include "mouse.h"
 #include "usb_xhci.h"
 #include "usb_ehci.h"
@@ -17,6 +18,7 @@
 #include "serial.h"
 #include "string.h"
 #include "task.h"
+#include "fpu.h"
 #include "timer.h"
 #include "vfs.h"
 #include "syscall.h"
@@ -26,6 +28,8 @@
 #include "terminal.h"
 #include "kernel_layout.h"
 #include "net_manager.h"
+#include "desktop.h"
+#include "hda.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -78,6 +82,8 @@ void kernel_panic(const char *msg) {
 }
 
 bool is_live_mode = true;
+static bool force_text_mode = false;
+char g_system_hostname[32] = "liwus";
 uint64_t memory_size = 0;
 uint32_t mb2_mods_count = 0;
 uint64_t mb2_mods_addr[16]; /* physical addresses of up to 16 Multiboot2 tags */
@@ -102,8 +108,20 @@ static void parse_multiboot2(uint32_t mbi_addr) {
       uint32_t size;
     } __attribute__((packed)) *tag = (void *)((uint64_t)mbi_addr + offset);
 
-    if (tag->type == 1) { /* Basic memory info */
-      // Ignored in favor of memory map (tag 6) for >4GB support
+    if (tag->type == 1 && tag->size > 8) { /* Boot command line */
+      const char *cmdline = (const char *)((uint64_t)tag + 8);
+      if (strstr(cmdline, "mode=hd") || strstr(cmdline, "boot=hd")) {
+        is_live_mode = false;
+      } else if (strstr(cmdline, "mode=live") || strstr(cmdline, "boot=live")) {
+        is_live_mode = true;
+      }
+      if (strstr(cmdline, "mode=text")) force_text_mode = true;
+      if (strstr(cmdline, "kbd=us-intl"))
+        keyboard_set_layout(KB_LAYOUT_US_INTL);
+      else if (strstr(cmdline, "kbd=us"))
+        keyboard_set_layout(KB_LAYOUT_US);
+      else if (strstr(cmdline, "kbd=abnt2"))
+        keyboard_set_layout(KB_LAYOUT_ABNT2);
     } else if (tag->type == 6) { /* Memory map */
       struct {
         uint32_t type, size;
@@ -349,7 +367,12 @@ static int find_pmm_bitmap_region(uint32_t mbi_addr, uint64_t kernel_end,
   return -1;
 }
 
-void init_fpu() {
+uint32_t fpu_context_size = 512;
+uint64_t fpu_context_mask = 0;
+int fpu_xsave_enabled = 0;
+static int fpu_state_configured = 0;
+
+void init_fpu(void) {
     uint64_t cr0;
     asm volatile("mov %%cr0, %0" : "=r"(cr0));
     cr0 &= ~(1 << 2);
@@ -361,6 +384,63 @@ void init_fpu() {
     asm volatile("mov %%cr4, %0" : "=r"(cr4));
     cr4 |= (1 << 9);
     cr4 |= (1 << 10);
+
+    uint32_t max_leaf = 0, ebx = 0, ecx = 0, edx = 0;
+    uint32_t eax = 0;
+    asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+    max_leaf = eax;
+    eax = 1;
+    asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+    uint32_t feature_ecx = ecx;
+
+    if (!fpu_state_configured) {
+        fpu_state_configured = 1;
+        /* Manage AVX's YMM upper halves together with x87 and SSE. */
+        if (max_leaf >= 0x0d && (feature_ecx & (1u << 26)) &&
+            (feature_ecx & (1u << 28))) {
+            eax = 0x0d;
+            ecx = 0;
+            asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "+c"(ecx), "=d"(edx));
+            if ((eax & 0x7) == 0x7) {
+                cr4 |= (1u << 18); /* CR4.OSXSAVE enables XGETBV/XSETBV. */
+                asm volatile("mov %0, %%cr4" :: "r"(cr4) : "memory");
+                eax = 0x7;
+                edx = 0;
+                ecx = 0;
+                asm volatile("xsetbv" :: "a"(eax), "d"(edx), "c"(ecx)
+                             : "memory");
+
+                eax = 0x0d;
+                ecx = 0;
+                asm volatile("cpuid" : "+a"(eax), "=b"(ebx), "+c"(ecx), "=d"(edx));
+                if (ebx >= 832) {
+                    fpu_context_size = ebx;
+                    fpu_context_mask = 0x7;
+                    fpu_xsave_enabled = 1;
+                } else {
+                    /* Do not expose AVX if a usable xstate area was not
+                     * enumerated; retain the established FXSAVE contract. */
+                    eax = 0x3;
+                    edx = 0;
+                    ecx = 0;
+                    asm volatile("xsetbv" :: "a"(eax), "d"(edx), "c"(ecx)
+                                 : "memory");
+                    cr4 &= ~(1u << 18);
+                }
+            }
+        }
+    } else if (fpu_xsave_enabled && (feature_ecx & (1u << 26)) &&
+               (feature_ecx & (1u << 28))) {
+        /* APs use the BSP-selected format; never choose a different mask. */
+        cr4 |= (1u << 18);
+        asm volatile("mov %0, %%cr4" :: "r"(cr4) : "memory");
+        uint32_t xcr0_lo = (uint32_t)fpu_context_mask;
+        uint32_t xcr0_hi = (uint32_t)(fpu_context_mask >> 32);
+        ecx = 0;
+        asm volatile("xsetbv" :: "a"(xcr0_lo), "d"(xcr0_hi), "c"(ecx)
+                     : "memory");
+    }
+
     asm volatile("mov %0, %%cr4" :: "r"(cr4));
 
     asm volatile("finit");
@@ -371,70 +451,101 @@ void init_fpu() {
  * formata.  Sem disco, usa um ramdisk de 64 MB.
  * No primeiro boot (modo normal), copia o conteudo do initrd para o SDFS.
  */
+static void load_installed_system_config(void) {
+    uint32_t h_sz = 0;
+    char *h_data = (char *)sdfs_read_file("/etc/hostname", &h_sz);
+    if (h_data && h_sz > 0) {
+        uint32_t i = 0;
+        while (i < h_sz && i < sizeof(g_system_hostname) - 1 &&
+               h_data[i] != '\n' && h_data[i] != '\r' && h_data[i] != ' ') {
+            g_system_hostname[i] = h_data[i];
+            i++;
+        }
+        if (i > 0) g_system_hostname[i] = '\0';
+        kfree(h_data);
+    }
+
+    uint32_t k_sz = 0;
+    char *k_data = (char *)sdfs_read_file("/etc/keyboard.conf", &k_sz);
+    if (k_data && k_sz > 0) {
+        if (strstr(k_data, "US_INTL") || strstr(k_data, "US International"))
+            keyboard_set_layout(KB_LAYOUT_US_INTL);
+        else if (strstr(k_data, "ABNT2"))
+            keyboard_set_layout(KB_LAYOUT_ABNT2);
+        else if (strstr(k_data, "US"))
+            keyboard_set_layout(KB_LAYOUT_US);
+        kfree(k_data);
+    }
+}
+
 static void init_filesystem(int kernel_test_mode) {
     uint16_t disk_bus = ATA_PRIMARY;
     uint8_t disk_drive = ATA_MASTER;
-    fs_node_t *sdfs_root;
+    fs_node_t *sdfs_root = NULL;
 
-    if (ata_find_first(&disk_bus, &disk_drive) == 0) {
-        serial_print("ATA disk found, trying SDFS mount...\n");
-    } else {
-        serial_print("No ATA disk found, trying AHCI/ATA mount...\n");
-    }
-
-    sdfs_root = sdfs_mount(disk_bus, disk_drive, 0);
-    boot_stage("fs: mount tried");
-
-    if (!sdfs_root) {
-        if (sdfs_mount_failed_corrupt()) {
-            /* A recognized but damaged SDFS must never be formatted as a
-             * first-boot fallback. Continue without persistent storage. */
-            serial_print("SDFS: existing filesystem is damaged; refusing reformat\n");
+    /* 1. Kernel self-test mode: keep legacy LBA 0 disk behavior for make test */
+    if (kernel_test_mode) {
+        if (usb_msc_is_available()) {
+            sdfs_root = sdfs_mount_msc();
+        } else if (ata_find_first(&disk_bus, &disk_drive) == 0) {
+            sdfs_root = sdfs_mount(disk_bus, disk_drive, 0);
         } else {
-            serial_print("SDFS: no valid filesystem, formatting disk...\n");
-            vga_puts("Formatting disk for first use...\n");
+            sdfs_root = sdfs_mount(disk_bus, disk_drive, 0);
+        }
+
+        if (!sdfs_root && !sdfs_mount_failed_corrupt()) {
             if (sdfs_format() == 0) {
-                sdfs_root = sdfs_mount(disk_bus, disk_drive, 0);
+                sdfs_root = usb_msc_is_available() ? sdfs_mount_msc()
+                                                   : sdfs_mount(disk_bus, disk_drive, 0);
             }
-            boot_stage("fs: formatted");
+        }
+
+        if (sdfs_root) {
+            vfs_mount("disk:", sdfs_root);
+            vfs_mount("/disk", sdfs_root);
+            vfs_mount("/house/localhost", sdfs_root);
+            vfs_mount("/", sdfs_root);
+            return;
         }
     }
 
-    if (sdfs_root) {
-        vfs_mount("/house/localhost", sdfs_root);
-        vfs_mount("/", sdfs_root);
-        serial_print("SDFS disk mounted at /\n");
-        vga_puts("Disk mounted at /\n");
-
-        if (!kernel_test_mode) {
-            uint32_t installed_size = 0;
-            void *flag = sdfs_read_file("/.system_installed", &installed_size);
-            if (!flag) {
-                serial_print("First boot: copying initrd files to SDFS...\n");
-                ata_set_writeback(1);
-                if (mb2_mods_count > 0) {
-                    initrd_copy_to_sdfs(NULL);
-                }
-                /* The installed marker allocates its own data block. Persist
-                 * it before declaring the first-boot copy complete, otherwise
-                 * a reboot can leave a referenced marker block marked free. */
-                sdfs_create_file("/.system_installed");
-                sdfs_write_file("/.system_installed", (uint8_t *)"1", 1);
-                sdfs_flush_bitmap();
-                ata_flush_cache();
-                ata_set_writeback(0);
-                serial_print("System installed to disk.\n");
-            } else {
-                kfree(flag);
-                serial_print("SDFS: system already installed.\n");
-            }
+    /* 2. Installed HD mode (mode=hd or booted without initrd.tar):
+     *    Mount persistent SDFS partition at SDFS_HD_PARTITION_LBA (LBA 65536). */
+    if (!kernel_test_mode && !is_live_mode) {
+        serial_print("HD Mode: mounting installed system from HD partition...\n");
+        vga_puts("[fs] Inicializando LiwusOS a partir do Disco Rigido (HD)...\n");
+        if (ata_find_first(&disk_bus, &disk_drive) == 0) {
+            sdfs_root = sdfs_mount(disk_bus, disk_drive, SDFS_HD_PARTITION_LBA);
+        } else {
+            sdfs_root = sdfs_mount(disk_bus, disk_drive, SDFS_HD_PARTITION_LBA);
         }
-        return;
+        if (!sdfs_root) {
+            /* Fallback: also check LBA 0 if disk was formatted at LBA 0 */
+            sdfs_root = sdfs_mount(disk_bus, disk_drive, 0);
+        }
+        if (sdfs_root) {
+            if (!fs_root) fs_root = sdfs_root;
+            vfs_mount("disk:", sdfs_root);
+            vfs_mount("/disk", sdfs_root);
+            vfs_mount("/house/localhost", sdfs_root);
+            vfs_mount("/", sdfs_root);
+            if (mb2_mods_count == 0) {
+                vfs_mount("sys:", sdfs_root);
+                vfs_mount("/sys", sdfs_root);
+            }
+            load_installed_system_config();
+            serial_print("HD Mode: SDFS partition mounted at /\n");
+            return;
+        }
+        serial_print("HD Mode: failed to mount HD partition, falling back to Live RAMDisk\n");
     }
 
-    serial_print("SDFS disk unavailable, falling back to ramdisk\n");
-    vga_puts("WARNING: no disk found; using ramdisk (data lost on reboot)\n");
-    sdfs_enable_ramdisk(64);
+    /* 3. Live USB / ISO Mode (is_live_mode == true):
+     *    Boot purely into RAMDisk without touching or formatting the internal HD!
+     *    Installation to the internal HD happens exclusively via the 'Instalar Sistema' app. */
+    serial_print("Live Mode: initializing 48 MB RAMDisk (internal HD untouched)\n");
+    vga_puts("[live] Modo Live USB ativo (RAMDisk 48 MB - HD interno intacto)\n");
+    sdfs_enable_ramdisk(48);
     if (sdfs_format() != 0) {
         serial_print("SDFS: ramdisk format failed\n");
         return;
@@ -442,6 +553,10 @@ static void init_filesystem(int kernel_test_mode) {
     sdfs_root = sdfs_mount(0, 0, 0);
     if (!sdfs_root)
         return;
+    if (!fs_root) fs_root = sdfs_root;
+    vfs_mount("disk:", sdfs_root);
+    vfs_mount("ram:", sdfs_root);
+    vfs_mount("/disk", sdfs_root);
     vfs_mount("/house/localhost", sdfs_root);
     vfs_mount("/", sdfs_root);
     if (mb2_mods_count > 0 && !kernel_test_mode) {
@@ -593,6 +708,17 @@ void kernel_main(uint32_t magic, uint32_t mbi_addr) {
   kernel_panic("high-stack continuation returned");
 }
 
+extern void net_poll(void);
+extern void telnet_server_poll(void);
+
+static void net_background_task(void) {
+    while (1) {
+        net_poll();
+        telnet_server_poll();
+        task_sleep_ms(5);
+    }
+}
+
 void kernel_main_continue(void) __attribute__((noreturn));
 void kernel_main_continue(void) {
   vfs_init();
@@ -633,6 +759,13 @@ void kernel_main_continue(void) {
     boot_stage("network unavailable");
   }
 
+  /* Inicializa o driver de som Intel High Definition Audio */
+  if (hda_init() == 0) {
+    boot_stage("audio ok");
+  } else {
+    boot_stage("audio unavailable");
+  }
+
   /* APs have left the low trampoline and all firmware/MMIO pointers have
    * direct-map aliases. The BSP now runs on a direct-map kernel stack. */
   vmm_remove_identity_map();
@@ -649,9 +782,21 @@ void kernel_main_continue(void) {
     init_initrd((uintptr_t)phys_to_virt(mod->mod_start),
                 mod->mod_end - mod->mod_start);
     serial_print("Initrd loaded into memory\n");
+    vfs_mount("sys:", fs_root);
+    vfs_mount("/sys", fs_root);
   } else {
-    serial_print("Initrd not provided by bootloader\n");
+    serial_print("Initrd not provided by bootloader (HD direct boot)\n");
+    is_live_mode = false;
   }
+
+  extern fs_node_t *devfs_init(void);
+  extern fs_node_t *ipcfs_init(void);
+  fs_node_t *dev_root = devfs_init();
+  vfs_mount("dev:", dev_root);
+  vfs_mount("/dev", dev_root);
+  fs_node_t *ipc_root = ipcfs_init();
+  vfs_mount("ipc:", ipc_root);
+  vfs_mount("/ipc", ipc_root);
 
   /* Detect test mode from initrd (skips first-boot copy). */
   int kernel_test_mode = 0;
@@ -692,10 +837,18 @@ void kernel_main_continue(void) {
 #endif
   }
 
-  serial_print("LiwusOS text mode ready\n");
-  vga_puts("\nLiwusOS - ring-3 shell\n\n");
-
-  create_task_named(user_init_supervisor_task, "init-supervisor");
+  if (vga_is_framebuffer() && !force_text_mode) {
+    serial_print("LiwusOS graphical mode starting (Nuklear Desktop)\n");
+    desktop_init();
+    create_task_named_stack(desktop_task, "desktop", TASK_PRIO_DEFAULT,
+                            KERNEL_STACK_DESKTOP_SIZE);
+    create_task_named(net_background_task, "netd");
+  } else {
+    serial_print("LiwusOS text mode ready\n");
+    vga_puts("\nLiwusOS - ring-3 shell\n\n");
+    create_task_named(user_init_supervisor_task, "init-supervisor");
+    create_task_named(net_background_task, "netd");
+  }
 
   serial_print("LIWUS_BOOT_READY\n");
   asm volatile("sti");

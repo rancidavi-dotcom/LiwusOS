@@ -11,5 +11,6 @@
 #include "liwus/stat.h"
 #include "liwus/string.h"
 #include "liwus/syscall.h"
+#include "liwus/webdom.h"
 
 #endif

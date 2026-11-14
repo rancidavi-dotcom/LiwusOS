@@ -1,5 +1,8 @@
 # LIWUS Native SDK v0.1 and `.lxe`
 
+For the loader path, ELF constraints, ring-3 startup, installation flows, and
+troubleshooting, see the [technical `.lxe` reference](LXE_TECHNICAL.md).
+
 ## What `.lxe` means
 
 `.lxe` is the official filename suffix for a statically linked native LIWUS

@@ -8,6 +8,7 @@
 #include "kernel_layout.h"
 #include "string.h"
 #include "kstack.h"
+#include "fpu.h"
 
 static volatile uint32_t *lapic_base = NULL;
 static uint64_t lapic_phys_base = 0;
@@ -36,6 +37,7 @@ void ap_kernel_main(void) {
     }
 
     init_cpu_local(cpu_idx);
+    init_fpu();
     init_gdt_cpu(cpu_idx); // Initialize local GDT/TSS for this core
     extern void tss_flush(void);
     tss_flush();

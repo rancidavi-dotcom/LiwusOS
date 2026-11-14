@@ -41,10 +41,10 @@ static unsigned char kbd_abnt2[128] = {
     [0x15] = 'y',  [0x16] = 'u',  [0x17] = 'i',  [0x18] = 'o',  [0x19] = 'p',
     [0x1A] = 0xB4, [0x1B] = '[',  [0x1C] = '\n', [0x1E] = 'a',  [0x1F] = 's',
     [0x20] = 'd',  [0x21] = 'f',  [0x22] = 'g',  [0x23] = 'h',  [0x24] = 'j',
-    [0x25] = 'k',  [0x26] = 'l',  [0x27] = '/',  [0x28] = '~',  [0x29] = '\'',
+    [0x25] = 'k',  [0x26] = 'l',  [0x27] = 0xE7, [0x28] = '~',  [0x29] = '\'',
     [0x2B] = ']',  [0x2C] = 'z',  [0x2D] = 'x',  [0x2E] = 'c',  [0x2F] = 'v',
     [0x30] = 'b',  [0x31] = 'n',  [0x32] = 'm',  [0x33] = ',',  [0x34] = '.',
-    [0x35] = '/',  [0x39] = ' ',  [0x56] = '\\', [0x73] = '/'
+    [0x35] = ';',  [0x39] = ' ',  [0x56] = '\\', [0x73] = '/'
 };
 
 static unsigned char kbd_abnt2_shift[128] = {
@@ -55,10 +55,10 @@ static unsigned char kbd_abnt2_shift[128] = {
     [0x15] = 'Y',  [0x16] = 'U',  [0x17] = 'I',  [0x18] = 'O',  [0x19] = 'P',
     [0x1A] = '`',  [0x1B] = '{',  [0x1C] = '\n', [0x1E] = 'A',  [0x1F] = 'S',
     [0x20] = 'D',  [0x21] = 'F',  [0x22] = 'G',  [0x23] = 'H',  [0x24] = 'J',
-    [0x25] = 'K',  [0x26] = 'L',  [0x27] = '?',  [0x28] = '^',  [0x29] = '\"',
+    [0x25] = 'K',  [0x26] = 'L',  [0x27] = 0xC7, [0x28] = '^',  [0x29] = '\"',
     [0x2B] = '}',  [0x2C] = 'Z',  [0x2D] = 'X',  [0x2E] = 'C',  [0x2F] = 'V',
     [0x30] = 'B',  [0x31] = 'N',  [0x32] = 'M',  [0x33] = '<',  [0x34] = '>',
-    [0x35] = '?',  [0x39] = ' ',  [0x56] = '|',  [0x73] = '?'
+    [0x35] = ':',  [0x39] = ' ',  [0x56] = '|',  [0x73] = '?'
 };
 
 static unsigned char kbd_us[128] = {
@@ -191,6 +191,13 @@ static void keyboard_process_scancode(uint8_t scancode) {
             else if (scancode == 0x50) key = 129;
             else if (scancode == 0x4B) key = 130;
             else if (scancode == 0x4D) key = 131;
+            else if (scancode == 0x47) key = 132;
+            else if (scancode == 0x4F) key = 133;
+            else if (scancode == 0x49) key = 134;
+            else if (scancode == 0x51) key = 135;
+            else if (scancode == 0x53) key = 136;
+            else if (scancode == 0x35) key = '/';
+            else if (scancode == 0x1C) key = '\n';
             else if (scancode == 0x5B || scancode == 0x5C) {
                 extern bool win_key_pressed_edge;
                 win_key_pressed_edge = true;
@@ -313,6 +320,16 @@ int keyboard_get_event(void *ev) {
     e->pressed = event_queue[event_read].pressed;
     event_read = (uint8_t)((event_read + 1) % 64);
     return 1;
+}
+
+void keyboard_flush(void) {
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    char_read = char_write;
+    event_read = event_write;
+    last_key = 0;
+    ctrl_c_pending = false;
+    if (flags & (1ULL << 9)) __asm__ volatile("sti" ::: "memory");
 }
 
 char get_last_key(void) { char k = last_key; last_key = 0; return k; }

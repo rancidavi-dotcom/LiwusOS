@@ -50,14 +50,19 @@ SECTIONS
     __kernel_data_start = .;
     *(.data)
     *(.data.*)
+    *(.ldata)
+    *(.ldata.*)
   }
 
   .bss ALIGN(4K) (NOLOAD) : AT(ADDR(.bss) - KERNEL_VIRT_OFFSET) {
     *(COMMON)
     *(.bss)
     *(.bss.*)
+    *(.lbss)
+    *(.lbss.*)
   }
 
+  . = ALIGN(4K);
   end = .;
   kernel_end = .;
 

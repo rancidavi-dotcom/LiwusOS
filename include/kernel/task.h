@@ -20,33 +20,45 @@ typedef enum {
 
 #include "vfs.h"
 
+struct kernel_stat;
 struct thread;
 typedef struct wait_queue {
   struct thread *head;
 } wait_queue_t;
 typedef void (*wait_cancel_fn)(void *context);
 
+/* Internal wait result, not an errno value. The calling ABI translates it. */
+#define TASK_WAIT_RESULT_TIMEOUT (-4096)
+
 #define PIPE_BUF_SIZE 4096
+#define KFILE_FLAG_CLOEXEC 0x00000001u
+#define KFILE_STATUS_APPEND 0x00000001u
+#define KFILE_STATUS_NONBLOCK 0x00000002u
 
 typedef struct {
   uint8_t buffer[PIPE_BUF_SIZE];
+  uint64_t inode;
   uint32_t read_pos;
   uint32_t write_pos;
   uint32_t bytes_avail;
   int references;
   int readers;
   int writers;
+  uint32_t read_status_flags;
+  uint32_t write_status_flags;
   wait_queue_t read_waiters;
   wait_queue_t write_waiters;
 } pipe_t;
 
 typedef struct {
   fs_node_t *node;
+  char path[512];
   uint32_t offset;
   uint32_t size;
   int references;
   uint8_t access;
   uint8_t opened;
+  uint32_t status_flags;
 } file_description_t;
 
 typedef struct {
@@ -55,6 +67,7 @@ typedef struct {
   uint32_t size;
   uint32_t offset;
   int owned_buffer;
+  uint32_t descriptor_flags;
   void *socket_ptr;
   file_description_t *description;
 } kfile_t;
@@ -73,6 +86,10 @@ typedef struct process {
   page_directory_t *mm;
   uint64_t heap_start;
   uint64_t heap_end;
+  /* Exact program break state for the Linux x86-64 personality. The native
+   * heap fields above retain their existing page-based behavior. */
+  uint64_t linux_brk_start;
+  uint64_t linux_brk_current;
   uint64_t mmap_top;
   task_abi_t abi;
   int job_id;
@@ -99,11 +116,16 @@ typedef struct thread {
   uint64_t fs_base;
   uint64_t user_gs_base;
   uint64_t clear_child_tid;
+  uint64_t sigmask;
   wait_queue_t *waiting_on;
   struct thread *wait_next;
   uintptr_t wait_space;
   uintptr_t wait_address;
   bool wait_keyed;
+  bool wait_timed;
+  uint32_t wait_bitset;
+  uint32_t wait_deadline_tick;
+  int wait_result;
   wait_cancel_fn wait_cancel;
   void *wait_cancel_context;
   struct thread *next;
@@ -188,7 +210,18 @@ uint32_t wait_queue_wake_locked(wait_queue_t *queue, uintptr_t space,
 uint32_t wait_queue_wake(wait_queue_t *queue, uint32_t maximum);
 uint32_t wait_queue_count(wait_queue_t *queue);
 int task_futex_wait_private(uint32_t *address, uint32_t expected);
+int task_futex_wait_private_timed(uint32_t *address, uint32_t expected,
+                                  uint32_t timeout_ticks);
+int task_futex_wait_private_bitset(uint32_t *address, uint32_t expected,
+                                   uint32_t timeout_ticks, bool timed,
+                                   uint32_t bitset);
 int task_futex_wake_private(uint32_t *address, uint32_t maximum);
+int task_futex_wake_private_bitset(uint32_t *address, uint32_t maximum,
+                                   uint32_t bitset);
+int task_futex_requeue_private(uint32_t *source, uint32_t *destination,
+                               uint32_t wake_count, uint32_t requeue_count,
+                               bool compare, uint32_t expected);
+int task_set_clear_child_tid(uint64_t user_address);
 
 /* Ajusta/consulta a prioridade de uma tarefa pelo pid. */
 void task_set_priority(int pid, int priority);
@@ -198,14 +231,20 @@ int task_get_priority(int pid);
 #include "isr.h"
 int fork_process(registers_t *regs);
 int task_clone_thread(registers_t *regs, uint64_t user_stack,
-                      uint64_t tls_base, int set_tls);
+                      uint64_t tls_base, int set_tls,
+                      uint64_t parent_tid_address, int set_parent_tid,
+                      uint64_t child_tid_address, int set_child_tid,
+                      int clear_child_tid);
 int sys_waitpid(int pid, int *status, int options);
+/* Kernel-only status output for ABI personalities that translate wait status. */
+int task_waitpid_kernel(int pid, int *status, int options);
 void sys_exit_process(int status);
 void sys_exit_thread(int status);
 void sys_kill_by_pid(int pid);
 extern process_t *process_list;
 process_t *task_process_create(int pid, process_t *parent,
                                page_directory_t *mm);
+uint32_t task_process_count_active(void);
 void task_process_discard(process_t *process);
 void task_process_attach(process_t *process, thread_t *thread);
 void task_process_detach(process_t *process, thread_t *thread);
@@ -214,6 +253,26 @@ void task_process_release_io(process_t *process);
 void task_release_io(task_t *task);
 void sys_fd_get(kfile_t *file);
 void sys_fd_put(kfile_t *file);
+/* Generic descriptor constructors. Descriptor-local flags are installed
+ * before each newly opened descriptor becomes visible to the caller. */
+int sys_open_mode(const char *path, int flags, uint32_t create_mode,
+                  uint32_t descriptor_flags, int require_directory);
+int sys_resolve_path_at(int dirfd, int at_cwd, const char *path,
+                        char *resolved, uint32_t resolved_size);
+int sys_access_at(int dirfd, int at_cwd, const char *path, int mode);
+int sys_stat_at(int dirfd, int at_cwd, const char *path,
+                struct kernel_stat *st);
+int sys_mkdir_at(int dirfd, int at_cwd, const char *path, uint32_t mode);
+int sys_unlink_at(int dirfd, int at_cwd, const char *path, int remove_dir);
+int sys_rename_at(int olddirfd, int oldat_cwd, const char *old_path,
+                  int newdirfd, int newat_cwd, const char *new_path);
+int sys_openat_mode(int dirfd, int at_cwd, const char *path, int flags,
+                    uint32_t create_mode, uint32_t descriptor_flags,
+                    int require_directory, uint32_t status_flags);
+int sys_dup2_with_flags(int oldfd, int newfd, uint32_t descriptor_flags);
+int sys_pipe_with_flags(int pipefd[2], uint32_t descriptor_flags);
+int sys_pipe_with_options(int pipefd[2], uint32_t descriptor_flags,
+                          uint32_t status_flags);
 uint64_t sys_io_live_file_descriptions(void);
 uint64_t sys_io_live_pipe_objects(void);
 

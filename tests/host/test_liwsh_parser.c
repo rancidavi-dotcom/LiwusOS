@@ -43,6 +43,32 @@ int main(void) {
     assert(liwsh_parse(line, sizeof(line), argv, LIWSH_ARG_MAX) == LIWSH_PARSE_TOO_LONG);
     assert(liwsh_parse(NULL, 0, argv, LIWSH_ARG_MAX) == LIWSH_PARSE_INVALID);
 
+    /* Testes da nova pipeline com redirecionamento e pipes */
+    liwsh_pipeline_t p;
+    strcpy(line, "cat /readme.txt | head");
+    int r = liwsh_parse_pipeline(line, sizeof(line), &p);
+    assert(r == 2);
+    assert(strcmp(p.stages[0].argv[0], "cat") == 0);
+    assert(strcmp(p.stages[0].argv[1], "/readme.txt") == 0);
+    assert(strcmp(p.stages[1].argv[0], "head") == 0);
+
+    strcpy(line, "ifconfig > /rede.txt");
+    assert(liwsh_parse_pipeline(line, sizeof(line), &p) == 1);
+    assert(strcmp(p.stages[0].argv[0], "ifconfig") == 0);
+    assert(strcmp(p.stages[0].output_file, "/rede.txt") == 0);
+    assert(p.stages[0].append == 0);
+
+    strcpy(line, "echo linha >> /log.txt");
+    assert(liwsh_parse_pipeline(line, sizeof(line), &p) == 1);
+    assert(strcmp(p.stages[0].argv[0], "echo") == 0);
+    assert(strcmp(p.stages[0].output_file, "/log.txt") == 0);
+    assert(p.stages[0].append == 1);
+
+    strcpy(line, "cat < /in.txt > /out.txt");
+    assert(liwsh_parse_pipeline(line, sizeof(line), &p) == 1);
+    assert(strcmp(p.stages[0].input_file, "/in.txt") == 0);
+    assert(strcmp(p.stages[0].output_file, "/out.txt") == 0);
+
     puts("LIWSH parser PASS: empty, tokens, whitespace, limits, malformed syntax");
     return 0;
 }

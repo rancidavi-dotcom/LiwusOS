@@ -7,6 +7,10 @@
 #include "string.h"
 #include "timer.h"
 #include "vga.h"
+#include "task.h"
+#include "spinlock.h"
+
+extern void int_to_str(uint32_t n, char *s);
 
 /* lwIP Headers */
 #include "lwip/init.h"
@@ -18,6 +22,7 @@
 #include "lwip/timeouts.h"
 #include "lwip/raw.h"
 #include "lwip/icmp.h"
+#include "lwip/dns.h"
 #include "lwip/inet_chksum.h"
 #include "netif/ethernet.h"
 
@@ -135,10 +140,32 @@ int net_init(void) {
     return 0;
 }
 
+static spinlock_t g_net_lock = {0};
+
+uint64_t net_lock_acquire(void) {
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    spinlock_acquire(&g_net_lock);
+    return flags;
+}
+
+void net_lock_release(uint64_t flags) {
+    spinlock_release(&g_net_lock);
+    if (flags & (1ULL << 9)) {
+        __asm__ volatile("sti" ::: "memory");
+    }
+}
+
 /* Polling de rede: processa pacotes recebidos e timers */
 static volatile bool in_poll = false;
 void net_poll(void) {
-    if (!net_initialized || in_poll) return;
+    if (!net_initialized) return;
+
+    uint64_t flags = net_lock_acquire();
+    if (in_poll) {
+        net_lock_release(flags);
+        return;
+    }
     in_poll = true;
 
     /* Le pacotes recebidos pela placa ativa */
@@ -165,7 +192,29 @@ void net_poll(void) {
 
     /* Processa timers do lwIP (DHCP, ARP cache, TCP retransmit) */
     sys_check_timeouts();
+
+    /* Monitora mudanca dinamica do link fisico e reativa DHCP */
+    static int last_link_state = -1;
+    bool cur_link = net_get_link_status();
+    if (last_link_state < 0) {
+        last_link_state = cur_link ? 1 : 0;
+        if (!cur_link) {
+            netif_set_link_down(&main_netif);
+        }
+    } else if ((cur_link ? 1 : 0) != last_link_state) {
+        last_link_state = cur_link ? 1 : 0;
+        if (cur_link) {
+            serial_printf("[NET] Link fisico detectado UP! Solicitando DHCP...\n");
+            netif_set_link_up(&main_netif);
+            dhcp_start(&main_netif);
+        } else {
+            serial_printf("[NET] Link fisico DOWN!\n");
+            netif_set_link_down(&main_netif);
+        }
+    }
+
     in_poll = false;
+    net_lock_release(flags);
 }
 
 bool net_is_active(void) {
@@ -175,6 +224,45 @@ bool net_is_active(void) {
 bool net_has_ip(void) {
     if (!net_initialized) return false;
     return !ip4_addr_isany_val(*netif_ip4_addr(&main_netif));
+}
+
+int net_set_static_ip(const char *ip_str, const char *mask_str, const char *gw_str) {
+    if (!net_initialized || !ip_str) return -1;
+    ip4_addr_t ip, mask, gw;
+    if (!ip4addr_aton(ip_str, &ip)) return -2;
+    if (mask_str && mask_str[0] && !ip4addr_aton(mask_str, &mask)) {
+        IP4_ADDR(&mask, 255, 255, 255, 0);
+    } else if (!mask_str || !mask_str[0]) {
+        IP4_ADDR(&mask, 255, 255, 255, 0);
+    }
+    if (gw_str && gw_str[0] && !ip4addr_aton(gw_str, &gw)) {
+        ip4_addr_set_zero(&gw);
+    } else if (!gw_str || !gw_str[0]) {
+        ip4_addr_set_zero(&gw);
+    }
+
+    uint64_t flags = net_lock_acquire();
+    dhcp_stop(&main_netif);
+    netif_set_addr(&main_netif, &ip, &mask, &gw);
+    netif_set_up(&main_netif);
+    netif_set_link_up(&main_netif);
+    net_lock_release(flags);
+    serial_printf("[NET] IP Estatico atribuido: %s\n", ip_str);
+    return 0;
+}
+
+int net_dhcp_renew(void) {
+    if (!net_initialized) return -1;
+    uint64_t flags = net_lock_acquire();
+    dhcp_stop(&main_netif);
+    ip4_addr_t zero;
+    ip4_addr_set_zero(&zero);
+    netif_set_addr(&main_netif, &zero, &zero, &zero);
+    netif_set_link_up(&main_netif);
+    dhcp_start(&main_netif);
+    net_lock_release(flags);
+    serial_printf("[NET] Solicitando renovacao DHCP...\n");
+    return 0;
 }
 
 void net_get_ip_strings(char *ip, char *netmask, char *gateway) {
@@ -231,6 +319,106 @@ void net_get_packet_counts(uint32_t *rx, uint32_t *tx) {
 }
 
 /* ==========================================================
+ * Implementacao de Resolucao DNS
+ * ========================================================== */
+typedef struct {
+    volatile bool done;
+    volatile bool success;
+    ip_addr_t addr;
+} dns_query_ctx_t;
+
+static void dns_resolve_callback(const char *name, const ip_addr_t *ipaddr, void *callback_arg) {
+    (void)name;
+    dns_query_ctx_t *ctx = (dns_query_ctx_t *)callback_arg;
+    if (ctx) {
+        if (ipaddr) {
+            ctx->addr = *ipaddr;
+            ctx->success = true;
+        } else {
+            ctx->success = false;
+        }
+        ctx->done = true;
+    }
+}
+
+void net_get_dns_server(char *dns_ip_out, size_t max_len) {
+    if (!dns_ip_out || max_len < 16) return;
+    const ip_addr_t *dns = dns_getserver(0);
+    if (dns && !ip_addr_isany(dns)) {
+        ip4addr_ntoa_r(dns, dns_ip_out, max_len);
+    } else {
+        strcpy(dns_ip_out, "8.8.8.8");
+    }
+}
+
+int net_resolve_host(const char *hostname, char *ip_str_out, size_t max_len) {
+    if (!hostname || !ip_str_out || max_len < 16) return -1;
+
+    /* Se ja for um endereco IPv4 numerico, retorna diretamente */
+    ip4_addr_t direct_ip;
+    if (ip4addr_aton(hostname, &direct_ip)) {
+        strncpy(ip_str_out, hostname, max_len - 1);
+        ip_str_out[max_len - 1] = '\0';
+        return 0;
+    }
+
+    if (!net_initialized) return -2;
+
+    /* Garante que temos um servidor DNS valido configurado */
+    uint64_t lflags = net_lock_acquire();
+    const ip_addr_t *dns = dns_getserver(0);
+    if (!dns || ip_addr_isany(dns)) {
+        ip_addr_t def_dns;
+        if (active_nic == NIC_E1000) {
+            /* No QEMU, o servidor DNS virtual do slirp fica em 10.0.2.3 */
+            IP4_ADDR(&def_dns, 10, 0, 2, 3);
+        } else {
+            const ip4_addr_t *gw = netif_ip4_gw(&main_netif);
+            if (gw && !ip4_addr_isany_val(*gw)) {
+                ip_addr_copy(def_dns, *gw);
+            } else {
+                IP4_ADDR(&def_dns, 8, 8, 8, 8);
+            }
+        }
+        dns_setserver(0, &def_dns);
+        ip_addr_t sec_dns;
+        IP4_ADDR(&sec_dns, 8, 8, 8, 8);
+        dns_setserver(1, &sec_dns);
+    }
+
+    static dns_query_ctx_t s_dns_ctx;
+    s_dns_ctx.done = false;
+    s_dns_ctx.success = false;
+
+    ip_addr_t resolved;
+    err_t err = dns_gethostbyname(hostname, &resolved, dns_resolve_callback, &s_dns_ctx);
+    net_lock_release(lflags);
+
+    if (err == ERR_OK) {
+        ip4addr_ntoa_r(&resolved, ip_str_out, max_len);
+        return 0;
+    }
+
+    if (err != ERR_INPROGRESS) {
+        return -3;
+    }
+
+    /* Aguarda resolucao de DNS com timeout de 3 segundos */
+    uint32_t timeout = timer_ticks + 300;
+    while (!s_dns_ctx.done && timer_ticks < timeout) {
+        net_poll();
+        task_sleep_ms(2);
+    }
+
+    if (s_dns_ctx.done && s_dns_ctx.success) {
+        ip4addr_ntoa_r(&s_dns_ctx.addr, ip_str_out, max_len);
+        return 0;
+    }
+
+    return -4;
+}
+
+/* ==========================================================
  * Implementacao do comando PING ICMP
  * ========================================================== */
 static volatile bool ping_received = false;
@@ -266,16 +454,32 @@ int net_ping_custom(const char *target_ip_str, uint32_t count,
         return -1;
     }
 
-    ip4_addr_t target_ip;
-    if (!ip4addr_aton(target_ip_str, &target_ip)) {
-        serial_printf("ping: IP invalido: %s\n", target_ip_str);
-        vga_puts("ping: IP invalido: ");
+    /* Resolve nome de host (DNS) se nao for IP direto */
+    char resolved_ip_str[32];
+    if (net_resolve_host(target_ip_str, resolved_ip_str, sizeof(resolved_ip_str)) != 0) {
+        serial_printf("ping: nao foi possivel resolver o host: %s\n", target_ip_str);
+        vga_puts("ping: nao foi possivel resolver o host: ");
         vga_puts(target_ip_str);
         vga_puts("\n");
         if (output_cb) {
             char err[64];
-            strcpy(err, "ping: IP invalido: ");
+            strcpy(err, "ping: nao foi possivel resolver: ");
             strcat(err, target_ip_str);
+            output_cb(err, user_data);
+        }
+        return -2;
+    }
+
+    ip4_addr_t target_ip;
+    if (!ip4addr_aton(resolved_ip_str, &target_ip)) {
+        serial_printf("ping: IP invalido: %s\n", resolved_ip_str);
+        vga_puts("ping: IP invalido: ");
+        vga_puts(resolved_ip_str);
+        vga_puts("\n");
+        if (output_cb) {
+            char err[64];
+            strcpy(err, "ping: IP invalido: ");
+            strcat(err, resolved_ip_str);
             output_cb(err, user_data);
         }
         return -2;
@@ -292,17 +496,21 @@ int net_ping_custom(const char *target_ip_str, uint32_t count,
     raw_recv(ping_pcb, ping_raw_recv, NULL);
     raw_bind(ping_pcb, IP_ADDR_ANY);
 
-    serial_printf("PING %s (ICMP Echo Request):\n", target_ip_str);
-    vga_puts("PING ");
-    vga_puts(target_ip_str);
-    vga_puts(" (ICMP Echo Request):\n");
-    if (output_cb) {
-        char hdr[64];
-        strcpy(hdr, "PING ");
-        strcat(hdr, target_ip_str);
-        strcat(hdr, " (ICMP Echo Request):");
-        output_cb(hdr, user_data);
+    char title[96];
+    title[0] = '\0';
+    strcat(title, "PING ");
+    strcat(title, target_ip_str);
+    if (strcmp(target_ip_str, resolved_ip_str) != 0) {
+        strcat(title, " (");
+        strcat(title, resolved_ip_str);
+        strcat(title, ")");
     }
+    strcat(title, " (ICMP Echo Request):");
+
+    serial_printf("%s\n", title);
+    vga_puts(title);
+    vga_puts("\n");
+    if (output_cb) output_cb(title, user_data);
 
     for (uint32_t i = 0; i < count; i++) {
         ping_seq++;
@@ -329,16 +537,13 @@ int net_ping_custom(const char *target_ip_str, uint32_t count,
         raw_sendto(ping_pcb, p, (ip_addr_t *)&target_ip);
         pbuf_free(p);
 
-        /* Habilita interrupcoes para permitir que o timer avance */
-        asm volatile("sti");
-
         /* Aguarda resposta com timeout de 2 segundos */
         uint32_t timeout_ticks = timer_ticks + 200; /* 200 ticks = 2s */
         uint32_t loop_guard = 0;
         while (!ping_received && timer_ticks < timeout_ticks && loop_guard < 5000000) {
             net_poll();
             loop_guard++;
-            asm volatile("pause");
+            task_sleep_ms(1);
         }
 
         char num_buf[16];
@@ -386,7 +591,7 @@ int net_ping_custom(const char *target_ip_str, uint32_t count,
         uint32_t pause_until = timer_ticks + 30; /* 300 ms */
         while (timer_ticks < pause_until) {
             net_poll();
-            asm volatile("pause");
+            task_sleep_ms(5);
         }
     }
 

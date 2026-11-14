@@ -110,7 +110,8 @@ in ignored `test-logs/`; `test_serial.log` is the latest standard run. See
 for the case inventory and explicit gaps.
 
 The Native SDK v0.1 and `.lxe` ELF convention are documented in
-[docs/SDK_LXE.md](docs/SDK_LXE.md). The native userspace shell is described in
+[docs/SDK_LXE.md](docs/SDK_LXE.md); loader internals and technician procedures
+are in [docs/LXE_TECHNICAL.md](docs/LXE_TECHNICAL.md). The native userspace shell is described in
 [docs/NATIVE_SHELL.md](docs/NATIVE_SHELL.md). `make all` puts `liwsh.lxe` at
 `/bin/liwsh.lxe` and the example at `/bin/native-hello.lxe` in the initrd.
 

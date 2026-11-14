@@ -182,3 +182,27 @@ long liw_net_ping(const char *target_ip, uint32_t count) {
 long liw_net_ntp(const char *server_ip, char *out_time_buf, uint32_t buf_len) {
     return liw_syscall3(SYS_NET_NTP, (long)server_ip, (long)out_time_buf, (long)buf_len);
 }
+
+long liw_net_resolve(const char *hostname, char *out_ip, size_t max_len) {
+    return liw_syscall3(SYS_NET_RESOLVE, (long)hostname, (long)out_ip, (long)max_len);
+}
+
+long liw_net_http_get(const char *url, const char *dest_path) {
+    return liw_syscall2(SYS_NET_HTTP_GET, (long)url, (long)dest_path);
+}
+
+long liw_fb_blit(const uint32_t *pixels, uint32_t width, uint32_t height) {
+    return liw_syscall3(SYS_FB_BLIT, (long)pixels, (long)width, (long)height);
+}
+
+long liw_sleep_ms(uint32_t ms) {
+    return liw_syscall1(SYS_SLEEP_MS, (long)ms);
+}
+
+int liw_key_event(liw_key_event_t *out) {
+    return (int)liw_syscall1(SYS_KEY_EVENT, (long)out);
+}
+
+uint64_t liw_timer_ticks(void) {
+    return (uint64_t)liw_syscall0(SYS_TIMER);
+}

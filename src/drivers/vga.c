@@ -478,7 +478,118 @@ void vga_scroll() {
     }
 }
 
+static inline uint32_t vga_pack_xrgb(uint32_t xrgb) {
+    if (vga_fb_red_pos == 16 && vga_fb_green_pos == 8 && vga_fb_blue_pos == 0) {
+        return xrgb & 0x00FFFFFFU;
+    }
+    uint32_t r = (xrgb >> 16) & 0xFFU;
+    uint32_t g = (xrgb >> 8) & 0xFFU;
+    uint32_t b = xrgb & 0xFFU;
+    return (r << vga_fb_red_pos) | (g << vga_fb_green_pos) | (b << vga_fb_blue_pos);
+}
+
+static inline void vga_copy_row(void *dst, const void *src, size_t nbytes) {
+    uint64_t *d64 = (uint64_t *)dst;
+    const uint64_t *s64 = (const uint64_t *)src;
+    size_t q = nbytes >> 3;
+    while (q--) *d64++ = *s64++;
+    uint8_t *d8 = (uint8_t *)d64;
+    const uint8_t *s8 = (const uint8_t *)s64;
+    size_t r = nbytes & 7U;
+    while (r--) *d8++ = *s8++;
+}
+
+void vga_clear_framebuffer(uint32_t xrgb) {
+    if (!vga_fb_addr || vga_fb_bpp != 32 || !vga_fb_width || !vga_fb_height) return;
+    uint32_t px = vga_pack_xrgb(xrgb);
+    uint32_t stride_words = vga_fb_pitch / 4U;
+    uint32_t *fb = (uint32_t *)phys_to_virt(vga_fb_addr);
+    for (uint32_t y = 0; y < vga_fb_height; y++) {
+        uint32_t *dst_row = vga_backbuffer ? (vga_backbuffer + y * stride_words)
+                                           : (fb + y * stride_words);
+        for (uint32_t x = 0; x < vga_fb_width; x++) {
+            dst_row[x] = px;
+        }
+        if (vga_backbuffer) {
+            vga_copy_row(fb + y * stride_words, dst_row, (size_t)vga_fb_width * 4U);
+        }
+    }
+}
+
+int vga_blit_rgb32(const uint32_t *src, uint32_t src_w, uint32_t src_h) {
+    if (!src || src_w == 0 || src_h == 0) return -1;
+    if (!vga_fb_addr || vga_fb_bpp != 32 || !vga_fb_width || !vga_fb_height) return -1;
+
+    uint32_t sx = vga_fb_width / src_w;
+    uint32_t sy = vga_fb_height / src_h;
+    uint32_t scale = (sx < sy) ? sx : sy;
+    uint32_t dst_w = (scale >= 1U) ? (src_w * scale) : vga_fb_width;
+    uint32_t dst_h = (scale >= 1U) ? (src_h * scale) : vga_fb_height;
+    uint32_t x0 = (vga_fb_width - dst_w) / 2U;
+    uint32_t y0 = (vga_fb_height - dst_h) / 2U;
+    uint32_t stride_words = vga_fb_pitch / 4U;
+    uint32_t *fb = (uint32_t *)phys_to_virt(vga_fb_addr);
+    bool native_xrgb = (vga_fb_red_pos == 16 && vga_fb_green_pos == 8 && vga_fb_blue_pos == 0);
+
+    if (scale >= 1U && vga_backbuffer) {
+        size_t row_bytes = (size_t)dst_w * 4U;
+        for (uint32_t src_y = 0; src_y < src_h; src_y++) {
+            const uint32_t *srow = src + src_y * src_w;
+            uint32_t base_dy = y0 + src_y * scale;
+            uint32_t *first_bb = vga_backbuffer + base_dy * stride_words + x0;
+
+            if (scale == 1U && native_xrgb) {
+                vga_copy_row(first_bb, srow, row_bytes);
+            } else {
+                uint32_t *out = first_bb;
+                for (uint32_t src_x = 0; src_x < src_w; src_x++) {
+                    uint32_t px = native_xrgb ? (srow[src_x] & 0x00FFFFFFU) : vga_pack_xrgb(srow[src_x]);
+                    for (uint32_t k = 0; k < scale; k++) {
+                        *out++ = px;
+                    }
+                }
+            }
+
+            vga_copy_row(fb + base_dy * stride_words + x0, first_bb, row_bytes);
+            for (uint32_t rep = 1U; rep < scale; rep++) {
+                uint32_t dy = base_dy + rep;
+                uint32_t *bb_row = vga_backbuffer + dy * stride_words + x0;
+                vga_copy_row(bb_row, first_bb, row_bytes);
+                vga_copy_row(fb + dy * stride_words + x0, first_bb, row_bytes);
+            }
+        }
+        return 0;
+    }
+
+    for (uint32_t dy = 0; dy < dst_h; dy++) {
+        uint32_t sy_idx = (dy * src_h) / dst_h;
+        const uint32_t *srow = src + sy_idx * src_w;
+        uint32_t *out = (vga_backbuffer ? vga_backbuffer : fb) + (y0 + dy) * stride_words + x0;
+        for (uint32_t dx = 0; dx < dst_w; dx++) {
+            uint32_t sx_idx = (dx * src_w) / dst_w;
+            out[dx] = native_xrgb ? (srow[sx_idx] & 0x00FFFFFFU) : vga_pack_xrgb(srow[sx_idx]);
+        }
+        if (vga_backbuffer) {
+            vga_copy_row(fb + (y0 + dy) * stride_words + x0, out, (size_t)dst_w * 4U);
+        }
+    }
+    return 0;
+}
+
+void (*vga_puts_capture_hook)(const char *str) = NULL;
+void (*vga_putc_capture_hook)(char c) = NULL;
+extern bool g_desktop_running;
+
 void vga_putc(char c) {
+    if (vga_putc_capture_hook) {
+        vga_putc_capture_hook(c);
+        return;
+    }
+    if (g_desktop_running) {
+        /* Desktop gráfico está ativo e sem janela capturando:
+         * JAMAIS desenhe pixels brutos de texto sobre o LVGL! */
+        return;
+    }
     if (vga_esc_state > 0) {
         vga_handle_esc_char(c);
         return;
@@ -530,17 +641,13 @@ void vga_putc(char c) {
 }
 
 void vga_puts(const char* str) {
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+    if (vga_puts_capture_hook) {
+        vga_puts_capture_hook(str);
+        return;
+    }
+    if (g_desktop_running) {
+        return;
+    }
     for (size_t i = 0; str[i] != '\0'; i++)
         vga_putc(str[i]);
 }
@@ -568,3 +675,122 @@ void vga_get_dimensions(size_t *cols, size_t *rows) {
     if (cols) *cols = max_cols;
     if (rows) *rows = max_rows;
 }
+
+bool vga_is_framebuffer(void) {
+    return is_framebuffer;
+}
+
+uint32_t *vga_get_backbuffer(void) {
+    return vga_backbuffer;
+}
+
+uint32_t vga_get_fb_width(void) {
+    return vga_fb_width;
+}
+
+uint32_t vga_get_fb_height(void) {
+    return vga_fb_height;
+}
+
+uint32_t vga_get_fb_pitch(void) {
+    return vga_fb_pitch;
+}
+
+void vga_draw_char_fb(char c, int x, int y, uint32_t fg, uint32_t bg) {
+    if (!is_framebuffer || !font_data || !vga_backbuffer) return;
+    if (x < 0 || y < 0) return;
+    if ((uint32_t)(x + 8) > vga_fb_width || (uint32_t)(y + 16) > vga_fb_height) return;
+
+    uint8_t* glyph = font_data + (unsigned char)c * font_bpg;
+    uint32_t fg_px = vga_convert_color(fg);
+    uint32_t bg_px = (bg != 0xFFFFFFFF) ? vga_convert_color(bg) : 0;
+    uint32_t stride_words = vga_fb_pitch / 4;
+    uint32_t* back_dst = vga_backbuffer + ((uint32_t)y * stride_words) + (uint32_t)x;
+
+    for (int j = 0; j < 16; j++) {
+        uint8_t row = glyph[j];
+        for (int b = 0; b < 8; b++) {
+            if (row & (0x80 >> b)) {
+                back_dst[b] = fg_px;
+            } else if (bg != 0xFFFFFFFF) {
+                back_dst[b] = bg_px;
+            }
+        }
+        back_dst += stride_words;
+    }
+}
+
+void vga_flip(void) {
+    if (!is_framebuffer || !vga_backbuffer) return;
+    uint32_t* fb = (uint32_t*)phys_to_virt(vga_fb_addr);
+    uint64_t bytes = (uint64_t)vga_fb_pitch * vga_fb_height;
+    fast_memcpy(fb, vga_backbuffer, bytes);
+}
+
+static void vga_bmp_put16(uint8_t *p, uint16_t value) {
+    p[0] = (uint8_t)value;
+    p[1] = (uint8_t)(value >> 8);
+}
+
+static void vga_bmp_put32(uint8_t *p, uint32_t value) {
+    p[0] = (uint8_t)value;
+    p[1] = (uint8_t)(value >> 8);
+    p[2] = (uint8_t)(value >> 16);
+    p[3] = (uint8_t)(value >> 24);
+}
+
+int vga_capture_bmp(uint8_t **out_data, uint32_t *out_size) {
+    if (!out_data || !out_size) return -1;
+    *out_data = NULL;
+    *out_size = 0;
+    if (!is_framebuffer || vga_fb_bpp != 32 || !vga_fb_width || !vga_fb_height ||
+        !vga_fb_addr ||
+        (uint64_t)vga_fb_pitch < (uint64_t)vga_fb_width * sizeof(uint32_t) ||
+        vga_fb_red_pos > 24 || vga_fb_green_pos > 24 || vga_fb_blue_pos > 24)
+        return -2;
+
+    uint64_t row_bytes = (uint64_t)vga_fb_width * 3;
+    uint64_t bmp_stride = (row_bytes + 3) & ~3ULL;
+    uint64_t pixel_bytes = bmp_stride * vga_fb_height;
+    uint64_t total_bytes = 54 + pixel_bytes;
+    if (vga_fb_width > 8192 || vga_fb_height > 8192 ||
+        total_bytes > 32ULL * 1024 * 1024 || total_bytes > UINT32_MAX)
+        return -3;
+
+    uint8_t *bmp = (uint8_t *)kmalloc((size_t)total_bytes);
+    if (!bmp) return -4;
+    memset(bmp, 0, (size_t)total_bytes);
+
+    bmp[0] = 'B'; bmp[1] = 'M';
+    vga_bmp_put32(bmp + 2, (uint32_t)total_bytes);
+    vga_bmp_put32(bmp + 10, 54);
+    vga_bmp_put32(bmp + 14, 40);
+    vga_bmp_put32(bmp + 18, vga_fb_width);
+    vga_bmp_put32(bmp + 22, vga_fb_height); /* Positive height: bottom-up BMP. */
+    vga_bmp_put16(bmp + 26, 1);
+    vga_bmp_put16(bmp + 28, 24);
+    vga_bmp_put32(bmp + 34, (uint32_t)pixel_bytes);
+    vga_bmp_put32(bmp + 38, 2835);
+    vga_bmp_put32(bmp + 42, 2835);
+
+    /* Read the scanout itself so the image matches what is currently visible,
+     * including renderers that draw directly instead of updating the backbuffer. */
+    const uint32_t *source = (const uint32_t *)phys_to_virt(vga_fb_addr);
+    uint32_t source_stride = vga_fb_pitch / sizeof(uint32_t);
+    uint32_t output_stride = (uint32_t)bmp_stride;
+    for (uint32_t y = 0; y < vga_fb_height; y++) {
+        const uint32_t *src = source + (size_t)(vga_fb_height - 1 - y) * source_stride;
+        uint8_t *dst = bmp + 54 + (size_t)y * output_stride;
+        for (uint32_t x = 0; x < vga_fb_width; x++) {
+            uint32_t pixel = src[x];
+            dst[x * 3 + 0] = (uint8_t)(pixel >> vga_fb_blue_pos);
+            dst[x * 3 + 1] = (uint8_t)(pixel >> vga_fb_green_pos);
+            dst[x * 3 + 2] = (uint8_t)(pixel >> vga_fb_red_pos);
+        }
+    }
+
+    *out_data = bmp;
+    *out_size = (uint32_t)total_bytes;
+    return 0;
+}
+

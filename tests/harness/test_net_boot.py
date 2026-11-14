@@ -71,10 +71,26 @@ def test_net():
                         t_sock.settimeout(2.0)
                         banner = t_sock.recv(1024)
                         print(f"[TELNET RECEBIDO]:\n{banner.decode('utf-8', errors='replace')}")
-                        t_sock.sendall(b"version\r\n")
-                        time.sleep(0.5)
-                        reply = t_sock.recv(1024)
-                        print(f"[TELNET RESPOSTA]:\n{reply.decode('utf-8', errors='replace')}")
+                        def telnet_run(s_conn, cmd_bytes):
+                            s_conn.sendall(cmd_bytes + b"\r\n")
+                            accum = bytearray()
+                            deadline = time.time() + 5.0
+                            while time.time() < deadline:
+                                try:
+                                    c = s_conn.recv(1024)
+                                    if c:
+                                        accum.extend(c)
+                                        if b"liwus>" in accum:
+                                            break
+                                except socket.timeout:
+                                    break
+                            return accum.decode("utf-8", errors="replace")
+
+                        print(f"[TELNET RESPOSTA]:\n{telnet_run(t_sock, b'version')}")
+                        print(f"[TELNET HELP]:\n{telnet_run(t_sock, b'help')}")
+                        print(f"[TELNET UPTIME]:\n{telnet_run(t_sock, b'uptime')}")
+                        print(f"[TELNET MEMINFO]:\n{telnet_run(t_sock, b'meminfo')}")
+                        print(f"[TELNET PS]:\n{telnet_run(t_sock, b'ps')}")
                         t_sock.sendall(b"exit\r\n")
                         time.sleep(0.2)
                         t_sock.close()

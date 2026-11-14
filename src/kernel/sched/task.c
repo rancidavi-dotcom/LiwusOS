@@ -13,6 +13,7 @@
 #include "timer.h"
 #include "usercopy.h"
 #include "kstack.h"
+#include "fpu.h"
 
 cpu_local_t cpus_local[16];
 spinlock_t scheduler_lock = {0};
@@ -59,6 +60,35 @@ int wait_queue_block_locked(wait_queue_t *queue, uintptr_t space,
   thread->wait_space = space;
   thread->wait_address = address;
   thread->wait_keyed = keyed;
+  thread->wait_timed = false;
+  thread->wait_bitset = UINT32_MAX;
+  thread->wait_deadline_tick = 0;
+  thread->wait_result = 0;
+  thread->wait_cancel = cancel;
+  thread->wait_cancel_context = cancel_context;
+  thread->waiting_on = queue;
+  thread->wait_next = queue->head;
+  queue->head = thread;
+  thread->state = TASK_BLOCKED;
+  return 0;
+}
+
+static int wait_queue_block_timed_locked(wait_queue_t *queue, uintptr_t space,
+                                         uintptr_t address, bool keyed,
+                                         uint32_t deadline_tick,
+                                         wait_cancel_fn cancel,
+                                         void *cancel_context) {
+  thread_t *thread = current_task;
+  if (!queue || !thread || thread->waiting_on ||
+      thread->state == TASK_ZOMBIE)
+    return -1;
+  thread->wait_space = space;
+  thread->wait_address = address;
+  thread->wait_keyed = keyed;
+  thread->wait_timed = true;
+  thread->wait_bitset = UINT32_MAX;
+  thread->wait_deadline_tick = deadline_tick;
+  thread->wait_result = 0;
   thread->wait_cancel = cancel;
   thread->wait_cancel_context = cancel_context;
   thread->waiting_on = queue;
@@ -78,18 +108,24 @@ static void wait_queue_unlink_locked(wait_queue_t *queue, thread_t *thread) {
   thread->wait_space = 0;
   thread->wait_address = 0;
   thread->wait_keyed = false;
+  thread->wait_timed = false;
+  thread->wait_bitset = UINT32_MAX;
+  thread->wait_deadline_tick = 0;
 }
 
-uint32_t wait_queue_wake_locked(wait_queue_t *queue, uintptr_t space,
-                                uintptr_t address, bool keyed,
-                                uint32_t maximum) {
+static uint32_t wait_queue_wake_masked_locked(wait_queue_t *queue,
+                                              uintptr_t space,
+                                              uintptr_t address, bool keyed,
+                                              uint32_t bitset,
+                                              uint32_t maximum) {
   if (!queue || !maximum) return 0;
   uint32_t woken = 0;
   thread_t **link = &queue->head;
   while (*link && woken < maximum) {
     thread_t *thread = *link;
     if (keyed && (!thread->wait_keyed || thread->wait_space != space ||
-                  thread->wait_address != address)) {
+                  thread->wait_address != address ||
+                  (thread->wait_bitset & bitset) == 0)) {
       link = &thread->wait_next;
       continue;
     }
@@ -99,6 +135,10 @@ uint32_t wait_queue_wake_locked(wait_queue_t *queue, uintptr_t space,
     thread->wait_space = 0;
     thread->wait_address = 0;
     thread->wait_keyed = false;
+    thread->wait_timed = false;
+    thread->wait_bitset = UINT32_MAX;
+    thread->wait_deadline_tick = 0;
+    thread->wait_result = 0;
     if (thread->state == TASK_BLOCKED) {
       thread->state = TASK_READY;
       thread->time_slice = task_quantum(thread);
@@ -106,6 +146,13 @@ uint32_t wait_queue_wake_locked(wait_queue_t *queue, uintptr_t space,
     }
   }
   return woken;
+}
+
+uint32_t wait_queue_wake_locked(wait_queue_t *queue, uintptr_t space,
+                                uintptr_t address, bool keyed,
+                                uint32_t maximum) {
+  return wait_queue_wake_masked_locked(queue, space, address, keyed,
+                                       UINT32_MAX, maximum);
 }
 
 uint32_t wait_queue_wake(wait_queue_t *queue, uint32_t maximum) {
@@ -135,9 +182,12 @@ static wait_queue_t *futex_private_queue(page_directory_t *mm,
   return &futex_private_queues[key & (FUTEX_QUEUE_COUNT - 1)];
 }
 
-int task_futex_wait_private(uint32_t *address, uint32_t expected) {
+int task_futex_wait_private_bitset(uint32_t *address, uint32_t expected,
+                                  uint32_t timeout_ticks, bool timed,
+                                  uint32_t bitset) {
   thread_t *thread = current_task;
   if (!thread || !thread->process || !address) return -EFAULT;
+  if (bitset == 0) return -EINVAL;
   if (((uintptr_t)address & (sizeof(uint32_t) - 1)) != 0) return -EINVAL;
   if (validate_user_pointer(address, sizeof(*address)) < 0) return -EFAULT;
 
@@ -155,14 +205,36 @@ int task_futex_wait_private(uint32_t *address, uint32_t expected) {
     scheduler_unlock_irqrestore(flags);
     return -EAGAIN;
   }
-  if (wait_queue_block_locked(queue, (uintptr_t)thread->process->mm,
-                              (uintptr_t)address, true, NULL, NULL) < 0) {
+  int blocked;
+  if (timed) {
+    uint32_t deadline = (uint32_t)timer_ticks + timeout_ticks;
+    blocked = wait_queue_block_timed_locked(
+        queue, (uintptr_t)thread->process->mm, (uintptr_t)address, true,
+        deadline, NULL, NULL);
+  } else {
+    blocked = wait_queue_block_locked(
+        queue, (uintptr_t)thread->process->mm, (uintptr_t)address, true,
+        NULL, NULL);
+  }
+  if (blocked < 0) {
     scheduler_unlock_irqrestore(flags);
     return -EINVAL;
   }
+  thread->wait_bitset = bitset;
   scheduler_unlock_irqrestore(flags);
   switch_task();
-  return 0;
+  return thread->wait_result;
+}
+
+int task_futex_wait_private(uint32_t *address, uint32_t expected) {
+  return task_futex_wait_private_bitset(address, expected, 0, false,
+                                        UINT32_MAX);
+}
+
+int task_futex_wait_private_timed(uint32_t *address, uint32_t expected,
+                                  uint32_t timeout_ticks) {
+  return task_futex_wait_private_bitset(address, expected, timeout_ticks, true,
+                                        UINT32_MAX);
 }
 
 int task_futex_wake_private(uint32_t *address, uint32_t maximum) {
@@ -177,6 +249,105 @@ int task_futex_wake_private(uint32_t *address, uint32_t maximum) {
       maximum);
   scheduler_unlock_irqrestore(flags);
   return (int)woken;
+}
+
+int task_futex_wake_private_bitset(uint32_t *address, uint32_t maximum,
+                                   uint32_t bitset) {
+  thread_t *thread = current_task;
+  if (!thread || !thread->process || !address) return -EFAULT;
+  if (bitset == 0) return -EINVAL;
+  if (((uintptr_t)address & (sizeof(uint32_t) - 1)) != 0) return -EINVAL;
+  if (validate_user_pointer(address, sizeof(*address)) < 0) return -EFAULT;
+  wait_queue_t *queue = futex_private_queue(thread->process->mm, address);
+  uint64_t flags = scheduler_lock_irqsave();
+  uint32_t woken = wait_queue_wake_masked_locked(
+      queue, (uintptr_t)thread->process->mm, (uintptr_t)address, true, bitset,
+      maximum);
+  scheduler_unlock_irqrestore(flags);
+  return (int)woken;
+}
+
+int task_futex_requeue_private(uint32_t *source, uint32_t *destination,
+                               uint32_t wake_count, uint32_t requeue_count,
+                               bool compare, uint32_t expected) {
+  thread_t *thread = current_task;
+  if (!thread || !thread->process || !source || !destination) return -EFAULT;
+  if (((uintptr_t)source & 3U) || ((uintptr_t)destination & 3U))
+    return -EINVAL;
+  if (validate_user_pointer(source, sizeof(*source)) < 0 ||
+      validate_user_pointer(destination, sizeof(*destination)) < 0)
+    return -EFAULT;
+
+  page_directory_t *mm = thread->process->mm;
+  wait_queue_t *source_queue = futex_private_queue(mm, source);
+  wait_queue_t *destination_queue = futex_private_queue(mm, destination);
+  uint64_t flags = scheduler_lock_irqsave();
+  if (compare) {
+    uint32_t observed = 0;
+    if (copy_from_user_u32_atomic(&observed, source) < 0) {
+      scheduler_unlock_irqrestore(flags);
+      return -EFAULT;
+    }
+    if (observed != expected) {
+      scheduler_unlock_irqrestore(flags);
+      return -EAGAIN;
+    }
+  }
+
+  uint32_t woken = 0;
+  uint32_t requeued = 0;
+  thread_t **link = &source_queue->head;
+  while (*link && (woken < wake_count || requeued < requeue_count)) {
+    thread_t *waiter = *link;
+    if (!waiter->wait_keyed || waiter->wait_space != (uintptr_t)mm ||
+        waiter->wait_address != (uintptr_t)source) {
+      link = &waiter->wait_next;
+      continue;
+    }
+
+    if (woken < wake_count) {
+      *link = waiter->wait_next;
+      waiter->wait_next = NULL;
+      waiter->waiting_on = NULL;
+      waiter->wait_space = 0;
+      waiter->wait_address = 0;
+      waiter->wait_keyed = false;
+      waiter->wait_timed = false;
+      waiter->wait_deadline_tick = 0;
+      waiter->wait_result = 0;
+      if (waiter->state == TASK_BLOCKED) {
+        waiter->state = TASK_READY;
+        waiter->time_slice = task_quantum(waiter);
+        woken++;
+      }
+      continue;
+    }
+
+    waiter->wait_address = (uintptr_t)destination;
+    if (source_queue != destination_queue) {
+      *link = waiter->wait_next;
+      waiter->waiting_on = destination_queue;
+      waiter->wait_next = destination_queue->head;
+      destination_queue->head = waiter;
+      continue;
+    }
+    requeued++;
+    link = &waiter->wait_next;
+  }
+  scheduler_unlock_irqrestore(flags);
+  return (int)(woken + requeued);
+}
+
+int task_set_clear_child_tid(uint64_t user_address) {
+  thread_t *thread = current_task;
+  if (!thread || !thread->process || !thread->user_mode) return -EINVAL;
+  if (user_address && (user_address & (sizeof(uint32_t) - 1)) != 0)
+    return -EINVAL;
+  if (user_address &&
+      validate_user_write((void *)(uintptr_t)user_address, sizeof(uint32_t)) < 0)
+    return -EFAULT;
+  thread->clear_child_tid = user_address;
+  return thread->id;
 }
 
 /* Setado por switch_task() para forcar um reschedule mesmo quando a tarefa
@@ -220,6 +391,20 @@ int foreground_job_id = -1;
 static int next_job_id = 1;
 static void task_kill_job_locked(int job_id);
 
+/* A process always starts with an absolute working directory. A kernel/test
+ * task may not have established one yet; inherit root instead of an empty
+ * string, which breaks relative path resolution in its children. */
+static void process_inherit_cwd(process_t *destination,
+                                const process_t *source) {
+  if (!destination) return;
+  if (!source || !source->cwd[0]) {
+    strcpy(destination->cwd, "/");
+    return;
+  }
+  strncpy(destination->cwd, source->cwd, sizeof(destination->cwd) - 1);
+  destination->cwd[sizeof(destination->cwd) - 1] = '\0';
+}
+
 process_t *task_process_create(int pid, process_t *parent,
                                page_directory_t *mm) {
   process_t *process = (process_t *)kmalloc(sizeof(*process));
@@ -238,6 +423,15 @@ process_t *task_process_create(int pid, process_t *parent,
   process_list = process;
   scheduler_unlock_irqrestore(flags);
   return process;
+}
+
+uint32_t task_process_count_active(void) {
+  uint32_t count = 0;
+  uint64_t flags = scheduler_lock_irqsave();
+  for (process_t *process = process_list; process; process = process->next)
+    if (!process->zombie && count < UINT32_MAX) count++;
+  scheduler_unlock_irqrestore(flags);
+  return count;
 }
 
 void task_process_attach(process_t *process, thread_t *thread) {
@@ -309,6 +503,21 @@ static void task_mark_zombie_locked(thread_t *thread, int status) {
   }
   if (thread->waiting_on)
     wait_queue_unlink_locked(thread->waiting_on, thread);
+  if (thread->clear_child_tid) {
+    uint64_t user_address = thread->clear_child_tid;
+    thread->clear_child_tid = 0;
+    /* User threads in one process share this address space. If termination is
+     * initiated from another address space, leave user memory untouched. */
+    if (thread->process && current_directory == thread->process->mm) {
+      uint32_t zero = 0;
+      if (copy_to_user((void *)(uintptr_t)user_address, &zero, sizeof(zero)) == 0) {
+        wait_queue_t *queue = futex_private_queue(thread->process->mm,
+                                                  (uint32_t *)(uintptr_t)user_address);
+        wait_queue_wake_locked(queue, (uintptr_t)thread->process->mm,
+                              (uintptr_t)user_address, true, 1);
+      }
+    }
+  }
   thread->exit_status = status;
   thread->state = TASK_ZOMBIE;
 }
@@ -338,19 +547,35 @@ void init_cpu_local(int cpu_id) {
 extern char *itoa(int value, char *str, int base);
 
 static inline void fpu_context_save(void *area) {
-  asm volatile("fxsave (%0)" :: "r"(area) : "memory");
+  if (fpu_xsave_enabled) {
+    uint32_t mask_lo = (uint32_t)fpu_context_mask;
+    uint32_t mask_hi = (uint32_t)(fpu_context_mask >> 32);
+    asm volatile("xsave64 (%0)" :: "r"(area), "a"(mask_lo), "d"(mask_hi)
+                 : "memory");
+  } else {
+    asm volatile("fxsave (%0)" :: "r"(area) : "memory");
+  }
 }
 
 static inline void fpu_context_restore(void *area) {
-  asm volatile("fxrstor (%0)" :: "r"(area) : "memory");
+  if (fpu_xsave_enabled) {
+    uint32_t mask_lo = (uint32_t)fpu_context_mask;
+    uint32_t mask_hi = (uint32_t)(fpu_context_mask >> 32);
+    asm volatile("xrstor64 (%0)" :: "r"(area), "a"(mask_lo), "d"(mask_hi)
+                 : "memory");
+  } else {
+    asm volatile("fxrstor (%0)" :: "r"(area) : "memory");
+  }
 }
 
 static void *fpu_context_create(void) {
-  uint8_t *area = (uint8_t *)kmalloc_a(512);
+  uint8_t *area = (uint8_t *)kmalloc_a(fpu_context_size);
   if (!area) return NULL;
-  memset(area, 0, 512);
+  memset(area, 0, fpu_context_size);
   *(uint16_t *)(void *)(area + 0) = 0x037f; /* x87 default control word */
   *(uint32_t *)(void *)(area + 24) = 0x1f80; /* MXCSR default */
+  if (fpu_xsave_enabled)
+    *(uint64_t *)(void *)(area + 512) = 0x3; /* initialized x87 + SSE state */
   return area;
 }
 
@@ -421,7 +646,7 @@ int create_task_named(void (*entry_point)(), const char *name) {
 int create_task_named_prio(void (*entry_point)(), const char *name,
                             int priority) {
   return create_task_named_stack(entry_point, name, priority,
-                                 KERNEL_STACK_MAX_SIZE);
+                                 KERNEL_STACK_DEFAULT_SIZE);
 }
 
 int create_task_named_stack(void (*entry_point)(), const char *name,
@@ -435,7 +660,7 @@ int create_task_named_stack(void (*entry_point)(), const char *name,
   process_t *process = task_process_create(
       pid, current_task ? current_task->process : NULL, current_directory);
   if (!process) { kfree(new_task); return -1; }
-  strcpy(process->cwd, current_task ? current_task->process->cwd : "/");
+  process_inherit_cwd(process, current_task ? current_task->process : NULL);
   new_task->user_mode = false;
   task_assign_name(new_task, name, false);
   task_sched_fields_init(new_task);
@@ -519,7 +744,7 @@ int create_user_task_named(uint64_t entry_point, uint64_t user_stack,
   process->uid = process->euid = 1000;
   process->gid = process->egid = 1000;
   process->job_id = pid;
-  strcpy(process->cwd, current_task ? current_task->process->cwd : "/");
+  process_inherit_cwd(process, current_task ? current_task->process : NULL);
   task_assign_name(new_task, name, true);
   task_sched_fields_init(new_task);
 
@@ -596,7 +821,7 @@ int create_user_task_64_named(uint64_t entry_point, uint64_t user_stack,
   process->uid = process->euid = 1000;
   process->gid = process->egid = 1000;
   process->job_id = pid;
-  strcpy(process->cwd, current_task ? current_task->process->cwd : "/");
+  process_inherit_cwd(process, current_task ? current_task->process : NULL);
   task_assign_name(new_task, name, true);
   task_sched_fields_init(new_task);
 
@@ -670,9 +895,8 @@ uint64_t schedule(uint64_t current_rsp) {
   if (curr->id == 0 && curr->next == curr)
     return current_rsp;
 
-  /* Skip all stack checks for init task (PID 0) which uses the boot stack
-   * with no allocated bounds (kernel_stack == 0). */
-  if (curr->kernel_stack != 0 && curr->kernel_stack_base != 0) {
+  /* Skip all stack checks for init task (PID 0) which uses the boot stack / idle loop. */
+  if (curr->id != 0 && curr->kernel_stack != 0 && curr->kernel_stack_base != 0) {
     /* RSP bounds check - stack grows DOWN from kernel_stack to kernel_stack_base. */
     uint64_t stack_top = curr->kernel_stack;
     uint64_t stack_bottom = curr->kernel_stack_base;
@@ -732,15 +956,23 @@ uint64_t schedule(uint64_t current_rsp) {
     }
   }
 
-  /* Acorda tarefas adormecidas cujo wake_tick ja passou. wake_tick==0 marca
-   * um bloqueio sem timeout (ex.: waitpid), acordado explicitamente. */
+  /* Acorda tarefas adormecidas e waiters com prazo vencido. Comparações
+   * signed de ticks de 32 bits são válidas para deadlines até INT32_MAX ticks. */
   if (task_list) {
     task_t *w = task_list;
     do {
       if (w->state == TASK_SLEEPING && w->wake_tick != 0 &&
-          (int64_t)(timer_ticks - w->wake_tick) >= 0) {
+          (int32_t)((uint32_t)timer_ticks -
+                    (uint32_t)w->wake_tick) >= 0) {
         w->state = TASK_READY;
         w->wake_tick = 0;
+        w->time_slice = task_quantum(w);
+      }
+      if (w->state == TASK_BLOCKED && w->wait_timed &&
+          (int32_t)((uint32_t)timer_ticks - w->wait_deadline_tick) >= 0) {
+        if (w->waiting_on) wait_queue_unlink_locked(w->waiting_on, w);
+        w->wait_result = TASK_WAIT_RESULT_TIMEOUT;
+        w->state = TASK_READY;
         w->time_slice = task_quantum(w);
       }
       w = w->next;
@@ -768,33 +1000,37 @@ uint64_t schedule(uint64_t current_rsp) {
   }
 
   /* Round-robin: pick next READY task in list */
-  task_t *next = curr->next;
-  while (next->state != TASK_READY) {
-    if (next == curr)
-      break;
+  task_t *next = curr ? curr->next : task_list;
+  if (!next) next = task_list;
+  task_t *start_node = next;
+  while (next && next->state != TASK_READY) {
     next = next->next;
+    if (!next || next == start_node || next == curr)
+      break;
   }
 
   /* The boot task is the single-CPU idle context. If all user tasks are
    * blocked, return to it so timer/device interrupts can make progress. */
-  if (next->state != TASK_READY && curr->state != TASK_READY) {
+  if ((!next || next->state != TASK_READY) && curr->state != TASK_READY) {
     task_t *idle = task_list;
-    do {
-      if (idle->id == 0 && idle->state != TASK_ZOMBIE) {
-        idle->state = TASK_READY;
-        next = idle;
-        break;
-      }
-      idle = idle->next;
-    } while (idle != task_list);
+    if (idle) {
+      do {
+        if (idle->id == 0 && idle->state != TASK_ZOMBIE) {
+          idle->state = TASK_READY;
+          next = idle;
+          break;
+        }
+        idle = idle->next;
+      } while (idle && idle != task_list);
+    }
   }
 
-  if (next->state == TASK_READY) {
+  if (next && next->state == TASK_READY) {
       next->state = TASK_RUNNING;
       next->time_slice = task_quantum(next);
       set_current_task(next);
   } else {
-      if (curr->state == TASK_READY) {
+      if (curr && curr->state == TASK_READY) {
           curr->state = TASK_RUNNING;
           curr->time_slice = task_quantum(curr);
       }
@@ -897,7 +1133,7 @@ void task_sleep_ms(uint32_t ms) {
   }
 
   /* timer_ticks roda a 100 Hz (10 ms por tick). */
-  uint32_t ticks = (ms + 9) / 10;
+  uint32_t ticks = (uint32_t)(((uint64_t)ms + 9ULL) / 10ULL);
   if (ticks == 0)
     ticks = 1;
 
@@ -1043,8 +1279,8 @@ int task_snapshot(task_info_t *out, int max_entries) {
     snapshot.parent_id = t->process && t->process->parent
                              ? t->process->parent->pid : -1;
     snapshot.state = t->state;
-    snapshot.heap_start = t->process->heap_start;
-    snapshot.heap_end = t->process->heap_end;
+    snapshot.heap_start = t->process ? t->process->heap_start : 0;
+    snapshot.heap_end = t->process ? t->process->heap_end : 0;
     snapshot.cpu_ticks = t->cpu_ticks;
     snapshot.switch_count = t->switch_count;
     snapshot.priority = t->priority;
@@ -1158,7 +1394,7 @@ int fork_process(registers_t *regs) {
   }
   if (parent->fpu_ctx) {
     fpu_context_save(parent->fpu_ctx);
-    memcpy(new_task->fpu_ctx, parent->fpu_ctx, 512);
+    memcpy(new_task->fpu_ctx, parent->fpu_ctx, fpu_context_size);
   }
 
   uint64_t regs_size = sizeof(registers_t);
@@ -1172,6 +1408,8 @@ int fork_process(registers_t *regs) {
   // Copy heap limits and cwd
   child_process->heap_start = parent->process->heap_start;
   child_process->heap_end = parent->process->heap_end;
+  child_process->linux_brk_start = parent->process->linux_brk_start;
+  child_process->linux_brk_current = parent->process->linux_brk_current;
   child_process->mmap_top = parent->process->mmap_top;
   child_process->uid = parent->process->uid;
   child_process->euid = parent->process->euid;
@@ -1185,7 +1423,7 @@ int fork_process(registers_t *regs) {
   new_task->priority = parent->priority;
   new_task->time_slice = task_quantum(new_task);
   new_task->wake_tick = 0;
-  strcpy(child_process->cwd, parent->process->cwd);
+  process_inherit_cwd(child_process, parent->process);
 
   // Copy file descriptors
   for (int i = 0; i < 32; i++) {
@@ -1193,7 +1431,10 @@ int fork_process(registers_t *regs) {
     sys_fd_get(&child_process->file_descriptors[i]);
   }
 
-  task_assign_name(new_task, "fork", new_task->user_mode);
+  task_assign_name(new_task,
+                   child_process->abi == TASK_ABI_LINUX_X86_64
+                       ? parent->name : "fork",
+                   new_task->user_mode);
   task_process_attach(child_process, new_task);
   uint64_t sched_flags = scheduler_lock_irqsave();
   new_task->next = task_list->next;
@@ -1207,13 +1448,28 @@ int fork_process(registers_t *regs) {
 }
 
 int task_clone_thread(registers_t *regs, uint64_t user_stack,
-                      uint64_t tls_base, int set_tls) {
+                      uint64_t tls_base, int set_tls,
+                      uint64_t parent_tid_address, int set_parent_tid,
+                      uint64_t child_tid_address, int set_child_tid,
+                      int clear_child_tid) {
   thread_t *parent = current_task;
   if (!parent || !parent->process || !regs || !parent->user_mode ||
       !user_stack || user_stack > USER_ADDR_MAX ||
       validate_user_write((void *)(user_stack - 1), 1) < 0 ||
       (set_tls && tls_base &&
        (tls_base < USER_ADDR_MIN || tls_base >= USER_ADDR_MAX)))
+    return -EINVAL;
+  if ((set_parent_tid &&
+       (!parent_tid_address ||
+        validate_user_write((void *)(uintptr_t)parent_tid_address,
+                            sizeof(uint32_t)) < 0)) ||
+      ((set_child_tid || clear_child_tid) &&
+       (!child_tid_address ||
+        validate_user_write((void *)(uintptr_t)child_tid_address,
+                            sizeof(uint32_t)) < 0)))
+    return -EFAULT;
+  if ((set_parent_tid && (parent_tid_address & 3U)) ||
+      ((set_child_tid || clear_child_tid) && (child_tid_address & 3U)))
     return -EINVAL;
 
   thread_t *thread = (thread_t *)kmalloc(sizeof(*thread));
@@ -1226,7 +1482,7 @@ int task_clone_thread(registers_t *regs, uint64_t user_stack,
   thread->time_slice = task_quantum(thread);
   thread->fs_base = set_tls ? tls_base : parent->fs_base;
   thread->user_gs_base = parent->user_gs_base;
-  thread->clear_child_tid = 0;
+  thread->clear_child_tid = clear_child_tid ? child_tid_address : 0;
   strncpy(thread->name, parent->name, sizeof(thread->name) - 1);
 
   size_t stack_size = 0;
@@ -1252,7 +1508,20 @@ int task_clone_thread(registers_t *regs, uint64_t user_stack,
   }
   if (parent->fpu_ctx) {
     fpu_context_save(parent->fpu_ctx);
-    memcpy(thread->fpu_ctx, parent->fpu_ctx, 512);
+    memcpy(thread->fpu_ctx, parent->fpu_ctx, fpu_context_size);
+  }
+
+  uint32_t tid = (uint32_t)thread->id;
+  if ((set_parent_tid &&
+       copy_to_user((void *)(uintptr_t)parent_tid_address, &tid,
+                    sizeof(tid)) < 0) ||
+      (set_child_tid &&
+       copy_to_user((void *)(uintptr_t)child_tid_address, &tid,
+                    sizeof(tid)) < 0)) {
+    kfree(thread->fpu_ctx);
+    kernel_stack_free((void *)thread->kernel_stack_base, stack_size);
+    kfree(thread);
+    return -EFAULT;
   }
 
   task_process_attach(parent->process, thread);
@@ -1263,11 +1532,12 @@ int task_clone_thread(registers_t *regs, uint64_t user_stack,
   return thread->id;
 }
 
-int sys_waitpid(int pid, int *status, int options) {
+static int task_waitpid_internal(int pid, int *status, int options,
+                                bool status_is_user) {
   thread_t *parent_thread = current_task;
   process_t *parent = parent_thread ? parent_thread->process : NULL;
   if (!parent) return -1;
-  if (status && parent_thread->user_mode &&
+  if (status && status_is_user &&
       validate_user_write(status, sizeof(*status)) < 0)
     return -EFAULT;
 
@@ -1283,7 +1553,7 @@ int sys_waitpid(int pid, int *status, int options) {
           found = true;
           if (child->zombie) {
             if (status) {
-              if (parent_thread->user_mode) {
+              if (status_is_user) {
                 if (copy_to_user(status, &child->exit_status,
                                  sizeof(child->exit_status)) < 0) {
                   scheduler_unlock_irqrestore(sched_flags);
@@ -1344,6 +1614,15 @@ int sys_waitpid(int pid, int *status, int options) {
     scheduler_unlock_irqrestore(sched_flags);
     switch_task();
   }
+}
+
+int sys_waitpid(int pid, int *status, int options) {
+  return task_waitpid_internal(pid, status, options,
+                               current_task && current_task->user_mode);
+}
+
+int task_waitpid_kernel(int pid, int *status, int options) {
+  return task_waitpid_internal(pid, status, options, false);
 }
 
 void sys_kill_by_pid(int pid) {

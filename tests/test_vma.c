@@ -45,6 +45,11 @@ int test_vma_intervals(void) {
       vma_find(&source, 0x6000) == 0 ||
       vma_find(&source, 0xC000) != 0)
     FAIL("vma_intervals", "heap resize broke ordered VMA invariants");
+  if (vma_resize_heap(&source, 0x6000, 0x6000) < 0 ||
+      vma_find(&source, 0x6000) != 0 ||
+      vma_resize_heap(&source, 0x6000, 0x8000) < 0 ||
+      vma_find(&source, 0x7000) == 0)
+    FAIL("vma_intervals", "empty heap removal or re-growth failed");
   if (vma_clone(&source, &copy) < 0 || !vma_find(&copy, 0x3000) ||
       vma_find(&copy, 0x2000))
     FAIL("vma_intervals", "VMA clone did not preserve intervals");

@@ -4,6 +4,7 @@
 #include "vfs.h"
 #include "ata.h"
 #include "ahci.h"
+#include "usb_msc.h"
 #include "kheap.h"
 #include "serial.h"
 #include "string.h"
@@ -13,8 +14,27 @@
 
 static int sdfs_mounted = 0;
 static int sdfs_corrupt_mount = 0;
+static const char *sdfs_mount_err_msg = "OK";
 static uint16_t ata_bus;
 static uint8_t ata_drive;
+static uint32_t sdfs_partition_lba = 0;
+static uint32_t sdfs_partition_total_sectors = 0;
+static int sdfs_is_usb_msc = 0;
+
+const char *sdfs_last_mount_error(void) {
+    return sdfs_mount_err_msg ? sdfs_mount_err_msg : "erro desconhecido";
+}
+
+void sdfs_set_usb_partition(uint32_t start_lba, uint32_t total_sectors) {
+    sdfs_partition_lba = start_lba;
+    sdfs_partition_total_sectors = total_sectors;
+    sdfs_is_usb_msc = 1;
+}
+
+uint32_t sdfs_get_partition_lba(void) {
+    return sdfs_partition_lba;
+}
+
 static uint32_t disk_total_blocks;
 static uint32_t disk_bitmap_block;
 static uint32_t disk_bitmap_blocks;
@@ -60,10 +80,85 @@ static int sdfs_vfs_unlink(fs_node_t *dir_node, const char *name);
 static int sdfs_vfs_rmdir(fs_node_t *dir_node, const char *name);
 static int sdfs_vfs_rename(fs_node_t *old_dir, const char *old_name,
                            fs_node_t *new_dir, const char *new_name);
+static int sdfs_sync(fs_node_t *node, int data_only);
 static struct dirent sdfs_dirent;
 
 static uint8_t sdfs_ahci_port = 0xFF;
 static uint8_t *sdfs_ramdisk = NULL;
+
+/* The installer reserves LBA 0..65535 for GRUB and its boot filesystem.
+ * Keep these raw operations anchored to the device selected by sdfs_mount(),
+ * so an OTA never guesses which disk to overwrite. */
+int sdfs_read_hd_boot_region(uint32_t lba, uint32_t sectors, uint8_t *buffer) {
+    return sdfs_read_hd_boot_region_progress(lba, sectors, buffer, NULL, NULL);
+}
+
+int sdfs_read_hd_boot_region_progress(uint32_t lba, uint32_t sectors, uint8_t *buffer,
+                                      sdfs_region_progress_fn progress_cb, void *user_data) {
+    if (!buffer || sectors == 0 || sdfs_ramdisk || sdfs_is_usb_msc ||
+        !sdfs_mounted || sdfs_partition_lba != SDFS_HD_PARTITION_LBA ||
+        lba >= SDFS_HD_PARTITION_LBA || sectors > SDFS_HD_PARTITION_LBA - lba) {
+        return -1;
+    }
+    uint32_t total = sectors;
+    uint32_t completed = 0;
+    while (sectors) {
+        uint32_t chunk = sectors > 8 ? 8 : sectors;
+        if (sdfs_ahci_port != 0xFF) {
+            if (!ahci_read_sector(sdfs_ahci_port, lba, chunk, buffer)) return -1;
+        } else {
+            for (uint32_t i = 0; i < chunk; i++) {
+                if (ata_read_sector(ata_bus, ata_drive, lba + i,
+                                    (uint16_t *)(buffer + (size_t)i * SDFS_SECTOR_SIZE)) != 0) return -1;
+            }
+        }
+        lba += chunk;
+        sectors -= chunk;
+        completed += chunk;
+        buffer += (size_t)chunk * SDFS_SECTOR_SIZE;
+        if (progress_cb) progress_cb(completed, total, user_data);
+    }
+    return 0;
+}
+
+int sdfs_write_hd_boot_region(uint32_t lba, uint32_t sectors, const uint8_t *buffer) {
+    return sdfs_write_hd_boot_region_progress(lba, sectors, buffer, NULL, NULL);
+}
+
+int sdfs_write_hd_boot_region_progress(uint32_t lba, uint32_t sectors, const uint8_t *buffer,
+                                       sdfs_region_progress_fn progress_cb, void *user_data) {
+    if (!buffer || sectors == 0 || sdfs_ramdisk || sdfs_is_usb_msc ||
+        !sdfs_mounted || sdfs_partition_lba != SDFS_HD_PARTITION_LBA ||
+        lba >= SDFS_HD_PARTITION_LBA || sectors > SDFS_HD_PARTITION_LBA - lba) {
+        return -1;
+    }
+    uint32_t total = sectors;
+    uint32_t completed = 0;
+    if (sdfs_ahci_port != 0xFF) {
+        while (sectors) {
+            uint32_t chunk = sectors > 8 ? 8 : sectors;
+            if (!ahci_write_sector(sdfs_ahci_port, lba, chunk, (uint8_t *)buffer)) return -1;
+            lba += chunk;
+            sectors -= chunk;
+            completed += chunk;
+            buffer += (size_t)chunk * SDFS_SECTOR_SIZE;
+            if (progress_cb) progress_cb(completed, total, user_data);
+        }
+        return ahci_flush_cache(sdfs_ahci_port) ? 0 : -1;
+    }
+    ata_set_writeback(1);
+    for (uint32_t i = 0; i < sectors; i++) {
+        if (ata_write_sector(ata_bus, ata_drive, lba + i,
+                             (uint16_t *)(buffer + (size_t)i * SDFS_SECTOR_SIZE)) != 0) {
+            ata_set_writeback(0);
+            return -1;
+        }
+        completed = i + 1;
+        if (progress_cb) progress_cb(completed, total, user_data);
+    }
+    ata_set_writeback(0);
+    return ata_flush_cache();
+}
 
 typedef struct sdfs_open_ref {
     uint32_t start_block;
@@ -77,6 +172,18 @@ typedef struct sdfs_open_ref {
 static sdfs_open_ref_t *sdfs_open_refs;
 static spinlock_t sdfs_open_ref_lock = {0};
 
+static uint32_t sdfs_chain_cache_start = 0;
+static uint32_t sdfs_chain_cache_idx = 0;
+static uint32_t sdfs_chain_cache_phys = 0;
+static uint8_t *sdfs_chain_cache_ramdisk = NULL;
+
+static inline void sdfs_chain_cache_invalidate(void) {
+    sdfs_chain_cache_start = 0;
+    sdfs_chain_cache_idx = 0;
+    sdfs_chain_cache_phys = 0;
+    sdfs_chain_cache_ramdisk = NULL;
+}
+
 static int sdfs_open(fs_node_t *node);
 static void sdfs_close(fs_node_t *node);
 static int sdfs_mark_open_unlinked(uint32_t start_block, uint32_t size,
@@ -85,6 +192,7 @@ static void sdfs_free_unlinked_chain(uint32_t start_block, uint32_t size,
                                      int is_dir);
 
 void sdfs_enable_ramdisk(uint32_t mb) {
+    sdfs_chain_cache_invalidate();
     uint64_t bytes = mb * 1024 * 1024;
     sdfs_ramdisk = (uint8_t *)kmalloc_a(bytes);
     if (!sdfs_ramdisk) {
@@ -93,6 +201,25 @@ void sdfs_enable_ramdisk(uint32_t mb) {
     }
     disk_total_blocks = bytes / SDFS_BLOCK_SIZE;
     serial_print("SDFS: Ramdisk enabled!\n");
+}
+
+int sdfs_switch_to_hd_partition(uint16_t bus, uint8_t drive, uint8_t ahci_port,
+                                uint32_t start_lba, uint32_t total_sectors) {
+    sdfs_chain_cache_invalidate();
+    if (bitmap_cache) {
+        kfree(bitmap_cache);
+        bitmap_cache = NULL;
+    }
+    sdfs_ramdisk = NULL;
+    sdfs_is_usb_msc = 0;
+    sdfs_mounted = 0;
+    sdfs_corrupt_mount = 0;
+    ata_bus = bus;
+    ata_drive = drive;
+    sdfs_ahci_port = ahci_port;
+    sdfs_partition_lba = start_lba;
+    sdfs_partition_total_sectors = total_sectors;
+    return 0;
 }
 
 static void sdfs_check_ahci() {
@@ -114,11 +241,14 @@ static int sdfs_read_block(uint32_t block, uint8_t *buffer) {
         memcpy(buffer, sdfs_ramdisk + block * SDFS_BLOCK_SIZE, SDFS_BLOCK_SIZE);
         return 0;
     }
-    uint32_t lba = block * SDFS_SECTORS_PER_BLOCK;
+    uint32_t lba = sdfs_partition_lba + block * SDFS_SECTORS_PER_BLOCK;
+    if (sdfs_is_usb_msc) {
+        return (usb_msc_read_sectors(lba, SDFS_SECTORS_PER_BLOCK, buffer) == 0) ? 0 : -1;
+    }
     if (sdfs_ahci_port != 0xFF) {
         return ahci_read_sector(sdfs_ahci_port, lba, SDFS_SECTORS_PER_BLOCK, buffer) ? 0 : -1;
     }
-    if (ata_bmide_available()) {
+    if (ata_bmide_available() && ata_bus == ATA_PRIMARY && ata_drive == ATA_MASTER) {
         return ata_bmide_read(lba, SDFS_SECTORS_PER_BLOCK, (uint16_t *)buffer);
     } else {
         for (int i = 0; i < SDFS_SECTORS_PER_BLOCK; i++) {
@@ -130,12 +260,15 @@ static int sdfs_read_block(uint32_t block, uint8_t *buffer) {
 
 static int sdfs_flush_device(void) {
     if (sdfs_ramdisk) return 0;
+    if (sdfs_is_usb_msc) return 0;
+    if (ata_get_writeback()) return 0;
     if (sdfs_ahci_port != 0xFF)
         return ahci_flush_cache(sdfs_ahci_port) ? 0 : -1;
     return ata_flush_cache();
 }
 
 static int sdfs_write_block(uint32_t block, uint8_t *buffer) {
+    sdfs_chain_cache_invalidate();
 #ifdef KERNEL_TEST
     if (block == sdfs_fail_write_block) {
         sdfs_fail_write_block = UINT32_MAX;
@@ -147,11 +280,14 @@ static int sdfs_write_block(uint32_t block, uint8_t *buffer) {
         memcpy(sdfs_ramdisk + block * SDFS_BLOCK_SIZE, buffer, SDFS_BLOCK_SIZE);
         return 0;
     }
-    uint32_t lba = block * SDFS_SECTORS_PER_BLOCK;
+    uint32_t lba = sdfs_partition_lba + block * SDFS_SECTORS_PER_BLOCK;
+    if (sdfs_is_usb_msc) {
+        return (usb_msc_write_sectors(lba, SDFS_SECTORS_PER_BLOCK, buffer) == 0) ? 0 : -1;
+    }
     if (sdfs_ahci_port != 0xFF) {
         return ahci_write_sector(sdfs_ahci_port, lba, SDFS_SECTORS_PER_BLOCK, buffer) ? 0 : -1;
     }
-    if (ata_bmide_available()) {
+    if (ata_bmide_available() && ata_bus == ATA_PRIMARY && ata_drive == ATA_MASTER) {
         return ata_bmide_write(lba, SDFS_SECTORS_PER_BLOCK, (uint16_t *)buffer);
     } else {
         for (int i = 0; i < SDFS_SECTORS_PER_BLOCK; i++) {
@@ -213,6 +349,8 @@ static int sdfs_metadata_write(uint32_t block, uint8_t *buffer) {
  * Bitmap operations
  * ============================================================ */
 
+static uint8_t bitmap_block_dirty[128];
+
 static int sdfs_load_bitmap(void) {
     if (bitmap_cache) { kfree(bitmap_cache); bitmap_cache = NULL; }
     bitmap_bytes = disk_bitmap_blocks * SDFS_BLOCK_SIZE;
@@ -226,6 +364,7 @@ static int sdfs_load_bitmap(void) {
             return -1;
         }
     }
+    memset(bitmap_block_dirty, 0, sizeof(bitmap_block_dirty));
     bitmap_dirty_ops = 0;
     return 0;
 }
@@ -233,9 +372,11 @@ static int sdfs_load_bitmap(void) {
 static int sdfs_save_bitmap(void) {
     if (!bitmap_cache) return -1;
     for (uint32_t i = 0; i < disk_bitmap_blocks; i++) {
+        if (i < sizeof(bitmap_block_dirty) && !bitmap_block_dirty[i]) continue;
         if (sdfs_write_block(disk_bitmap_block + i,
                              bitmap_cache + i * SDFS_BLOCK_SIZE) != 0)
             return -1;
+        if (i < sizeof(bitmap_block_dirty)) bitmap_block_dirty[i] = 0;
     }
     if (sdfs_flush_device() != 0) return -1;
     bitmap_dirty_ops = 0;
@@ -263,6 +404,8 @@ static void sdfs_bitmap_set(uint32_t block, int used) {
         bitmap_cache[byte_index] |= bit_mask;
     else
         bitmap_cache[byte_index] &= ~bit_mask;
+    uint32_t bm_idx = byte_index / SDFS_BLOCK_SIZE;
+    if (bm_idx < sizeof(bitmap_block_dirty)) bitmap_block_dirty[bm_idx] = 1;
 }
 
 static int sdfs_bitmap_test(uint32_t block) {
@@ -899,18 +1042,43 @@ static int sdfs_dir_remove_entry(uint32_t dir_block, const char *name) {
  * Path resolution
  * ============================================================ */
 
+static int sdfs_is_root_path(const char *path) {
+    if (!path) return 0;
+    if (strcmp(path, "/") == 0 || strcmp(path, "/disk") == 0 ||
+        strcmp(path, "/disk/") == 0 || strcmp(path, "disk:") == 0 ||
+        strcmp(path, "disk:/") == 0 || strcmp(path, "ram:") == 0 ||
+        strcmp(path, "ram:/") == 0) return 1;
+    return 0;
+}
+
+static int sdfs_is_valid_path(const char *path) {
+    if (!path) return 0;
+    if (path[0] == '/') return 1;
+    if (strncmp(path, "disk:", 5) == 0 || strncmp(path, "ram:", 4) == 0) return 1;
+    return 0;
+}
+
 static int sdfs_resolve_parent(const char *path, uint32_t *parent_block_out, char *name_out) {
-    if (!path || path[0] != '/' || !path[1]) return -1;
+    if (!path) return -1;
+
+    const char *p = path;
+    if (strncmp(p, "disk:", 5) == 0) p += 5;
+    else if (strncmp(p, "ram:", 4) == 0) p += 4;
+    else if (strncmp(p, "/disk/", 6) == 0) p += 5;
+
+    while (*p == '/') p++;
+    if (!*p) return -1;
 
     char *tmp = (char *)kmalloc(512);
     if (!tmp) return -1;
-    int plen = strlen(path);
-    if (plen >= 511) { kfree(tmp); return -1; }
-    memcpy(tmp, path, plen + 1);
+    tmp[0] = '/';
+    int plen = strlen(p);
+    if (plen >= 510) { kfree(tmp); return -1; }
+    memcpy(tmp + 1, p, plen + 1);
 
     char *last_slash = NULL;
-    for (char *p = tmp; *p; p++) {
-        if (*p == '/') last_slash = p;
+    for (char *scan = tmp; *scan; scan++) {
+        if (*scan == '/') last_slash = scan;
     }
     if (!last_slash) { kfree(tmp); return -1; }
 
@@ -1033,38 +1201,60 @@ int sdfs_fsck(void) {
 
 int sdfs_format(void) {
     if (!sdfs_ramdisk) {
-        sdfs_check_ahci();
-        if (sdfs_ahci_port == 0xFF && ata_probe(ata_bus, ata_drive) != 0) {
-            serial_print("SDFS: format refused, no AHCI/ATA disk selected\n");
-            return -1;
-        }
-
-        uint16_t mbr_buf[256];
-        if (sdfs_ahci_port != 0xFF) {
-            if (!ahci_read_sector(sdfs_ahci_port, 0, 1, (uint8_t*)mbr_buf)) {
-                serial_print("SDFS: format failed, cannot read sector 0 (AHCI)\n");
+        if (sdfs_is_usb_msc) {
+            uint32_t total_sec = sdfs_partition_total_sectors;
+            if (total_sec == 0) total_sec = (uint32_t)usb_msc_get_sector_count();
+            if (total_sec == 0) total_sec = 204800;
+            disk_total_blocks = total_sec / SDFS_SECTORS_PER_BLOCK;
+            if (disk_total_blocks < 10) disk_total_blocks = 25600;
+            if (disk_total_blocks > SDFS_MAX_BLOCKS) disk_total_blocks = SDFS_MAX_BLOCKS;
+        } else {
+            sdfs_check_ahci();
+            if (sdfs_ahci_port == 0xFF && ata_probe(ata_bus, ata_drive) != 0) {
+                serial_print("SDFS: format refused, no AHCI/ATA disk selected\n");
                 return -1;
             }
-        } else if (ata_read_sector(ata_bus, ata_drive, 0, mbr_buf) != 0) {
-            serial_print("SDFS: format failed, cannot read sector 0\n");
-            return -1;
-        }
-        uint8_t *mbr = (uint8_t *)mbr_buf;
-        uint32_t part_sectors = *(uint32_t *)(mbr + 458);
-        if (part_sectors == 0) part_sectors = 204800;
 
-        uint32_t total_sectors = part_sectors;
-        if (sdfs_ahci_port != 0xFF) {
-            extern uint64_t ahci_identify(uint8_t portno);
-            uint64_t ahci_sectors = ahci_identify(sdfs_ahci_port);
-            if (ahci_sectors > 0) {
-                total_sectors = (uint32_t)(ahci_sectors > 0xFFFFFFFF ? 0xFFFFFFFF : ahci_sectors);
+            uint16_t mbr_buf[256];
+            if (sdfs_ahci_port != 0xFF) {
+                if (!ahci_read_sector(sdfs_ahci_port, 0, 1, (uint8_t*)mbr_buf)) {
+                    serial_print("SDFS: format failed, cannot read sector 0 (AHCI)\n");
+                    return -1;
+                }
+            } else if (ata_read_sector(ata_bus, ata_drive, 0, mbr_buf) != 0) {
+                serial_print("SDFS: format failed, cannot read sector 0\n");
+                return -1;
             }
-        }
+            uint8_t *mbr = (uint8_t *)mbr_buf;
+            uint32_t part_sectors = *(uint32_t *)(mbr + 458);
+            if (part_sectors == 0) part_sectors = 204800;
 
-        disk_total_blocks = total_sectors / SDFS_SECTORS_PER_BLOCK;
-        if (disk_total_blocks < 10) disk_total_blocks = 25600;
-        if (disk_total_blocks > SDFS_MAX_BLOCKS) disk_total_blocks = SDFS_MAX_BLOCKS;
+            uint32_t total_sectors = part_sectors;
+            if (sdfs_partition_total_sectors > 0) {
+                total_sectors = sdfs_partition_total_sectors;
+            } else if (sdfs_ahci_port != 0xFF) {
+                extern uint64_t ahci_identify(uint8_t portno);
+                uint64_t ahci_sectors = ahci_identify(sdfs_ahci_port);
+                if (ahci_sectors > 0) {
+                    total_sectors = (uint32_t)(ahci_sectors > 0xFFFFFFFF ? 0xFFFFFFFF : ahci_sectors);
+                    if (sdfs_partition_lba > 0 && total_sectors > sdfs_partition_lba) {
+                        total_sectors -= sdfs_partition_lba;
+                    }
+                }
+            } else {
+                uint32_t ata_sectors = ata_identify_sectors(ata_bus, ata_drive);
+                if (ata_sectors > 0) {
+                    total_sectors = ata_sectors;
+                    if (sdfs_partition_lba > 0 && total_sectors > sdfs_partition_lba) {
+                        total_sectors -= sdfs_partition_lba;
+                    }
+                }
+            }
+
+            disk_total_blocks = total_sectors / SDFS_SECTORS_PER_BLOCK;
+            if (disk_total_blocks < 10) disk_total_blocks = 25600;
+            if (disk_total_blocks > SDFS_MAX_BLOCKS) disk_total_blocks = SDFS_MAX_BLOCKS;
+        }
     }
     serial_print("SDFS: format total_blocks=");
     char tbuf[16];
@@ -1117,6 +1307,7 @@ int sdfs_format(void) {
     bitmap_cache = (uint8_t *)kmalloc(disk_bitmap_blocks * SDFS_BLOCK_SIZE);
     memset(bitmap_cache, 0, disk_bitmap_blocks * SDFS_BLOCK_SIZE);
     bitmap_bytes = disk_bitmap_blocks * SDFS_BLOCK_SIZE;
+    memset(bitmap_block_dirty, 1, sizeof(bitmap_block_dirty));
 
     for (uint32_t b = 0; b <= disk_root_block; b++) {
         sdfs_bitmap_set(b, 1);
@@ -1160,23 +1351,34 @@ int sdfs_format(void) {
  * ============================================================ */
 
 fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
-    (void)partition_lba;
+    sdfs_chain_cache_invalidate();
     sdfs_corrupt_mount = 0;
     sdfs_mounted = 0;
+    sdfs_mount_err_msg = "OK";
     ata_bus = bus;
     ata_drive = drive;
+    if (partition_lba != 0) {
+        sdfs_partition_lba = partition_lba;
+    }
 
-    sdfs_check_ahci();
-    if (!sdfs_ramdisk && sdfs_ahci_port == 0xFF) {
-        if (ata_probe(ata_bus, ata_drive) != 0) {
-            serial_print("SDFS: no AHCI/ATA disk available\n");
-            return NULL;
+    if (!sdfs_ramdisk && !sdfs_is_usb_msc) {
+        sdfs_check_ahci();
+        if (sdfs_ahci_port == 0xFF && sdfs_partition_total_sectors == 0) {
+            if (ata_probe(ata_bus, ata_drive) != 0) {
+                sdfs_mount_err_msg = "Disco ATA/AHCI nao respondeu ao probe";
+                serial_print("SDFS: no AHCI/ATA disk available\n");
+                return NULL;
+            }
         }
     }
 
     uint8_t *sb_buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
-    if (!sb_buf) return NULL;
+    if (!sb_buf) {
+        sdfs_mount_err_msg = "Sem memoria para ler superbloco";
+        return NULL;
+    }
     if (sdfs_read_block(0, sb_buf) != 0) {
+        sdfs_mount_err_msg = "Falha de I/O ao ler superbloco (bloco 0)";
         serial_print("SDFS: failed to read superblock\n");
         kfree(sb_buf);
         return NULL;
@@ -1188,6 +1390,7 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
     int is_v1 = (memcmp(sb->magic, SDFS_MAGIC_V1, 8) == 0);
 
     if (!is_v2 && !is_v1) {
+        sdfs_mount_err_msg = "Assinatura magica do superbloco invalida (nao e SDFS0020)";
         serial_print("SDFS: Invalid superblock magic\n");
         kfree(sb_buf);
         return NULL;
@@ -1200,6 +1403,7 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
         sb->superblock_crc = saved_crc;
 
         if (saved_crc != computed_crc) {
+            sdfs_mount_err_msg = "CRC32 do superbloco incorreto";
             serial_print("SDFS: Superblock CRC mismatch; refusing mount\n");
             sdfs_corrupt_mount = 1;
             kfree(sb_buf);
@@ -1227,6 +1431,7 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
             disk_journal_start != disk_bitmap_block + disk_bitmap_blocks ||
             (uint64_t)disk_journal_start + disk_journal_blocks != disk_root_block ||
             (uint64_t)disk_journal_start + disk_journal_blocks > disk_total_blocks) {
+            sdfs_mount_err_msg = "Geometria do superbloco fora dos limites";
             serial_print("SDFS: unsupported/oversized superblock, forcing reformat\n");
             sdfs_corrupt_mount = 1;
             kfree(sb_buf);
@@ -1245,7 +1450,7 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
         disk_mount_count = 0;
         disk_max_mounts = 0;
         /* V1 has no journal. Fail closed for writes instead of reusing a
-         * journal configuration left by a previous mounted filesystem. */
+          * journal configuration left by a previous mounted filesystem. */
         sdfs_journal_init(0, 0, disk_total_blocks, disk_bitmap_block,
                           disk_bitmap_blocks, sdfs_read_block, sdfs_write_block,
                           sdfs_flush_device);
@@ -1255,6 +1460,7 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
     kfree(sb_buf);
 
     if (sdfs_load_bitmap() != 0) {
+        sdfs_mount_err_msg = "Falha de I/O ao carregar bitmap de blocos";
         serial_print("SDFS: Failed to load bitmap\n");
         sdfs_corrupt_mount = 1;
         return NULL;
@@ -1268,6 +1474,7 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
 
         int replayed = sdfs_journal_replay();
         if (replayed < 0) {
+            sdfs_mount_err_msg = "Journal WAL corrompido ou falha de leitura";
             serial_print("SDFS: invalid or unrecoverable journal; refusing mount\n");
             sdfs_corrupt_mount = 1;
             kfree(bitmap_cache);
@@ -1290,6 +1497,7 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
         sb_buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
         if (!sb_buf || sdfs_read_block(0, sb_buf) != 0) {
             if (sb_buf) kfree(sb_buf);
+            sdfs_mount_err_msg = "Falha ao reler superbloco apos journal";
             sdfs_corrupt_mount = 1;
             kfree(bitmap_cache);
             bitmap_cache = NULL;
@@ -1302,6 +1510,7 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
         int write_result = sdfs_write_block(0, sb_buf);
         kfree(sb_buf);
         if (write_result != 0 || sdfs_flush_device() != 0) {
+            sdfs_mount_err_msg = "Falha ao atualizar contador de mount no superbloco";
             sdfs_corrupt_mount = 1;
             kfree(bitmap_cache);
             bitmap_cache = NULL;
@@ -1330,10 +1539,16 @@ fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba) {
     root_node->unlink = sdfs_vfs_unlink;
     root_node->rmdir = sdfs_vfs_rmdir;
     root_node->rename = sdfs_vfs_rename;
+    root_node->sync = sdfs_sync;
 
     sdfs_mounted = 1;
     serial_print("SDFS: Mounted V2\n");
     return root_node;
+}
+
+fs_node_t *sdfs_mount_msc(void) {
+    sdfs_is_usb_msc = 1;
+    return sdfs_mount(0, 0, sdfs_partition_lba);
 }
 
 int sdfs_mount_failed_corrupt(void) {
@@ -1418,8 +1633,8 @@ static int sdfs_create_entry_at(uint32_t parent_block, const char *name,
 
 int sdfs_create_file_as(const char *path, uint16_t uid, uint16_t gid,
                         uint16_t permissions) {
-    if (!sdfs_mounted || !path || path[0] != '/') return -1;
-    if (strcmp(path, "/") == 0 || (permissions & ~0777u)) return -1;
+    if (!sdfs_mounted || !sdfs_is_valid_path(path)) return -1;
+    if (sdfs_is_root_path(path) || (permissions & ~0777u)) return -1;
 
     uint32_t parent_block;
     char name[256];
@@ -1591,8 +1806,8 @@ void *sdfs_read_file(const char *path, uint32_t *size_out) {
 
 int sdfs_create_dir_as(const char *path, uint16_t uid, uint16_t gid,
                        uint16_t permissions) {
-    if (!sdfs_mounted || !path || path[0] != '/') return -1;
-    if (strcmp(path, "/") == 0 || (permissions & ~0777u)) return -1;
+    if (!sdfs_mounted || !sdfs_is_valid_path(path)) return -1;
+    if (sdfs_is_root_path(path) || (permissions & ~0777u)) return -1;
 
     uint32_t parent_block;
     char name[256];
@@ -1648,7 +1863,7 @@ static int sdfs_delete_entry(uint32_t parent_block, const char *name,
 }
 
 int sdfs_delete(const char *path) {
-    if (!sdfs_mounted || !path || strcmp(path, "/") == 0) return -1;
+    if (!sdfs_mounted || !path || sdfs_is_root_path(path)) return -1;
     uint32_t parent_block;
     char name[256];
     if (sdfs_resolve_parent(path, &parent_block, name) != 0) return -1;
@@ -1746,7 +1961,7 @@ static int sdfs_rename_entry(uint32_t old_parent_block, const char *old_name,
 
 int sdfs_rename(const char *old_path, const char *new_path) {
     if (!sdfs_mounted || !old_path || !new_path ||
-        strcmp(old_path, "/") == 0 || strcmp(new_path, "/") == 0)
+        sdfs_is_root_path(old_path) || sdfs_is_root_path(new_path))
         return -1;
     uint32_t old_parent_block, new_parent_block;
     char old_name[256], new_name[256];
@@ -1760,7 +1975,7 @@ int sdfs_rename(const char *old_path, const char *new_path) {
 static int sdfs_path_info_inner(const char *path, int *is_dir_out,
                                 uint32_t *size_out) {
     if (!sdfs_mounted || !path) return -1;
-    if (strcmp(path, "/") == 0) {
+    if (sdfs_is_root_path(path)) {
         if (is_dir_out) *is_dir_out = 1;
         if (size_out) *size_out = 0;
         return 0;
@@ -1786,7 +2001,7 @@ static int sdfs_list_dir_entry_inner(const char *path, int index,
     if (!sdfs_mounted || !path) return -1;
 
     uint32_t dir_block;
-    if (strcmp(path, "/") == 0) {
+    if (sdfs_is_root_path(path)) {
         dir_block = disk_root_block;
     } else {
         sdfs_entry_t e;
@@ -1843,10 +2058,41 @@ static int sdfs_set_permissions_inner(const char *path, uint16_t perm) {
     return rc;
 }
 
+static int sdfs_set_owner_inner(const char *path, uint16_t uid, uint16_t gid) {
+    if (!sdfs_mounted || !path || sdfs_is_root_path(path)) return -1;
+
+    uint32_t parent_block;
+    char name[256];
+    if (sdfs_resolve_parent(path, &parent_block, name) != 0) return -1;
+
+    sdfs_entry_t e;
+    if (!sdfs_dir_find_entry(parent_block, name, &e)) return -1;
+    e.uid = uid;
+    e.gid = gid;
+    e.modified_time = sdfs_now();
+
+    uint8_t *block = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+    if (!block) return -1;
+    int rc = -1;
+    if (sdfs_read_block(e.block, block) == 0 &&
+        sdfs_entry_serialize(block + e.block_offset,
+                             SDFS_BLOCK_SIZE - e.block_offset, &e) >= 0)
+        rc = sdfs_metadata_write(e.block, block);
+    kfree(block);
+    return rc;
+}
+
+int sdfs_set_owner(const char *path, uint16_t uid, uint16_t gid) {
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return -1;
+    int result = sdfs_set_owner_inner(path, uid, gid);
+    sleep_mutex_unlock(&sdfs_mutation_lock);
+    return result;
+}
+
 int sdfs_get_permissions(const char *path, uint16_t *perm) {
     if (!sdfs_mounted || !path || !perm) return -1;
 
-    if (strcmp(path, "/") == 0) {
+    if (sdfs_is_root_path(path)) {
         *perm = 0777;
         return 0;
     }
@@ -1867,7 +2113,7 @@ int sdfs_set_permissions(const char *path, uint16_t perm) {
 static int sdfs_get_metadata_inner(const char *path, uint16_t *uid,
                                    uint16_t *gid, uint16_t *permissions) {
     if (!sdfs_mounted || !path) return -1;
-    if (strcmp(path, "/") == 0) {
+    if (sdfs_is_root_path(path)) {
         if (uid) *uid = 0;
         if (gid) *gid = 0;
         if (permissions) *permissions = 0777;
@@ -1995,19 +2241,43 @@ static uint32_t sdfs_read_inner(fs_node_t *node, uint32_t offset,
     uint32_t block_index = offset / 4092;
     uint32_t offset_in_block = offset % 4092;
 
+    uint8_t *block_buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
+    if (!block_buf) return 0;
+
+    uint32_t cur_idx = 0;
     uint32_t cur_block = start_block;
-    for (uint32_t i = 0; i < block_index; i++) {
-        cur_block = sdfs_get_next_block(cur_block);
-        if (cur_block == 0) return 0;
+    if (start_block != 0 &&
+        sdfs_chain_cache_start == start_block &&
+        sdfs_chain_cache_ramdisk == sdfs_ramdisk &&
+        block_index >= sdfs_chain_cache_idx &&
+        sdfs_chain_cache_phys != 0) {
+        cur_idx = sdfs_chain_cache_idx;
+        cur_block = sdfs_chain_cache_phys;
+    }
+
+    while (cur_idx < block_index && cur_block != 0) {
+        if (sdfs_read_block(cur_block, block_buf) != 0) {
+            kfree(block_buf);
+            return 0;
+        }
+        memcpy(&cur_block, block_buf, 4);
+        cur_idx++;
+    }
+    if (cur_block == 0) {
+        kfree(block_buf);
+        return 0;
     }
 
     uint32_t bytes_read = 0;
     uint32_t remaining = size;
-    uint8_t *block_buf = (uint8_t *)kmalloc(SDFS_BLOCK_SIZE);
-    if (!block_buf) return 0;
 
     while (remaining > 0 && cur_block != 0) {
         if (sdfs_read_block(cur_block, block_buf) != 0) break;
+
+        sdfs_chain_cache_start = start_block;
+        sdfs_chain_cache_idx = cur_idx;
+        sdfs_chain_cache_phys = cur_block;
+        sdfs_chain_cache_ramdisk = sdfs_ramdisk;
 
         uint32_t to_copy = 4092 - offset_in_block;
         if (to_copy > remaining) to_copy = remaining;
@@ -2017,7 +2287,10 @@ static uint32_t sdfs_read_inner(fs_node_t *node, uint32_t offset,
         remaining -= to_copy;
         offset_in_block = 0;
 
-        cur_block = sdfs_get_next_block(cur_block);
+        uint32_t next_block = 0;
+        memcpy(&next_block, block_buf, 4);
+        cur_block = next_block;
+        cur_idx++;
     }
 
     kfree(block_buf);
@@ -2218,6 +2491,17 @@ static int sdfs_truncate(fs_node_t *node) {
     return result;
 }
 
+/* SDFS has no separate metadata/data ordering primitive, so both Linux
+ * fsync and fdatasync flush pending bitmap changes and the device cache. */
+static int sdfs_sync(fs_node_t *node, int data_only) {
+    (void)node;
+    (void)data_only;
+    if (sleep_mutex_lock(&sdfs_mutation_lock) != 0) return -5;
+    int result = sdfs_flush_bitmap();
+    sleep_mutex_unlock(&sdfs_mutation_lock);
+    return result == 0 ? 0 : -5;
+}
+
 static fs_node_t *sdfs_finddir_inner(fs_node_t *node, const char *name) {
     if (!node || !(node->flags & FS_DIRECTORY) || !name) return NULL;
     uint32_t dir_block = node->inode;
@@ -2250,6 +2534,7 @@ static fs_node_t *sdfs_finddir_inner(fs_node_t *node, const char *name) {
     res->open = sdfs_open;
     res->close = sdfs_close;
     res->truncate = sdfs_truncate;
+    res->sync = sdfs_sync;
     return res;
 }
 

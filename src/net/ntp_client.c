@@ -3,8 +3,9 @@
 #include "serial.h"
 #include "timer.h"
 #include "rtc.h"
-#include "string.h"
+#include "uapi/string.h"
 #include "vga.h"
+#include "task.h"
 
 /* lwIP Headers */
 #include "lwip/udp.h"
@@ -82,13 +83,11 @@ static int try_sync_with_server(const char *server_ip_str) {
     udp_sendto(pcb, p, (ip_addr_t *)&server_ip, NTP_PORT);
     pbuf_free(p);
 
-    asm volatile("sti");
-
     /* Aguarda resposta com timeout de 2 segundos */
     uint32_t timeout = timer_ticks + 200;
     while (!ctx.received && timer_ticks < timeout) {
         net_poll();
-        asm volatile("pause");
+        task_sleep_ms(1);
     }
 
     udp_remove(pcb);
@@ -159,11 +158,8 @@ uint64_t ntp_get_unix_time(void) {
         return g_base_unix_time + (elapsed_ticks / 100);
     }
 
-    /* Se ainda nao sincronizou via rede, estima a partir do RTC local */
-    rtc_time_t rtc = rtc_read_time();
-    /* Retorna uma base com hora/min/seg do RTC para 2026-11-09 */
-    uint64_t base_day = 1794254400ULL; /* Aprox Nov 9 2026 */
-    return base_day + (rtc.hour * 3600) + (rtc.minute * 60) + rtc.second;
+    /* Never fabricate a date: TLS certificate validity depends on wall time. */
+    return rtc_get_unix_time();
 }
 
 void ntp_datetime_get(int tz_offset, int *year, int *month, int *day,

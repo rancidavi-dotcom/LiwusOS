@@ -31,5 +31,6 @@ void keyboard_set_ctrl_c(void);
 void keyboard_set_layout(keyboard_layout_t layout);
 keyboard_layout_t keyboard_get_layout(void);
 const char *keyboard_layout_name(keyboard_layout_t layout);
+void keyboard_flush(void);
 
 #endif

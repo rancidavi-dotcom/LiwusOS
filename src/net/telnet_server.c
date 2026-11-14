@@ -1,8 +1,9 @@
 #include "telnet_server.h"
 #include "net_manager.h"
 #include "ntp_client.h"
+#include "http_client.h"
 #include "serial.h"
-#include "string.h"
+#include "uapi/string.h"
 #include "timer.h"
 #include "pmm.h"
 #include "task.h"
@@ -26,6 +27,8 @@ typedef struct {
     char line_buf[TELNET_MAX_LINE];
     size_t line_len;
     int iac_state; /* 0: normal, 1: IAC recebido, 2: comando IAC recebido */
+    char cmd_buf[TELNET_MAX_LINE];
+    volatile bool has_command;
 } telnet_session_t;
 
 static telnet_session_t g_session;
@@ -46,6 +49,14 @@ static void telnet_send_prompt(struct tcp_pcb *pcb) {
 }
 
 static void telnet_ping_output(const char *line, void *user_data) {
+    struct tcp_pcb *pcb = (struct tcp_pcb *)user_data;
+    if (pcb && line) {
+        telnet_send(pcb, line);
+        telnet_send(pcb, "\r\n");
+    }
+}
+
+static void telnet_http_output(const char *line, void *user_data) {
     struct tcp_pcb *pcb = (struct tcp_pcb *)user_data;
     if (pcb && line) {
         telnet_send(pcb, line);
@@ -87,6 +98,9 @@ static void telnet_handle_command(telnet_session_t *s, char *cmd_line) {
         telnet_send(s->pcb, "  ntp [ip]      - Sincroniza o relogio com servidor NTP\r\n");
         telnet_send(s->pcb, "  ifconfig      - Exibe configuracoes e estatisticas de rede\r\n");
         telnet_send(s->pcb, "  ping <ip> [c] - Envia pacotes ICMP Echo Request\r\n");
+        telnet_send(s->pcb, "  nslookup <dom>- Consulta endereco IP de um dominio (DNS)\r\n");
+        telnet_send(s->pcb, "  curl <url>    - Obtem conteudo de pagina web via HTTP/HTTPS\r\n");
+        telnet_send(s->pcb, "  wget <url> [d]- Baixa arquivo via HTTP/HTTPS e salva no disco SDFS\r\n");
         telnet_send(s->pcb, "  uptime        - Exibe tempo de atividade do sistema\r\n");
         telnet_send(s->pcb, "  meminfo       - Exibe estatisticas de memoria RAM\r\n");
         telnet_send(s->pcb, "  ps            - Lista tarefas ativas no kernel\r\n");
@@ -300,6 +314,67 @@ static void telnet_handle_command(telnet_session_t *s, char *cmd_line) {
             }
         }
     }
+    else if (strcmp(cmd, "nslookup") == 0) {
+        if (argc < 2) {
+            telnet_send(s->pcb, "uso: nslookup <dominio>\r\n");
+        } else {
+            char dns_srv[32];
+            char res_ip[32];
+            net_get_dns_server(dns_srv, sizeof(dns_srv));
+            telnet_send(s->pcb, "Servidor DNS: ");
+            telnet_send(s->pcb, dns_srv);
+            telnet_send(s->pcb, "\r\n");
+            int r = net_resolve_host(argv[1], res_ip, sizeof(res_ip));
+            if (r == 0) {
+                telnet_send(s->pcb, "Nome:     ");
+                telnet_send(s->pcb, argv[1]);
+                telnet_send(s->pcb, "\r\nEndereco: ");
+                telnet_send(s->pcb, res_ip);
+                telnet_send(s->pcb, "\r\n");
+            } else {
+                telnet_send(s->pcb, "nslookup: falha ao resolver ");
+                telnet_send(s->pcb, argv[1]);
+                telnet_send(s->pcb, "\r\n");
+            }
+        }
+    }
+    else if (strcmp(cmd, "curl") == 0) {
+        if (argc < 2) {
+            telnet_send(s->pcb, "uso: curl <URL>\r\n");
+        } else {
+            uint8_t *body = NULL;
+            size_t size = 0;
+            int status = 0;
+            int r = http_get_mem(argv[1], &body, &size, &status, telnet_http_output, s->pcb);
+            if (r >= 0 && body) {
+                size_t plen = (size > 2048) ? 2048 : size;
+                for (size_t i = 0; i < plen; i++) {
+                    char ch = (char)body[i];
+                    if (ch == '\r') continue;
+                    if (ch == '\n') telnet_send(s->pcb, "\r\n");
+                    else {
+                        char cbuf[2] = { ch, '\0' };
+                        telnet_send(s->pcb, cbuf);
+                    }
+                }
+                if (size > plen) {
+                    telnet_send(s->pcb, "\r\n[... truncado ...]\r\n");
+                }
+                telnet_send(s->pcb, "\r\n");
+                kfree(body);
+            } else {
+                telnet_send(s->pcb, "curl: falha ao obter URL\r\n");
+            }
+        }
+    }
+    else if (strcmp(cmd, "wget") == 0) {
+        if (argc < 2) {
+            telnet_send(s->pcb, "uso: wget <URL> [caminho_destino_sdfs]\r\n");
+        } else {
+            const char *dest = (argc >= 3) ? argv[2] : NULL;
+            http_download_file(argv[1], dest, telnet_http_output, s->pcb);
+        }
+    }
     else if (strcmp(cmd, "echo") == 0) {
         for (int i = 1; i < argc; i++) {
             telnet_send(s->pcb, argv[i]);
@@ -360,12 +435,25 @@ static err_t telnet_recv_callback(void *arg, struct tcp_pcb *pcb, struct pbuf *p
         }
 
         /* Trata Enter (\r ou \n) */
-        if (b == '\r' || b == '\n') {
+        if (b == '\r') {
             telnet_send(pcb, "\r\n");
             s->line_buf[s->line_len] = '\0';
-            telnet_handle_command(s, s->line_buf);
+            strcpy(s->cmd_buf, s->line_buf);
+            s->has_command = true;
             s->line_len = 0;
             s->line_buf[0] = '\0';
+            continue;
+        }
+        if (b == '\n') {
+            /* Se for \n avulso sem \r anterior */
+            if (s->line_len > 0) {
+                telnet_send(pcb, "\r\n");
+                s->line_buf[s->line_len] = '\0';
+                strcpy(s->cmd_buf, s->line_buf);
+                s->has_command = true;
+                s->line_len = 0;
+                s->line_buf[0] = '\0';
+            }
             continue;
         }
 
@@ -478,4 +566,11 @@ void telnet_server_stop(void) {
 
 bool telnet_server_is_active(void) {
     return g_telnet_active;
+}
+
+void telnet_server_poll(void) {
+    if (g_session.has_command && g_session.pcb) {
+        g_session.has_command = false;
+        telnet_handle_command(&g_session, g_session.cmd_buf);
+    }
 }

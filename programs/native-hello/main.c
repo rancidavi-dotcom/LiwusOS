@@ -148,8 +148,8 @@ int main(int argc, char **argv, char **envp) {
         struct liw_timeval now;
         struct liw_stat standard_output;
         char cwd[128];
-        if (liw_gettimeofday(&now, NULL) < 0 || now.tv_sec < 0 ||
-            liw_getcwd(cwd, sizeof(cwd)) < 0 || cwd[0] != '/' ||
+        if (liw_gettimeofday(&now, NULL) < 0 || now.tv_sec < 0) return 181;
+        if (liw_getcwd(cwd, sizeof(cwd)) < 0 || cwd[0] != '/' ||
             liw_fstat(1, &standard_output) < 0 || standard_output.st_blksize == 0)
             return 83;
 

@@ -67,6 +67,18 @@ typedef struct {
 long liw_net_info(liw_net_info_t *out_info);
 long liw_net_ping(const char *target_ip, uint32_t count);
 long liw_net_ntp(const char *server_ip, char *out_time_buf, uint32_t buf_len);
+long liw_net_resolve(const char *hostname, char *out_ip, size_t max_len);
+long liw_net_http_get(const char *url, const char *dest_path);
+long liw_fb_blit(const uint32_t *pixels, uint32_t width, uint32_t height);
+long liw_sleep_ms(uint32_t ms);
+
+typedef struct {
+    uint8_t scancode;
+    int pressed;
+} liw_key_event_t;
+
+int liw_key_event(liw_key_event_t *out);
+uint64_t liw_timer_ticks(void);
 
 #ifdef __cplusplus
 }

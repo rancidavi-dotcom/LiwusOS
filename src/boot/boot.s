@@ -25,6 +25,15 @@ mb2_tags_start:
   .long 15     /* ACPI new RSDP */
   .long 8      /* framebuffer information */
 
+  /* Framebuffer tag (Type 5): solicita ao bootloader modo grafico linear */
+  .align 8
+  .word 5      /* type = 5 */
+  .word 1      /* flags = 1 (optional fallback) */
+  .long 20     /* size = 20 */
+  .long 1920   /* width: prefer desktop-class viewport where supported */
+  .long 1080   /* height; optional tag allows bootloader fallback */
+  .long 32     /* depth (32-bit ARGB) */
+
   .align 8
   .word 0, 0          /* end tag type=0, flags=0 */
   .long 8             /* end tag size=8 */

@@ -5,7 +5,9 @@
 #include <stdint.h>
 
 #define KERNEL_STACK_MIN_SIZE (16U * 1024U)
-#define KERNEL_STACK_MAX_SIZE (32U * 1024U)
+#define KERNEL_STACK_DEFAULT_SIZE (128U * 1024U)
+#define KERNEL_STACK_MAX_SIZE (512U * 1024U)
+#define KERNEL_STACK_DESKTOP_SIZE (512U * 1024U)
 
 /* Returns the low address of the mapped usable stack region. A guard page is
  * left unmapped on both sides. `size_out` receives the rounded usable size. */

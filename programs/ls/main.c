@@ -5,6 +5,20 @@ static int fail(const char *message) {
     return 1;
 }
 
+static const char *get_badge(uint64_t res_type, uint32_t mode) {
+    if ((mode & 0170000) == 0040000) return "[DIR  ] ";
+    switch (res_type) {
+        case 1: return "[TEXT ] ";
+        case 2: return "[EXEC ] ";
+        case 3: return "[IMAGE] ";
+        case 4: return "[AUDIO] ";
+        case 5: return "[DEV  ] ";
+        case 6: return "[IPC  ] ";
+        case 7: return "[DIR  ] ";
+        default: return "[DATA ] ";
+    }
+}
+
 int main(int argc, char **argv, char **envp) {
     (void)envp;
     if (argc > 2) return fail("ls: expected at most one directory\n");
@@ -46,6 +60,26 @@ int main(int argc, char **argv, char **envp) {
         size_t name_length = 0;
         while (name_length < sizeof(entry.d_name) && entry.d_name[name_length])
             name_length++;
+
+        /* Inspeciona o tipo nativo do arquivo via stat */
+        char full_path[512];
+        size_t plen = liw_strlen(path);
+        if (plen + 1 + name_length < sizeof(full_path)) {
+            liw_memcpy(full_path, path, plen);
+            if (plen > 0 && full_path[plen - 1] != '/' && full_path[plen - 1] != ':') {
+                full_path[plen++] = '/';
+            }
+            liw_memcpy(full_path + plen, entry.d_name, name_length);
+            full_path[plen + name_length] = '\0';
+
+            struct liw_stat st;
+            const char *badge = "[FILE ] ";
+            if (liw_stat(full_path, &st) == 0) {
+                badge = get_badge(st.st_rdev, st.st_mode);
+            }
+            (void)liw_write_all(1, badge, liw_strlen(badge));
+        }
+
         if (name_length == sizeof(entry.d_name) ||
             liw_write_all(1, entry.d_name, name_length) < 0 ||
             liw_write_all(1, "\n", 1) < 0) {

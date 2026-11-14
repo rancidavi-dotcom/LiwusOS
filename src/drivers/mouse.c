@@ -73,7 +73,7 @@ void mouse_handle_event(int x_rel, int y_rel, int buttons) {
     dy = apply_acceleration(dy);
 
     mouse_x += dx;
-    mouse_y -= dy;
+    mouse_y += dy;
 
     if (mouse_x < 0) mouse_x = 0;
     if (mouse_y < 0) mouse_y = 0;

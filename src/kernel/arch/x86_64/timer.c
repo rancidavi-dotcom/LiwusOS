@@ -7,17 +7,18 @@
 #include "usb_ehci.h"
 
 uint32_t timer_ticks = 0;
+volatile uint64_t timer_monotonic_ticks = 0;
 
 extern void keyboard_update_mouse(void);
 extern void net_poll(void);
 
 void timer_handler() {
     timer_ticks++;
+    timer_monotonic_ticks++;
     keyboard_tick();
     keyboard_update_mouse();
     usb_xhci_poll();
     usb_ehci_poll();
-    net_poll();
 }
 
 void init_timer(uint32_t frequency) {

@@ -163,12 +163,14 @@ uniform errno contract.
   an existing VMA, has `p_memsz < p_filesz`, or requests a W+X page.
 - The initial stack is eagerly mapped as 64 KiB ending at
   `USER_STACK_TOP=0x00007ffffffff000`.
-- 64-bit layout, ascending: `argc`, `argv[0..argc-1]`, `NULL`, `envp...`,
-  `NULL`, `AT_NULL` (type `0`), value `0`. The stack pointer is 16-byte aligned.
+- 64-bit native LIWUS layout, ascending: `argc`, `argv[0..argc-1]`, `NULL`,
+  `envp...`, `NULL`, `AT_NULL` (type `0`), value `0`. The stack pointer is
+  16-byte aligned. The Linux x86-64 personality builds a separate ELF64 initial
+  stack with a minimal Linux auxv; see `ABI_LINUX.md`.
 - 32-bit layout: same shape with 32-bit words and no `AT_NULL` pair.
-- There is no `AT_PHDR`, `AT_ENTRY`, `AT_RANDOM` or `AT_SYSINFO_EHDR`. This is
-  sufficient for the current freestanding programs and insufficient for any
-  glibc/musl binary; fixing it is roadmap step 32.
+- Native LIWUS still does not add `AT_PHDR`, `AT_ENTRY`, `AT_RANDOM` or
+  `AT_SYSINFO_EHDR`. The Linux personality now supplies a tested basic auxv,
+  but no vDSO/dynamic linker; this does not establish general libc compatibility.
 
 ## 7. UAPI structures
 
@@ -263,4 +265,4 @@ layout.
    shared futex backing (steps 18–26).
 5. No demand paging, COW or file-backed `mmap` (steps 27–30).
 6. Linux pthread/libc support and cross-CPU task migration (steps 18–20).
-7. 32 file descriptors and no `O_CLOEXEC` (step 37).
+7. File descriptor table is limited to 32 entries; `FD_CLOEXEC` is implemented for the tested Linux open/pipe/dup/exec paths (step 37).

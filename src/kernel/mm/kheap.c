@@ -27,7 +27,10 @@ void kheap_set_start(uint64_t start) {
   if (start % 4096 != 0)
     start += 4096 - (start % 4096);
   uint64_t arena_start = 0, arena_size = 0;
-  uint64_t desired = 128ULL * 1024 * 1024;
+  /* Web pages and LVGL keep large, independent arenas alive together. Ask for
+   * enough kernel heap headroom on RAM-rich machines; PMM still returns the
+   * largest available region down to the existing minimum on smaller systems. */
+  uint64_t desired = 192ULL * 1024 * 1024;
   uint64_t minimum = 8ULL * 1024 * 1024;
   if (pmm_claim_contiguous_region(start, desired, minimum,
                                   &arena_start, &arena_size) != 0) {
@@ -180,9 +183,47 @@ void kfree(void *ptr) {
     return;
   }
 
+  if (blk_start >= kheap_current || header->size < HEADER_SIZE ||
+      blk_start + header->size < blk_start ||
+      blk_start + header->size > kheap_current) {
+    spinlock_release(&kheap_lock);
+    pop_interrupts(eflags);
+    return;
+  }
+
+  /* Keep free blocks address-sorted so adjacent releases can be reclaimed as
+   * one larger allocation. Re-rendering real pages repeatedly creates many
+   * short-lived HTML/CSS allocations; without coalescing, the bump heap can
+   * report OOM even though those neighboring blocks have all been freed. */
+  free_header_t **link = &free_list;
+  free_header_t *prev = NULL;
+  while (*link && (uint64_t)*link < blk_start) {
+    prev = *link;
+    link = &(*link)->next;
+  }
+  free_header_t *next = *link;
+  uint64_t block_end = blk_start + header->size;
+  if ((prev && (uint64_t)prev + prev->size > blk_start) ||
+      (next && block_end > (uint64_t)next)) {
+    spinlock_release(&kheap_lock);
+    pop_interrupts(eflags);
+    return;
+  }
+
+  header->next = next;
+  *link = header;
+  if (prev && (uint64_t)prev + prev->size == blk_start) {
+    prev->size += header->size;
+    prev->next = header->next;
+    header = prev;
+  }
+  next = header->next;
+  if (next && (uint64_t)header + header->size == (uint64_t)next) {
+    header->size += next->size;
+    header->next = next->next;
+  }
+
   /* Heap frames remain reserved when an allocation returns to the free list. */
-  header->next = free_list;
-  free_list = header;
   spinlock_release(&kheap_lock);
   pop_interrupts(eflags);
 }
@@ -195,6 +236,12 @@ void *krealloc(void *ptr, size_t new_size) {
     return NULL;
   }
 
+  if (new_size > UINT32_MAX - HEADER_SIZE - 3U)
+    return NULL;
+  size_t aligned_size = (new_size + 3U) & ~(size_t)3U;
+  uint32_t new_total = (uint32_t)aligned_size + HEADER_SIZE;
+  if (new_total < 16U) new_total = 16U;
+
   uint64_t eflags = push_interrupts();
   spinlock_acquire(&kheap_lock);
 
@@ -205,14 +252,35 @@ void *krealloc(void *ptr, size_t new_size) {
     return NULL;
   }
 
-  size_t old_size = header->size > HEADER_SIZE ? header->size - HEADER_SIZE : 0;
+  uint32_t old_total = header->size;
+  size_t old_size = old_total > HEADER_SIZE ? old_total - HEADER_SIZE : 0;
+  if (new_size <= old_size) {
+    spinlock_release(&kheap_lock);
+    pop_interrupts(eflags);
+    return ptr;
+  }
+
+  /* Preserve the bump heap's tail allocation in place when it can grow. This
+   * avoids copying a large live arena only to need another full-size block at
+   * the end of a nearly full heap. */
+  uintptr_t header_address = (uintptr_t)header;
+  uintptr_t old_end = header_address + old_total;
+  uintptr_t new_end = header_address + new_total;
+  if (old_end == kheap_current && new_end >= old_end &&
+      new_end <= kheap_limit) {
+    size_t growth = (size_t)(new_end - old_end);
+    if (growth)
+      pmm_reserve_region(virt_to_phys((void *)old_end), growth);
+    header->size = new_total;
+    kheap_current = new_end;
+    spinlock_release(&kheap_lock);
+    pop_interrupts(eflags);
+    return ptr;
+  }
   spinlock_release(&kheap_lock);
   pop_interrupts(eflags);
 
-  if (new_size <= old_size)
-    return ptr;
-
-  void *np = kmalloc(new_size);
+  void *np = kmalloc(aligned_size);
   if (!np)
     return NULL;
   memcpy(np, ptr, old_size);

@@ -42,5 +42,9 @@
 #define SYS_NET_INFO   43
 #define SYS_NET_PING   44
 #define SYS_NET_NTP    45
+#define SYS_NET_RESOLVE 46
+#define SYS_NET_HTTP_GET 47
+#define SYS_FB_BLIT    48
+#define SYS_SLEEP_MS   49
 
 #endif

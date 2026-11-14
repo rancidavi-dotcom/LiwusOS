@@ -191,14 +191,20 @@ int memcmp(const void *s1, const void *s2, size_t n) {
 char *itoa(int n, char *s, int base) {
   static char digits[] = "0123456789ABCDEF";
   char buf[32];
-  int i = 0, sign;
-  if ((sign = n) < 0 && base == 10)
-    n = -n;
-  do {
-    buf[i++] = digits[n % base];
-  } while ((n /= base) > 0);
-  if (sign < 0 && base == 10)
-    buf[i++] = '-';
+  int i = 0;
+  if (base == 10) {
+    int sign = n;
+    if (n < 0) n = -n;
+    do {
+      buf[i++] = digits[n % 10];
+    } while ((n /= 10) > 0);
+    if (sign < 0) buf[i++] = '-';
+  } else {
+    uint32_t un = (uint32_t)n;
+    do {
+      buf[i++] = digits[un % (uint32_t)base];
+    } while ((un /= (uint32_t)base) > 0);
+  }
   int j = 0;
   while (i > 0)
     s[j++] = buf[--i];

@@ -336,10 +336,15 @@ int e1000_send_packet(const void *data, uint16_t len) {
         return -2;
     }
 
-    /* Copia os dados para o buffer de DMA contiguo do descritor */
+    /* Copia os dados para o buffer de DMA contiguo do descritor (padding mínimo 60 bytes) */
+    uint16_t send_len = len;
+    if (send_len < 60) {
+        memset(tx_buffers[tx_cur], 0, 60);
+        send_len = 60;
+    }
     memcpy(tx_buffers[tx_cur], data, len);
 
-    tx_descs[tx_cur].length = len;
+    tx_descs[tx_cur].length = send_len;
     tx_descs[tx_cur].cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_IFCS | E1000_TXD_CMD_RS;
     tx_descs[tx_cur].status = 0;
 

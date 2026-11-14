@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define RTL8168_NUM_RX_DESC 32
+#define RTL8168_NUM_RX_DESC 128
 #define RTL8168_NUM_TX_DESC 32
 #define RTL8168_BUFFER_SIZE 2048
 

@@ -27,9 +27,9 @@
 #define SDFS_DEFAULT_MAX_MOUNTS 100
 
 /* Hard cap on addressable filesystem size. Keeps the in-RAM bitmap small
- * (4M blocks * 4096 = 16 GiB, bitmap = 512 KiB = 128 blocks) so that mount
- * and first-boot install stay fast and memory-bounded on real disks. */
-#define SDFS_MAX_BLOCKS (4u * 1024u * 1024u)
+ * (256K blocks * 4096 = 1 GiB, bitmap = 32 KiB = 8 blocks) so that mount
+ * and HD installation stay instantaneous on large real disks. */
+#define SDFS_MAX_BLOCKS (256u * 1024u)
 
 /* Permission bits use the conventional 9-bit owner/group/other layout. */
 #define SDFS_PERM_READ   0004
@@ -134,6 +134,7 @@ typedef struct {
 /* Public API */
 fs_node_t *sdfs_mount(uint16_t bus, uint8_t drive, uint32_t partition_lba);
 int sdfs_mount_failed_corrupt(void);
+const char *sdfs_last_mount_error(void);
 int sdfs_format(void);
 int sdfs_is_mounted(void);
 
@@ -155,6 +156,7 @@ void sdfs_get_usage(uint32_t *total_blocks, uint32_t *used_blocks);
 
 /* V2: permissions */
 int sdfs_set_permissions(const char *path, uint16_t perm);
+int sdfs_set_owner(const char *path, uint16_t uid, uint16_t gid);
 int sdfs_get_permissions(const char *path, uint16_t *perm);
 int sdfs_get_metadata(const char *path, uint16_t *uid, uint16_t *gid,
                       uint16_t *permissions);
@@ -177,6 +179,22 @@ int sdfs_flush_bitmap(void);
 /* Fail one physical SDFS block write to simulate an I/O interruption. */
 void sdfs_test_fail_next_write(uint32_t block);
 #endif
+#define SDFS_HD_PARTITION_LBA 65536U
+
+void sdfs_enable_ramdisk(uint32_t mb);
+void sdfs_set_usb_partition(uint32_t start_lba, uint32_t total_sectors);
+int sdfs_switch_to_hd_partition(uint16_t bus, uint8_t drive, uint8_t ahci_port,
+                                uint32_t start_lba, uint32_t total_sectors);
+uint32_t sdfs_get_partition_lba(void);
+/* Read/write the reserved pre-SDFS boot area on the same physical disk as
+ * the mounted HD installation. Refuses RAM disks and non-HD mounts. */
+int sdfs_read_hd_boot_region(uint32_t lba, uint32_t sectors, uint8_t *buffer);
+int sdfs_write_hd_boot_region(uint32_t lba, uint32_t sectors, const uint8_t *buffer);
+typedef void (*sdfs_region_progress_fn)(uint32_t completed, uint32_t total, void *user_data);
+int sdfs_read_hd_boot_region_progress(uint32_t lba, uint32_t sectors, uint8_t *buffer,
+                                      sdfs_region_progress_fn progress_cb, void *user_data);
+int sdfs_write_hd_boot_region_progress(uint32_t lba, uint32_t sectors, const uint8_t *buffer,
+                                       sdfs_region_progress_fn progress_cb, void *user_data);
+fs_node_t *sdfs_mount_msc(void);
 
 #endif
-void sdfs_enable_ramdisk(uint32_t mb);

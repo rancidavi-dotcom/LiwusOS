@@ -11,10 +11,15 @@ static uint32_t initrd_size;
 
 static const char *normalize_initrd_name(const char *name) {
     if (!name) return name;
+    if (name[0] == 's' && name[1] == 'y' && name[2] == 's' && name[3] == ':') {
+        name += 4;
+        while (*name == '/') name++;
+        return name;
+    }
     if (name[0] == '.' && name[1] == '/') {
         return name + 2;
     }
-    if (name[0] == '/') {
+    while (name[0] == '/') {
         return name + 1;
     }
     return name;
@@ -62,6 +67,52 @@ static struct dirent *initrd_readdir_empty(fs_node_t *node, uint32_t index) {
     return NULL;
 }
 
+static struct dirent *initrd_bin_readdir(fs_node_t *node, uint32_t index) {
+    (void)node;
+    uintptr_t address = initrd_location;
+    uint32_t i = 0;
+    while (1) {
+        struct tar_header *header = (struct tar_header *)address;
+        if (header->filename[0] == '\0') break;
+        const char *norm = normalize_initrd_name(header->filename);
+        if (strncmp(norm, "bin/", 4) == 0 && norm[4] != '\0') {
+            if (i == index) {
+                strcpy(dirent.name, norm + 4);
+                dirent.ino = i + 1000;
+                return &dirent;
+            }
+            i++;
+        }
+        uint32_t filesize = get_size(header->size);
+        address += 512 + ((filesize + 511) & ~511);
+    }
+    return NULL;
+}
+
+static fs_node_t *initrd_bin_finddir(fs_node_t *node, const char *name) {
+    (void)node;
+    char path[256];
+    strcpy(path, "bin/");
+    strcat(path, name);
+    uint32_t size = 0;
+    void *data = initrd_get_file(path, &size);
+    if (data) {
+        fs_node_t *res = (fs_node_t *)kmalloc(sizeof(fs_node_t));
+        memset(res, 0, sizeof(fs_node_t));
+        strcpy(res->name, path);
+        res->length = size;
+        res->flags = FS_FILE;
+        res->read = initrd_read;
+        uint16_t uid = 0, gid = 0, mode = 0755;
+        initrd_get_metadata(path, &uid, &gid, &mode);
+        res->uid = uid;
+        res->gid = gid;
+        res->mask = mode ? mode : 0755;
+        return res;
+    }
+    return NULL;
+}
+
 static struct dirent *initrd_readdir(fs_node_t *node, uint32_t index) {
     if (!(node->flags & FS_DIRECTORY)) return NULL;
 
@@ -82,10 +133,15 @@ static struct dirent *initrd_readdir(fs_node_t *node, uint32_t index) {
         i++;
     }
 
-    // Adiciona entrada virtual 'house' para o ponto de montagem se estivermos na raiz
+    // Adiciona entrada virtual 'house' e 'bin' para o ponto de montagem se estivermos na raiz
     if (index == i && strcmp(node->name, "initrd") == 0) {
         strcpy(dirent.name, "house");
         dirent.ino = i;
+        return &dirent;
+    }
+    if (index == i + 1 && strcmp(node->name, "initrd") == 0) {
+        strcpy(dirent.name, "bin");
+        dirent.ino = i + 1;
         return &dirent;
     }
 
@@ -101,9 +157,21 @@ static fs_node_t *initrd_finddir(fs_node_t *node, const char *name) {
         memset(house, 0, sizeof(fs_node_t));
         strcpy(house->name, "house");
         house->flags = FS_DIRECTORY;
+        house->mask = 0755;
         house->readdir = initrd_readdir;
         house->finddir = initrd_finddir;
         return house;
+    }
+
+    if (strcmp(name, "bin") == 0 && strcmp(node->name, "initrd") == 0) {
+        fs_node_t *bin = (fs_node_t *)kmalloc(sizeof(fs_node_t));
+        memset(bin, 0, sizeof(fs_node_t));
+        strcpy(bin->name, "bin");
+        bin->flags = FS_DIRECTORY;
+        bin->mask = 0755;
+        bin->readdir = initrd_bin_readdir;
+        bin->finddir = initrd_bin_finddir;
+        return bin;
     }
     
     if (strcmp(name, "localhost") == 0 && strcmp(node->name, "house") == 0) {
@@ -111,6 +179,7 @@ static fs_node_t *initrd_finddir(fs_node_t *node, const char *name) {
         memset(localhost, 0, sizeof(fs_node_t));
         strcpy(localhost->name, "localhost");
         localhost->flags = FS_DIRECTORY;
+        localhost->mask = 0755;
         // Em LIVECD mode: readdir vazio (initrd_readdir_empty).
         // Em modo persistente, ensure_disk_ready() faz vfs_mount()
         // do SDFS sobre este node, substituindo os callbacks.
@@ -128,6 +197,11 @@ static fs_node_t *initrd_finddir(fs_node_t *node, const char *name) {
         res->length = size;
         res->flags = FS_FILE;
         res->read = initrd_read;
+        uint16_t uid = 0, gid = 0, mode = 0755;
+        initrd_get_metadata(name, &uid, &gid, &mode);
+        res->uid = uid;
+        res->gid = gid;
+        res->mask = mode ? mode : 0755;
         return res;
     }
 
@@ -145,6 +219,7 @@ fs_node_t* init_initrd(uintptr_t location, uint32_t size) {
     memset(root, 0, sizeof(fs_node_t));
     strcpy(root->name, "initrd");
     root->flags = FS_DIRECTORY;
+    root->mask = 0755;
     root->readdir = initrd_readdir;
     root->finddir = initrd_finddir;
     fs_root = root; // Define como raiz global
@@ -153,6 +228,7 @@ fs_node_t* init_initrd(uintptr_t location, uint32_t size) {
 
 /* Retorna o nome do n-ésimo arquivo no disco */
 char* initrd_list_files(int index) {
+    if (!initrd_location) return NULL;
     uintptr_t address = initrd_location;
     int current = 0;
     while (1) {
@@ -169,33 +245,26 @@ char* initrd_list_files(int index) {
 }
 
 void* initrd_get_file(const char* name, uint32_t* size) {
+    if (!initrd_location || !name) return NULL;
     uintptr_t address = initrd_location;
-    serial_print("initrd: procurando ");
-    serial_print(name);
-    serial_print("\n");
     while (1) {
         struct tar_header* header = (struct tar_header*)address;
         if (header->filename[0] == '\0') break;
 
         uint32_t filesize = get_size(header->size);
-        serial_print("initrd: achou entrada ");
-        serial_print(header->filename);
-        serial_print("\n");
         if (initrd_name_equals(header->filename, name)) {
-            *size = filesize;
-            serial_print("initrd: match encontrado\n");
+            if (size) *size = filesize;
             return (void*)(address + 512);
         }
 
         address += 512 + ((filesize + 511) & ~511);
     }
-    serial_print("initrd: nenhum match encontrado\n");
     return NULL;
 }
 
 int initrd_get_metadata(const char *name, uint16_t *uid, uint16_t *gid,
                         uint16_t *mode) {
-    if (!name || !mode) return -1;
+    if (!initrd_location || !name || !mode) return -1;
     uintptr_t address = initrd_location;
     while (1) {
         struct tar_header *header = (struct tar_header *)address;
@@ -235,7 +304,25 @@ int initrd_get_metadata(const char *name, uint16_t *uid, uint16_t *gid,
  * e "/" inicial, já que no initrd os paths vêm como "./foo/bar" ou
  * "/foo/bar" e no SDFS usamos "/foo/bar".
  */
+static int should_skip_sdfs_copy(const char *name) {
+    if (!name || name[0] == '\0') return 1;
+    if (strcmp(name, "boot/hd_boot.img") == 0 ||
+        strcmp(name, "hd_boot.img") == 0) return 1;
+    /* Skip redundant root-level duplicate binaries that already live in /bin */
+    if (strcmp(name, "doom") == 0 || strcmp(name, "doom.lxe") == 0 ||
+        strcmp(name, "kilo") == 0 || strcmp(name, "tcc") == 0 ||
+        strcmp(name, "tcc.lxe") == 0 || strcmp(name, "c_demo") == 0 ||
+        strcmp(name, "c_demo.lxe") == 0 || strcmp(name, "cdemo") == 0 ||
+        strcmp(name, "bin/cdemo") == 0 || strcmp(name, "demo") == 0 ||
+        strcmp(name, "bin/demo") == 0 || strcmp(name, "libc") == 0 ||
+        strcmp(name, "bin/libc") == 0 || strcmp(name, "liwsh.lxe") == 0) {
+        return 1;
+    }
+    return 0;
+}
+
 void initrd_copy_to_sdfs(copy_progress_cb cb) {
+    if (!initrd_location) return;
     uintptr_t address;
     int total_files = 0;
     int copied = 0;
@@ -255,7 +342,7 @@ void initrd_copy_to_sdfs(copy_progress_cb cb) {
 
         if (header->typeflag != '5') {
             const char *name = normalize_initrd_name(header->filename);
-            if (name && name[0] != '\0') total_files++;
+            if (!should_skip_sdfs_copy(name)) total_files++;
         }
 
         address += 512 + ((filesize + 511) & ~511);
@@ -289,7 +376,7 @@ void initrd_copy_to_sdfs(copy_progress_cb cb) {
         }
 
         const char *name = normalize_initrd_name(header->filename);
-        if (!name || name[0] == '\0') {
+        if (should_skip_sdfs_copy(name)) {
             address += 512 + ((filesize + 511) & ~511);
             continue;
         }
@@ -334,29 +421,30 @@ void initrd_copy_to_sdfs(copy_progress_cb cb) {
             }
         }
 
-        /* The initrd is a seed for newly absent paths, not an implicit
-         * upgrade mechanism. Preserve files already present in a persistent
-         * image, even if the installation marker was lost or an earlier
-         * first-boot copy stopped partway through. */
-        if (sdfs_path_info(sdfs_path, NULL, NULL) == 0) {
-            copied++;
-            address += 512 + ((filesize + 511) & ~511);
-            continue;
-        }
-
-        // Cria o arquivo (start block + entrada no diretório pai).
-        // sdfs_write_file() já cria a entrada, então só criamos explicitamente
-        // arquivos vazios (evita alocar+liberar um bloco à toa).
+        // Cria ou sobrescreve o arquivo com a versao mais recente do initrd.
+        // Preserve owner/group from the archive: system packages are packed as
+        // root, while explicitly user-owned source files remain editable by the
+        // normal UID 1000 process instead of becoming unwritable root files.
+        uint16_t uid = 0, gid = 0, mode = 0;
+        (void)initrd_get_metadata(name, &uid, &gid, &mode);
         if (filesize > 0) {
             if (sdfs_write_file(sdfs_path, (uint8_t *)data, filesize) > 0) {
-                uint16_t mode = (uint16_t)(get_size(header->mode) & 0777u);
-                if (mode) sdfs_set_permissions(sdfs_path, mode);
-                copied++;
+                int owner_rc = sdfs_set_owner(sdfs_path, uid, gid);
+                int mode_rc = mode ? sdfs_set_permissions(sdfs_path, mode) : 0;
+                if (owner_rc == 0 && mode_rc == 0) copied++;
             }
-        } else if (sdfs_create_file(sdfs_path) == 0) {
-            uint16_t mode = (uint16_t)(get_size(header->mode) & 0777u);
-            if (mode) sdfs_set_permissions(sdfs_path, mode);
-            copied++;
+        } else {
+            int file_ready = sdfs_create_file(sdfs_path) == 0;
+            if (!file_ready) {
+                int is_dir = 0;
+                file_ready = sdfs_path_info(sdfs_path, &is_dir, NULL) == 0 &&
+                             !is_dir;
+            }
+            if (file_ready) {
+                int owner_rc = sdfs_set_owner(sdfs_path, uid, gid);
+                int mode_rc = mode ? sdfs_set_permissions(sdfs_path, mode) : 0;
+                if (owner_rc == 0 && mode_rc == 0) copied++;
+            }
         }
 
         // Callback de progresso (usado pela boot animation)

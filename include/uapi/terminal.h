@@ -2,6 +2,7 @@
 #define TERMINAL_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #define TERMINAL_MAX_INPUT 256
 #define TERMINAL_MAX_ARGS 16
@@ -34,9 +35,22 @@ void cmd_shutdown(int argc, char **argv);
 void cmd_version(int argc, char **argv);
 void cmd_meminfo(int argc, char **argv);
 void cmd_ps(int argc, char **argv);
+void cmd_stat(int argc, char **argv);
+void cmd_head(int argc, char **argv);
 void cmd_diskinfo(int argc, char **argv);
+void cmd_ifconfig(int argc, char **argv);
+void cmd_ping(int argc, char **argv);
+void cmd_date(int argc, char **argv);
+void cmd_uptime(int argc, char **argv);
 void cmd_kblayout(int argc, char **argv);
 void cmd_msense(int argc, char **argv);
+void cmd_beep(int argc, char **argv);
+void cmd_sound(int argc, char **argv);
+void cmd_screenshot(int argc, char **argv);
+void cmd_lspci(int argc, char **argv);
+void cmd_wget(int argc, char **argv);
+void cmd_curl(int argc, char **argv);
+void cmd_lpkg(int argc, char **argv);
 
 // Command structure
 typedef struct {
@@ -44,5 +58,8 @@ typedef struct {
     void (*func)(int argc, char **argv);
     const char *desc;
 } terminal_command_t;
+
+const terminal_command_t *terminal_get_commands(void);
+size_t terminal_get_command_count(void);
 
 #endif

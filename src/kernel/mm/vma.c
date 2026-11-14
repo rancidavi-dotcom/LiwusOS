@@ -130,8 +130,82 @@ int vma_remove(struct page_directory *mm, uint64_t start, uint64_t end) {
   return 0;
 }
 
-int vma_resize_heap(struct page_directory *mm, uint64_t start, uint64_t end) {
+/* Replace protection metadata for a fully covered interval. Build a new VMA
+ * list first so allocation failures leave the old map intact. The page-table
+ * permission changes are applied only after all mappings and metadata have
+ * been validated/allocated. */
+int vma_protect(struct page_directory *mm, uint64_t start, uint64_t end,
+                uint32_t prot) {
   if (!mm || !valid_interval(start, end)) return -1;
+
+  uint64_t covered = start;
+  for (vma_t *area = mm->vmas; area && covered < end; area = area->next) {
+    if (area->end <= covered) continue;
+    if (area->start > covered) return -1;
+    covered = area->end < end ? area->end : end;
+  }
+  if (covered != end) return -1;
+
+  for (uint64_t page = start; page < end; page += PAGE_SIZE) {
+    if (!vmm_page_present_in(mm, page)) return -1;
+  }
+
+  struct page_directory replacement = {0};
+  for (vma_t *area = mm->vmas; area; area = area->next) {
+    if (area->end <= start || area->start >= end) {
+      if (vma_insert(&replacement, area->start, area->end, area->prot,
+                     area->flags, area->file_offset, area->backing) < 0)
+        goto allocation_failure;
+      continue;
+    }
+
+    if (area->start < start &&
+        vma_insert(&replacement, area->start, start, area->prot, area->flags,
+                   area->file_offset, area->backing) < 0)
+      goto allocation_failure;
+
+    uint64_t middle_start = area->start > start ? area->start : start;
+    uint64_t middle_end = area->end < end ? area->end : end;
+    uint64_t middle_offset = area->file_offset + (middle_start - area->start);
+    if (vma_insert(&replacement, middle_start, middle_end, prot, area->flags,
+                   middle_offset, area->backing) < 0)
+      goto allocation_failure;
+
+    if (area->end > end &&
+        vma_insert(&replacement, end, area->end, area->prot, area->flags,
+                   area->file_offset + (end - area->start),
+                   area->backing) < 0)
+      goto allocation_failure;
+  }
+
+  uint64_t pte_flags = PTE_P | PTE_U | PTE_NX;
+  if (prot & VMA_PROT_WRITE) pte_flags |= PTE_W;
+  if (prot & VMA_PROT_EXEC) pte_flags &= ~((uint64_t)PTE_NX);
+  for (uint64_t page = start; page < end; page += PAGE_SIZE) {
+    if (vmm_set_page_flags_in(mm, (void *)page, pte_flags) < 0) {
+      vma_destroy(&replacement);
+      return -1;
+    }
+  }
+
+  vma_t *old = mm->vmas;
+  mm->vmas = replacement.vmas;
+  replacement.vmas = 0;
+  while (old) {
+    vma_t *next = old->next;
+    kfree(old);
+    old = next;
+  }
+  return 0;
+
+allocation_failure:
+  vma_destroy(&replacement);
+  return -1;
+}
+
+int vma_resize_heap(struct page_directory *mm, uint64_t start, uint64_t end) {
+  if (!mm || start < USER_ADDR_MIN || end < start || end > USER_ADDR_MAX ||
+      (start & (PAGE_SIZE - 1)) || (end & (PAGE_SIZE - 1))) return -1;
   vma_t **heap_link = 0;
   vma_t *heap = 0;
   for (vma_t **link = &mm->vmas; *link; link = &(*link)->next) {
@@ -141,6 +215,14 @@ int vma_resize_heap(struct page_directory *mm, uint64_t start, uint64_t end) {
       heap_link = link;
     }
   }
+  if (start == end) {
+    if (heap) {
+      *heap_link = heap->next;
+      kfree(heap);
+    }
+    return 0;
+  }
+  if (!valid_interval(start, end)) return -1;
   for (vma_t *area = mm->vmas; area; area = area->next) {
     if (area == heap) continue;
     if (start < area->end && end > area->start) return -1;

@@ -8,8 +8,36 @@ import socket
 import shutil
 import subprocess
 import sys
+import threading
 import tempfile
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+def send_hmp(sock: socket.socket, command: str) -> None:
+    sock.sendall(command.encode("ascii") + b"\n")
+    time.sleep(0.2)
+    try:
+        sock.recv(4096)
+    except TimeoutError:
+        pass
+
+
+def send_usb_text(sock: socket.socket, value: str) -> None:
+    key_names = {" ": "spc", "/": "slash", ".": "dot", "-": "minus",
+                 "\n": "ret"}
+    commands = []
+    for char in value:
+        key = key_names.get(char)
+        if key is None:
+            key = f"shift-{char.lower()}" if char.isupper() else char.lower()
+        commands.append(f"sendkey {key} 40\n")
+    sock.sendall("".join(commands).encode("ascii"))
+    time.sleep(max(0.2, len(value) * 0.05))
+    try:
+        sock.recv(4096)
+    except TimeoutError:
+        pass
 
 
 def main() -> int:
@@ -27,11 +55,46 @@ def main() -> int:
     host_tx_bytes = 0
     last_command = b""
     send_delay = float(os.environ.get("LIW_SHELL_SEND_DELAY", "0.2"))
+    kilo_usb_only = "--kilo-usb-save-only" in sys.argv
+
+    page = (b"<!doctype html><html><head><title>Webtext JS test</title></head>"
+            b"<body><p id=\"result\">waiting &amp; ready</p><script>"
+            b"var result=document.getElementById('result');"
+            b"if(result.textContent!=='waiting & ready')"
+            b"throw new Error('source HTML entities were not decoded');"
+            b"result.textContent='WEBTEXT_JS_NETWORK_OK';"
+            b"if(result.textContent!=='WEBTEXT_JS_NETWORK_OK')"
+            b"throw new Error('mutated textContent changed on readback');"
+            b"</script></body></html>")
+
+    class PageHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path != "/page":
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(page)))
+            self.end_headers()
+            self.wfile.write(page)
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            pass
+
+    http_server = ThreadingHTTPServer(("0.0.0.0", 0), PageHandler)
+    http_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+    http_thread.start()
+    http_port = http_server.server_address[1]
 
     with tempfile.TemporaryDirectory(prefix="liwus-shell-qemu-") as temp:
         temp_path = Path(temp)
         image_tree = temp_path / "isodir"
         shutil.copytree(root / "isodir", image_tree)
+        grub_cfg = image_tree / "boot/grub/grub.cfg"
+        grub_text = grub_cfg.read_text()
+        if '"LiwusOS x86_64 (Live USB / Modo Texto)"' not in grub_text:
+            raise RuntimeError("text-mode GRUB entry is missing from the test ISO")
+        grub_cfg.write_text(grub_text.replace("mode=live", "mode=live mode=text"))
         initrd = temp_path / "initrd.tar"
         shutil.copy2(root / "initrd.tar", initrd)
         subprocess.run([
@@ -63,6 +126,8 @@ def main() -> int:
             head_lines = b"".join(f"line-{number:02d}\n".encode()
                                   for number in range(1, 13))
             (files_path / "head-lines.txt").write_bytes(head_lines)
+            (files_path / "kilo-existing-save.txt").write_bytes(b"Old data\n")
+            (files_path / "kilo-root-save.txt").write_bytes(b"Protected\n")
             copy_sizes = (0, 1, 15, 16, 255, 256, 4095, 4096, 4097,
                           8192, 65536)
             copy_payloads = {}
@@ -89,6 +154,15 @@ def main() -> int:
                 "tar", "-rf", str(initrd), "--format=ustar",
                 "-C", str(files_path), "head-lines.txt",
             ], check=True)
+            subprocess.run([
+                "tar", "-rf", str(initrd), "--format=ustar",
+                "-C", str(files_path), "kilo-existing-save.txt",
+            ], check=True)
+            subprocess.run([
+                "tar", "-rf", str(initrd), "--format=ustar",
+                "--owner=0", "--group=0", "--numeric-owner",
+                "-C", str(files_path), "kilo-root-save.txt",
+            ], check=True)
         shutil.copy2(initrd, image_tree / "boot/initrd.tar")
         iso = temp_path / "liwus-shell-test.iso"
         subprocess.run(["grub-mkrescue", "-o", str(iso), str(image_tree)],
@@ -101,14 +175,25 @@ def main() -> int:
             probe.bind(("127.0.0.1", 0))
             serial_port = probe.getsockname()[1]
 
+        monitor_path = temp_path / "qemu-monitor.sock"
+        machine = "pc-q35-11.1,i8042=off" if kilo_usb_only else "q35"
         command = [
-            "qemu-system-x86_64", "-machine", "q35", "-m", "2048",
-            "-display", "none", "-monitor", "none", "-serial",
+            "qemu-system-x86_64", "-machine", machine, "-m", "2048",
+            "-display", "none",
+            "-monitor", f"unix:{monitor_path},server=on,wait=off" if kilo_usb_only else "none",
+            "-serial",
             f"tcp:127.0.0.1:{serial_port},server=on,wait=off",
             "-no-reboot", "-drive", f"file={disk},format=raw,if=none,id=disk",
             "-device", "ahci,id=ahci", "-device", "ide-hd,drive=disk,bus=ahci.0",
+            "-netdev", "user,id=net0", "-device", "e1000,netdev=net0",
             "-cdrom", str(iso),
         ]
+        if kilo_usb_only:
+            command.extend([
+                "-device", "ich9-usb-ehci1,id=ehci1,addr=1a.0",
+                "-device", "ich9-usb-ehci2,id=ehci2,addr=1d.0",
+                "-device", "usb-kbd,bus=ehci1.0,port=1",
+            ])
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    bufsize=0)
@@ -126,6 +211,27 @@ def main() -> int:
             process.wait(timeout=5)
             raise TimeoutError("QEMU serial socket did not become available")
         serial.setblocking(False)
+        monitor = None
+        if kilo_usb_only:
+            monitor_deadline = time.monotonic() + 5
+            while monitor is None and time.monotonic() < monitor_deadline:
+                try:
+                    monitor = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    monitor.settimeout(0.5)
+                    monitor.connect(str(monitor_path))
+                except OSError:
+                    if monitor:
+                        monitor.close()
+                    monitor = None
+                    time.sleep(0.05)
+            if not monitor:
+                process.terminate()
+                process.wait(timeout=5)
+                raise TimeoutError("QEMU HMP monitor did not become available")
+            try:
+                monitor.recv(4096)
+            except TimeoutError:
+                pass
 
         def expect(marker: bytes, timeout: float = 90.0) -> None:
             nonlocal host_tx_bytes
@@ -172,6 +278,90 @@ def main() -> int:
         try:
             expect(b"liwus> ")
 
+            # Focused mode is useful when another integration check is stale;
+            # the real Kilo -> SDFS read-back regression can still run alone.
+            if "--kilo-save-only" in sys.argv or kilo_usb_only:
+                if kilo_usb_only:
+                    send_usb_text(monitor, "kilo kilo-save-test.txt\n")
+                else:
+                    send(b"kilo /kilo-save-test.txt\n")
+                expect(b"^O/^S Salvar")
+                if kilo_usb_only:
+                    send_usb_text(monitor, "Kilo save regression")
+                    send_hmp(monitor, "sendkey ctrl-s 100")
+                else:
+                    send(b"Kilo save regression")
+                    send(b"\x13")  # Ctrl-S through serial.
+                expect(b"salvo (21 bytes)")
+                if kilo_usb_only:
+                    send_hmp(monitor, "sendkey ctrl-q 100")
+                else:
+                    send(b"\x11")
+                expect(b"[liwsh] exit status 0\n")
+                expect(b"liwus> ")
+                if kilo_usb_only:
+                    send_usb_text(monitor, "cat kilo-save-test.txt\n")
+                else:
+                    send(b"cat /kilo-save-test.txt\n")
+                expect(b"Kilo save regression\n")
+                expect(b"[liwsh] exit status 0\n")
+                expect(b"liwus> ")
+                if kilo_usb_only:
+                    send_usb_text(monitor, "kilo kilo-existing-save.txt\n")
+                else:
+                    send(b"kilo /kilo-existing-save.txt\n")
+                expect(b"^O/^S Salvar")
+                if kilo_usb_only:
+                    send_usb_text(monitor, "New ")
+                    send_hmp(monitor, "sendkey ctrl-s 100")
+                else:
+                    send(b"New ")
+                    send(b"\x13")
+                expect(b"salvo (13 bytes)")
+                if kilo_usb_only:
+                    send_hmp(monitor, "sendkey ctrl-q 100")
+                else:
+                    send(b"\x11")
+                expect(b"[liwsh] exit status 0\n")
+                expect(b"liwus> ")
+                if kilo_usb_only:
+                    send_usb_text(monitor, "cat kilo-existing-save.txt\n")
+                else:
+                    send(b"cat /kilo-existing-save.txt\n")
+                expect(b"New Old data\n")
+                expect(b"[liwsh] exit status 0\n")
+                expect(b"liwus> ")
+                if kilo_usb_only:
+                    send_usb_text(monitor, "kilo kilo-root-save.txt\n")
+                else:
+                    send(b"kilo kilo-root-save.txt\n")
+                expect(b"^O/^S Salvar")
+                if kilo_usb_only:
+                    send_usb_text(monitor, "x")
+                    send_hmp(monitor, "sendkey ctrl-s 100")
+                else:
+                    send(b"x")
+                    send(b"\x13")
+                expect(b"Nao foi possivel abrir 'kilo-root-save.txt' (erro 13)")
+                if kilo_usb_only:
+                    send_hmp(monitor, "sendkey ctrl-q 100")
+                else:
+                    send(b"\x11")
+                expect(b"[liwsh] exit status 0\n")
+                expect(b"liwus> ")
+                if kilo_usb_only:
+                    send_usb_text(monitor, "cat kilo-root-save.txt\n")
+                else:
+                    send(b"cat kilo-root-save.txt\n")
+                expect(b"Protected\n")
+                expect(b"[liwsh] exit status 0\n")
+                expect(b"liwus> ")
+                transcript.extend(b"[KILO SAVE TEST] new/existing file write and read-back PASS\n")
+                log_path.write_bytes(transcript)
+                label = "USB-HID" if kilo_usb_only else "serial"
+                print(f"KILO QEMU {label} SAVE INTEGRATION PASS: {log_path}")
+                return 0
+
             # With no bytes arriving, the shell must block and let the guest
             # halt between bounded input polls instead of spinning in userspace.
             cpu_start = process_cpu_ticks()
@@ -184,8 +374,37 @@ def main() -> int:
                 )
 
             send(b"help\n")
-            expect(b"Built-ins: help, version, pwd, cd, exit\n")
+            expect(b"Built-ins: help, version, pwd, cd, ifconfig, ping, date, ntp, nslookup, wget, exit, shutdown\n")
             expect(b"liwus> ")
+
+            # Wait for DHCP, then exercise HTTP download -> ring-3 QuickJS child
+            # -> DOM serialization -> terminal text using a host-local fixture.
+            dhcp_deadline = time.monotonic() + 15.0
+            while b"inet addr: 10.0.2.15" not in transcript and time.monotonic() < dhcp_deadline:
+                send(b"ifconfig\n")
+                expect(b"liwus> ")
+                if b"inet addr: 10.0.2.15" not in transcript:
+                    time.sleep(0.5)
+            if b"inet addr: 10.0.2.15" not in transcript:
+                raise RuntimeError("QEMU guest did not obtain its DHCP address")
+            web_url = f"http://10.0.2.2:{http_port}/page".encode()
+            send(b"webtext --js " + web_url + b" /webtext-js-result.html\n")
+            expect(b"WEBTEXT_JS_NETWORK_OK\n", timeout=60.0)
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
+            send(b"cat /webtext-js-result.html\n")
+            expect(b"waiting &amp; ready")
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
+
+            if "--webtext-js-only" in sys.argv:
+                transcript.extend(
+                    b"[WEBTEXT JS NETWORK TEST] DHCP, HTTP fetch, inline script, "
+                    b"DOM serialization, raw-source save PASS\n"
+                )
+                log_path.write_bytes(transcript)
+                print(f"WEBTEXT JS QEMU NETWORK INTEGRATION PASS: {log_path}")
+                return 0
 
             send(b"pwd\n")
             expect(b"/\n")
@@ -241,7 +460,7 @@ def main() -> int:
 
             send(b"stat /readme.txt\n")
             expect(b"Path: /readme.txt\n")
-            expect(b"Type: regular file\n")
+            expect(b"Resource: [TEXT ] Text Document\n")
             expect(b"Size: 21 bytes\n")
             expect(b"Mode: 644\n")
             expect(b"[liwsh] exit status 0\n")
@@ -371,6 +590,28 @@ def main() -> int:
                 expect(b"[liwsh] exit status 0\n")
                 expect(b"liwus> ")
 
+            # Test redirection and pipelines
+            send(b"echo redir_teste > /work/redir.txt\n")
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
+            send(b"cat /work/redir.txt\n")
+            expect(b"redir_teste\n")
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
+
+            send(b"echo linha_dois >> /work/redir.txt\n")
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
+            send(b"cat /work/redir.txt\n")
+            expect(b"redir_teste\nlinha_dois\n")
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
+
+            send(b"cat /work/redir.txt | head\n")
+            expect(b"redir_teste\nlinha_dois\n")
+            expect(b"[liwsh] exit status 0\n")
+            expect(b"liwus> ")
+
             # Exercise the complete UART -> stdin -> shell -> fork/exec/wait
             # path over a long real guest session. Each reply carries a unique
             # sequence number, so a missing, duplicated, stale, or reordered
@@ -414,6 +655,8 @@ def main() -> int:
                   file=sys.stderr)
             return 1
         finally:
+            if monitor:
+                monitor.close()
             serial.close()
             if process.poll() is None:
                 process.terminate()
@@ -422,6 +665,9 @@ def main() -> int:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+            http_server.shutdown()
+            http_server.server_close()
+            http_thread.join(timeout=2.0)
 
 
 if __name__ == "__main__":

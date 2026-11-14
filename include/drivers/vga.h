@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 #define VGA_WIDTH 80
 #define VGA_HEIGHT 25
@@ -30,6 +31,8 @@ enum vga_color {
 void vga_init(void);
 void vga_putc(char c);
 void vga_puts(const char* str);
+extern void (*vga_puts_capture_hook)(const char *str);
+extern void (*vga_putc_capture_hook)(char c);
 void vga_clear(enum vga_color fg, enum vga_color bg);
 void vga_set_color(enum vga_color fg, enum vga_color bg);
 void vga_set_cursor(int x, int y);
@@ -39,8 +42,21 @@ void vga_clear_line(int row);
 void vga_clear_to_eol(void);
 void vga_get_dimensions(size_t *cols, size_t *rows);
 
-/* Low-level rendering primitives for the text console framebuffer backend. */
+/* Low-level rendering primitives for the framebuffer backend. */
 void vga_put_pixel(uint32_t x, uint32_t y, uint32_t color);
 void vga_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
+void vga_draw_char_fb(char c, int x, int y, uint32_t fg, uint32_t bg);
+
+bool vga_is_framebuffer(void);
+uint32_t *vga_get_backbuffer(void);
+uint32_t vga_get_fb_width(void);
+uint32_t vga_get_fb_height(void);
+uint32_t vga_get_fb_pitch(void);
+void vga_flip(void);
+void vga_clear_framebuffer(uint32_t xrgb);
+int vga_blit_rgb32(const uint32_t *src, uint32_t src_w, uint32_t src_h);
+
+/* Allocates a 24-bit BMP snapshot of the current RGB framebuffer with kmalloc. */
+int vga_capture_bmp(uint8_t **out_data, uint32_t *out_size);
 
 #endif

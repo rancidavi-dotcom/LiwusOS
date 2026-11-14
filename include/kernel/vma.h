@@ -31,6 +31,8 @@ int vma_insert(struct page_directory *mm, uint64_t start, uint64_t end,
                uint32_t prot, uint32_t flags, uint64_t file_offset,
                void *backing);
 int vma_remove(struct page_directory *mm, uint64_t start, uint64_t end);
+int vma_protect(struct page_directory *mm, uint64_t start, uint64_t end,
+                uint32_t prot);
 int vma_resize_heap(struct page_directory *mm, uint64_t start, uint64_t end);
 int vma_clone(struct page_directory *src, struct page_directory *dst);
 void vma_destroy(struct page_directory *mm);

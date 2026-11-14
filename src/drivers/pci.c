@@ -486,12 +486,69 @@ pci_device_t *pci_get_audio() {
 }
 
 pci_device_t *pci_get_hda() {
+  pci_device_t *fallback = (void *)0;
   for (int i = 0; i < pci_count; i++) {
     // Class 0x04 (Multimedia), Subclass 0x03 (HD Audio)
     if (devices[i]->class_id == 0x04 && devices[i]->subclass_id == 0x03) {
-      return devices[i];
+      // Prioridade máxima: Áudio PCH Onboard da placa-mãe (Bus 0, Device 27 [0x1B] ou Device 31)
+      if (devices[i]->bus == 0 && (devices[i]->device == 27 || devices[i]->device == 31)) {
+        return devices[i];
+      }
+      // Prioridade: IDs de PCH Intel conhecidos (Cougar Point 0x1C20 / Panther Point 0x1E20 / etc.)
+      if (devices[i]->vendor_id == 0x8086 &&
+          (devices[i]->device_id == 0x1c20 || devices[i]->device_id == 0x1e20 ||
+           devices[i]->device_id == 0x8c20 || devices[i]->device_id == 0x9c20 ||
+           devices[i]->device_id == 0xa170 || devices[i]->device_id == 0x2668 ||
+           devices[i]->device_id == 0x27d8 || devices[i]->device_id == 0x284b ||
+           devices[i]->device_id == 0x293e || devices[i]->device_id == 0x3a3e ||
+           devices[i]->device_id == 0x3b56)) {
+        return devices[i];
+      }
+      if (!fallback) fallback = devices[i];
     }
   }
+  return fallback;
+}
+
+int pci_get_hda_count(void) {
+  int count = 0;
+  for (int i = 0; i < pci_count; i++) {
+    if (devices[i]->class_id == 0x04 && devices[i]->subclass_id == 0x03) {
+      count++;
+    }
+  }
+  return count;
+}
+
+pci_device_t *pci_get_hda_by_index(int index) {
+  int cur = 0;
+  // Primeiro retorna dispositivos que sejam PCH onboard
+  for (int i = 0; i < pci_count; i++) {
+    if (devices[i]->class_id == 0x04 && devices[i]->subclass_id == 0x03) {
+      if (devices[i]->bus == 0 && (devices[i]->device == 27 || devices[i]->device == 31)) {
+        if (cur == index) return devices[i];
+        cur++;
+      }
+    }
+  }
+  // Depois retorna os demais dispositivos HDA (HDMI, placas adicionais, etc.)
+  for (int i = 0; i < pci_count; i++) {
+    if (devices[i]->class_id == 0x04 && devices[i]->subclass_id == 0x03) {
+      if (!(devices[i]->bus == 0 && (devices[i]->device == 27 || devices[i]->device == 31))) {
+        if (cur == index) return devices[i];
+        cur++;
+      }
+    }
+  }
+  return (void *)0;
+}
+
+int pci_get_device_count(void) {
+  return pci_count;
+}
+
+pci_device_t *pci_get_device_by_index(int index) {
+  if (index >= 0 && index < pci_count) return devices[index];
   return (void *)0;
 }
 

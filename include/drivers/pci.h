@@ -29,6 +29,10 @@ void pci_probe_ehci_readonly(void);
 pci_device_t *pci_get_ahci();
 pci_device_t *pci_get_audio();
 pci_device_t *pci_get_hda();
+int pci_get_hda_count(void);
+pci_device_t *pci_get_hda_by_index(int index);
+int pci_get_device_count(void);
+pci_device_t *pci_get_device_by_index(int index);
 pci_device_t *pci_get_nvme();
 uint32_t pci_read_config(uint16_t bus, uint16_t device, uint16_t function,
                          uint16_t offset);

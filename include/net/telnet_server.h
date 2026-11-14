@@ -14,4 +14,7 @@ void telnet_server_stop(void);
 /* Retorna se o servidor Telnet esta escutando conexoes */
 bool telnet_server_is_active(void);
 
+/* Processa comandos pendentes do Telnet fora do callback de recepcao da rede */
+void telnet_server_poll(void);
+
 #endif /* NET_TELNET_SERVER_H */

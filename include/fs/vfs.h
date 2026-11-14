@@ -6,6 +6,9 @@
 
 #define FS_FILE        0x01
 #define FS_DIRECTORY   0x02
+#define FS_CHARDEVICE  0x04
+#define FS_BLOCKDEVICE 0x08
+#define FS_PIPE        0x10
 #define VFS_ACCESS_READ  0x01
 #define VFS_ACCESS_WRITE 0x02
 #define VFS_ACCESS_EXEC  0x04
@@ -32,6 +35,7 @@ typedef int (*remove_type_t)(struct fs_node*, const char*);
 typedef int (*rename_type_t)(struct fs_node*, const char*,
                              struct fs_node*, const char*);
 typedef int (*truncate_type_t)(struct fs_node*);
+typedef int (*sync_type_t)(struct fs_node*, int data_only);
 typedef struct fs_node {
     char name[128];
     uint32_t mask;
@@ -57,6 +61,7 @@ typedef struct fs_node {
     truncate_type_t truncate;
     struct fs_node* ptr; /* Para diretórios */
     uint32_t vfs_owned; /* Nonzero when this lookup allocated the node. */
+    sync_type_t sync; /* Optional backing-store flush operation. */
 } fs_node_t;
 
 typedef struct vfs_mount {
@@ -93,5 +98,20 @@ int vfs_truncate(fs_node_t *node);
 
 uint32_t read_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
 uint32_t write_fs(fs_node_t* node, uint32_t offset, uint32_t size, uint8_t* buffer);
+
+/* Identidade Nativa de Recursos do LiwusOS */
+typedef enum {
+    LIWUS_RES_UNKNOWN = 0,
+    LIWUS_RES_TEXT,       /* Texto puro legível (TXT, HTML, scripts) */
+    LIWUS_RES_EXEC,       /* Executável nativo (LXE / ELF do Liwus) */
+    LIWUS_RES_IMAGE,      /* Imagens gráficas (BMP, ícones) */
+    LIWUS_RES_AUDIO,      /* Áudio e som (WAV, PCM) */
+    LIWUS_RES_DEVICE,     /* Hardware físico (Tela, Entropia, Som) */
+    LIWUS_RES_CHANNEL,    /* Canal de IPC dinâmico em memória */
+    LIWUS_RES_DIR         /* Pasta / Coleção de recursos */
+} liwus_resource_type_t;
+
+const char *liwus_resource_type_name(liwus_resource_type_t type);
+liwus_resource_type_t vfs_detect_resource_type(fs_node_t *node, const char *path);
 
 #endif

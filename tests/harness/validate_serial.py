@@ -21,8 +21,8 @@ KERNEL_CASES = read_manifest("kernel_cases.txt")
 RING3_CASES = read_manifest("ring3_cases.txt")
 RING3_RESULTS = [
     "ET_DYN PIE executed at USER_PIE_BASE",
-    "Linux x86-64 SYSCALL getpid/fstat/openat/mmap/munmap/FS-TLS/write PASS",
-    "Linux clone, private futex WAIT/WAKE, shared-mm, independent FS TLS, thread exit PASS",
+    "Linux x86-64 SYSCALL getrandom/close_range/xstate-context/prctl-name/ids/resuid-resgid-groups/umask/rlimit/prlimit/time/sysinfo/sleep/yield/clocks/clock_nanosleep/access/faccessat/faccessat2/open/openat/unlink/unlinkat/pread64/pwrite64/dirfd-mkdir-stat/fork/execve/wait4/getcwd/chdir/fchdir/getcpu/getpid/uname/fstat-pipe/pipe/dup/dup2/dup3/fcntl/readv/writev/getdents64/mmap/mprotect/brk-futex-bitset/requeue/munmap/FS-TLS/initial-stack-auxv/write-errno PASS",
+    "Linux clone, private futex WAIT/WAKE/WAIT_BITSET/timeout, set_tid_address clear/wake, shared-mm, independent FS TLS, thread-local prctl comm, thread exit PASS",
     "native LIWUS .lxe ELF via crt0+SDK wrappers executed",
     "external SDK application output and exit 23 PASS",
     "native SDFS permissions, syscall rights, unlink lifetime and exec checks PASS",
@@ -34,7 +34,8 @@ def _occurrences(log: str, marker: str) -> int:
     return sum(line == marker for line in log.splitlines())
 
 
-def validate(log: str, mode: str, qemu_exit: int) -> list[str]:
+def validate(log: str, mode: str, qemu_exit: int,
+             linux_output: str = "Hello from an unmodified static GNU/Linux ELF") -> list[str]:
     errors: list[str] = []
     if mode not in {"test", "ring3", "smap"}:
         return [f"unknown mode: {mode}"]
@@ -96,6 +97,16 @@ def validate(log: str, mode: str, qemu_exit: int) -> list[str]:
         count = log.count(marker)
         if count != 1:
             errors.append(f"expected external application output {marker!r} once, found {count}")
+    static_skip = "[RING3 SKIP] optional static GNU/Linux ELF not supplied"
+    static_pass = "[RING3 RESULT] unmodified static GNU/Linux ELF via Linux execve/auxv PASS"
+    if static_skip in log:
+        if log.count(static_pass) != 0:
+            errors.append("static GNU/Linux ELF is both skipped and reported as passed")
+    else:
+        if log.count(static_pass) != 1:
+            errors.append(f"expected exactly one {static_pass!r}, found {log.count(static_pass)}")
+        if log.count(linux_output) != 1:
+            errors.append("static Linux ELF was reported passed without its expected output")
     for marker in ("[RING3 RESULT] ALL PASS", "[RING3 RESULT] ET_DYN PIE executed at USER_PIE_BASE"):
         count = log.count(marker)
         if count != 1:
@@ -117,6 +128,7 @@ def _synthetic_log(mode: str) -> str:
     lines.extend(("[EXTERNAL SDK] running; pid=123",
                   "External LIWUS application running."))
     lines.extend(f"[RING3 RESULT] {result}" for result in RING3_RESULTS)
+    lines.append("[RING3 SKIP] optional static GNU/Linux ELF not supplied")
     lines.extend(("[RING3 RESULT] ALL PASS",
                   f"RESULT: {len(KERNEL_CASES)}/{len(KERNEL_CASES)} PASS",
                   "RESULT: ALL PASS", "=== TEST RUNNER END ===",
@@ -132,6 +144,15 @@ def self_test() -> list[str]:
     valid = _synthetic_log("test")
     if validate(valid, "test", 1):
         errors.append("valid synthetic log was rejected")
+    configured_static = valid.replace(
+        "[RING3 SKIP] optional static GNU/Linux ELF not supplied",
+        "[RING3 RESULT] unmodified static GNU/Linux ELF via Linux execve/auxv PASS",
+    ) + "custom static ELF output marker\n"
+    if validate(configured_static, "test", 1,
+                "custom static ELF output marker"):
+        errors.append("custom static Linux output marker was rejected")
+    if not validate(configured_static, "test", 1, "wrong output marker"):
+        errors.append("static Linux output mismatch was accepted")
     mutations = [
         (valid.replace("[TEST] terminal_files\n  PASS: terminal_files\n", "", 1), "missing test"),
         (valid.replace("  PASS: terminal_files\n", "", 1), "test without PASS"),
@@ -155,6 +176,8 @@ def main() -> int:
     parser.add_argument("--log", type=Path)
     parser.add_argument("--mode", choices=("test", "ring3", "smap"), default="test")
     parser.add_argument("--qemu-exit", type=int, default=1)
+    parser.add_argument("--linux-output", default="Hello from an unmodified static GNU/Linux ELF",
+                        help="exact output marker emitted by the optional static Linux ELF")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
 
@@ -174,7 +197,7 @@ def main() -> int:
     except OSError as error:
         print(f"could not read serial log {args.log}: {error}", file=sys.stderr)
         return 2
-    errors = validate(log, args.mode, args.qemu_exit)
+    errors = validate(log, args.mode, args.qemu_exit, args.linux_output)
     if errors:
         print(f"SERIAL VALIDATION FAIL ({args.mode})")
         for error in errors:

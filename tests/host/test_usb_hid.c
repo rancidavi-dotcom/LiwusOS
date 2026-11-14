@@ -95,6 +95,20 @@ int main(void) {
   assert(event_count == 6);
   expect_key(5, 0x4D, true, false);
 
+  /* Test ABNT2 Brazilian / ? key (HID usage 0x87 -> scancode 0x73) */
+  const uint8_t abnt2_slash[] = {0, 0, 0x87, 0, 0, 0, 0, 0};
+  assert(usb_hid_keyboard_report(abnt2_slash, sizeof(abnt2_slash)) == 0);
+  assert(event_count == 7);
+  expect_key(6, 0x73, false, true);
+  usb_hid_reset();
+
+  /* Test ABNT2 ; : key (HID usage 0x38 -> scancode 0x35) */
+  const uint8_t abnt2_colon[] = {0, 0, 0x38, 0, 0, 0, 0, 0};
+  assert(usb_hid_keyboard_report(abnt2_colon, sizeof(abnt2_colon)) == 0);
+  assert(event_count == 9);
+  expect_key(8, 0x35, false, true);
+  usb_hid_reset();
+
   const uint8_t mouse[] = {5, 0xFE, 3, 0};
   assert(usb_hid_mouse_report(mouse, 2) < 0);
   assert(usb_hid_mouse_report(mouse, sizeof(mouse)) == 0);

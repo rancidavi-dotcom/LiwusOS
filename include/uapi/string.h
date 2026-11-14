@@ -22,5 +22,7 @@ void int_to_str(uint32_t n, char *out);
 char *strchr(const char *s, int c);
 char *strrchr(const char *s, int c);
 char *itoa(int value, char *str, int base);
+int atoi(const char *nptr);
+long strtol(const char *nptr, char **endptr, int base);
 
 #endif

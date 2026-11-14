@@ -50,14 +50,14 @@ docs/             Documentation
 9. No generated binaries in git
 
 ## Incomplete functionality
-- Linux: PT_INTERP/dynamic linking, broad syscalls, signals, full wait4, futex extensions, robust lists, full clone/pthreads, demand paging/COW/file-backed mmap, vDSO/auxv completeness, SMP thread migration/TLB shootdown validation, AVX/XSAVE
+- Linux: PT_INTERP/dynamic linking, broad syscalls, signals, full wait4, futex extensions, robust lists, general clone/pthreads, demand paging/COW/file-backed mmap, vDSO/auxv completeness, SMP thread migration/TLB shootdown validation, AVX-512/AMX and complete CPU-feature policy. Current external evidence covers static musl caller/default stacks, four pthreads with mutex/condvar/name, and a static glibc x86-64-v3 greeting on QEMU `-cpu max`; this remains partial compatibility.
 - Native: Shell command composition is still minimal: no quotes, pipelines,
   redirection, scripts, background jobs or job control. USB mass storage and a
   generic block-device layer are also absent.
 
 ## Known bugs/risks
 - Native ABI has mixed error return conventions (-1 vs -errno)
-- glibc static with modern ISA fails due to missing AVX/XSAVE
+- a static glibc `puts` smoke now passes with x87/SSE/AVX XSAVE state; dynamic glibc, broader libc coverage, AVX-512/AMX remain unverified
 - Some Linux features intentionally unimplemented
 
 ## Next priority (native)

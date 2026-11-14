@@ -33,6 +33,22 @@ void kfree(void *ptr) {
   }
 }
 
+/* This host model tests VMA metadata; the ring-3 QEMU probe exercises real
+ * page-table permission changes through Linux mprotect. */
+int vmm_page_present_in(page_directory_t *mm, uint64_t address) {
+  (void)mm;
+  (void)address;
+  return 1;
+}
+
+int vmm_set_page_flags_in(page_directory_t *mm, void *address,
+                          uint64_t flags) {
+  (void)mm;
+  (void)address;
+  (void)flags;
+  return 0;
+}
+
 static void check(int condition, const char *message, int step) {
   if (!condition) {
     fprintf(stderr, "VMA host test FAIL at step %d (seed=0x%08x): %s\n",
@@ -132,6 +148,29 @@ int main(int argc, char **argv) {
         "split did not preserve right-side file offset", -1);
   vma_destroy(&mm);
 
+  check(vma_insert(&mm, 0x1000, 0x9000,
+                   VMA_PROT_READ | VMA_PROT_WRITE,
+                   VMA_PRIVATE | VMA_ANON, 0, NULL) == 0,
+        "mprotect fixture insertion failed", -1);
+  fail_after = 0;
+  check(vma_protect(&mm, 0x1000, 0x9000, VMA_PROT_READ) < 0 &&
+            vma_count(&mm) == 1 && mm.vmas->prot ==
+                (VMA_PROT_READ | VMA_PROT_WRITE),
+        "failed mprotect metadata allocation was not atomic", -1);
+  fail_after = -1;
+  check(vma_protect(&mm, 0x3000, 0x7000, VMA_PROT_READ) == 0 &&
+            vma_count(&mm) == 3 && vma_find(&mm, 0x2000)->prot ==
+                (VMA_PROT_READ | VMA_PROT_WRITE) &&
+            vma_find(&mm, 0x4000)->prot == VMA_PROT_READ &&
+            vma_find(&mm, 0x8000)->prot ==
+                (VMA_PROT_READ | VMA_PROT_WRITE),
+        "mprotect did not split and protect only the requested interval", -1);
+  check(vma_protect(&mm, 0x8000, 0xA000, VMA_PROT_READ) < 0 &&
+            vma_find(&mm, 0x8000)->prot ==
+                (VMA_PROT_READ | VMA_PROT_WRITE),
+        "mprotect accepted an interval with an unmapped tail", -1);
+  vma_destroy(&mm);
+
   check(vma_insert(&mm, 0x1000, 0x3000, VMA_PROT_READ | VMA_PROT_WRITE,
                    VMA_PRIVATE | VMA_ANON | VMA_HEAP, 0, NULL) == 0,
         "heap interval insertion failed", -1);
@@ -147,6 +186,11 @@ int main(int argc, char **argv) {
   check(vma_resize_heap(&mm, 0x1000, 0x4000) == 0 &&
             vma_find(&mm, 0x3000) != NULL && vma_find(&mm, 0x4000) == NULL,
         "valid heap growth failed", -1);
+  check(vma_resize_heap(&mm, 0x1000, 0x1000) == 0 &&
+            vma_find(&mm, 0x2000) == NULL &&
+            vma_resize_heap(&mm, 0x1000, 0x3000) == 0 &&
+            vma_find(&mm, 0x2000) != NULL,
+        "empty heap removal or re-growth failed", -1);
   uint64_t gap = 0;
   check(vma_find_gap_topdown(&mm, 0xA000, 0x1000, 0x1000, &gap) == 0 &&
             gap == 0x9000,

@@ -68,7 +68,9 @@
 #define EHCI_PORT_CHANGE_MASK (EHCI_PORT_CONNECT_CHANGE | \
                                EHCI_PORT_ENABLE_CHANGE | \
                                EHCI_PORT_OVERCURRENT_CHANGE)
-#define EHCI_MAX_DMA_PAGES 8
+#define EHCI_MAX_DMA_PAGES 32
+#define EHCI_MAX_HID_ENDPOINTS 4
+#define EHCI_MAX_HUBS 4
 #define EHCI_ROOT_HUB_VENDOR 0x8087
 #define EHCI_ROOT_HUB_PRODUCT 0x0024
 #define USB_DESC_DEVICE 1
@@ -90,8 +92,6 @@
 #define EHCI_CONTROL_WAIT_SPINS 10000000u
 #define EHCI_DESCRIPTOR_ATTEMPTS 3u
 
-
-
 typedef struct {
   uint8_t address;
   uint8_t speed;
@@ -102,19 +102,6 @@ typedef struct {
 } ehci_usb_device_t;
 
 typedef struct {
-  pci_device_t *pci;
-  uint64_t bar;
-  volatile uint32_t *operational;
-  ehci_queue_head_t *async_head;
-  uint64_t async_head_phys;
-  ehci_queue_head_t *control_qh;
-  uint64_t control_qh_phys;
-  ehci_qtd_t *control_qtds;
-  uint64_t control_qtds_phys;
-  uint8_t *control_buffer;
-  uint64_t control_buffer_phys;
-  uint32_t *periodic_list;
-  uint64_t periodic_list_phys;
   ehci_queue_head_t *interrupt_qh;
   uint64_t interrupt_qh_phys;
   ehci_qtd_t *interrupt_qtd;
@@ -123,6 +110,52 @@ typedef struct {
   uint64_t report_buffer_phys;
   uint16_t report_length;
   usb_hid_boot_interface_t hid_interface;
+  int configured;
+  uint32_t report_count;
+  int input_activity_reported;
+  uint8_t device_address;
+  uint8_t hub_address;
+  uint8_t hub_port;
+  uint8_t root_port;
+} ehci_hid_endpoint_t;
+
+typedef struct {
+  ehci_usb_device_t dev;
+  uint8_t port_count;
+  uint16_t port_connected;
+  uint8_t port_device_address[EHCI_HUB_MAX_PORTS + 1];
+} ehci_hub_t;
+
+typedef struct {
+  pci_device_t *pci;
+  uint64_t bar;
+  volatile uint32_t *operational;
+  ehci_queue_head_t *async_head;
+  uint64_t async_head_phys;
+  ehci_queue_head_t *control_qh;
+  uint64_t control_qh_phys;
+  ehci_queue_head_t *bulk_out_qh;
+  uint64_t bulk_out_qh_phys;
+  ehci_queue_head_t *bulk_in_qh;
+  uint64_t bulk_in_qh_phys;
+  ehci_qtd_t *bulk_out_qtd;
+  uint64_t bulk_out_qtd_phys;
+  ehci_qtd_t *bulk_in_qtd;
+  uint64_t bulk_in_qtd_phys;
+  uint8_t *bulk_buffer;
+  uint64_t bulk_buffer_phys;
+  ehci_qtd_t *control_qtds;
+  uint64_t control_qtds_phys;
+  uint8_t *control_buffer;
+  uint64_t control_buffer_phys;
+  uint32_t *periodic_list;
+  uint64_t periodic_list_phys;
+  ehci_hid_endpoint_t hid_endpoints[EHCI_MAX_HID_ENDPOINTS];
+  uint8_t hid_endpoint_count;
+  ehci_hub_t hubs[EHCI_MAX_HUBS];
+  uint8_t hub_count;
+  uint8_t next_device_address;
+  uint8_t root_device_address[16];
   void *dma_pages[EHCI_MAX_DMA_PAGES];
   uint8_t dma_page_count;
   uint32_t port_count;
@@ -134,8 +167,6 @@ typedef struct {
   volatile uint8_t root_scan_pending;
   uint16_t root_port_connected;
   uint8_t control_errors_logged;
-  uint32_t report_count;
-  int input_activity_reported;
 } ehci_controller_t;
 
 static ehci_controller_t ehci_controllers[EHCI_MAX_CONTROLLERS];
@@ -237,6 +268,11 @@ static void ehci_release_dma_pages(ehci_controller_t *controller) {
     controller->dma_pages[--controller->dma_page_count] = NULL;
   controller->async_head = NULL;
   controller->control_qh = NULL;
+  controller->bulk_out_qh = NULL;
+  controller->bulk_in_qh = NULL;
+  controller->bulk_out_qtd = NULL;
+  controller->bulk_in_qtd = NULL;
+  controller->bulk_buffer = NULL;
   controller->control_qtds = NULL;
   controller->control_buffer = NULL;
 }
@@ -407,7 +443,8 @@ static int ehci_start_async_schedule(ehci_controller_t *controller) {
   void *schedule_page = ehci_dma_page(controller);
   void *qtd_page = ehci_dma_page(controller);
   void *buffer_page = ehci_dma_page(controller);
-  if (!schedule_page || !qtd_page || !buffer_page) {
+  void *bulk_page = ehci_dma_page(controller);
+  if (!schedule_page || !qtd_page || !buffer_page || !bulk_page) {
     ehci_release_dma_pages(controller);
     return -1;
   }
@@ -421,10 +458,29 @@ static int ehci_start_async_schedule(ehci_controller_t *controller) {
   controller->control_qh = (ehci_queue_head_t *)((uint8_t *)schedule_page +
                                                  sizeof(*head));
   controller->control_qh_phys = virt_to_phys(controller->control_qh);
+
+  controller->bulk_out_qh = (ehci_queue_head_t *)((uint8_t *)schedule_page +
+                                                  sizeof(*head) * 2);
+  controller->bulk_out_qh_phys = virt_to_phys(controller->bulk_out_qh);
+
+  controller->bulk_in_qh = (ehci_queue_head_t *)((uint8_t *)schedule_page +
+                                                 sizeof(*head) * 3);
+  controller->bulk_in_qh_phys = virt_to_phys(controller->bulk_in_qh);
+
   controller->control_qtds = (ehci_qtd_t *)qtd_page;
   controller->control_qtds_phys = virt_to_phys(qtd_page);
+
+  controller->bulk_out_qtd = (ehci_qtd_t *)((uint8_t *)qtd_page + 256);
+  controller->bulk_out_qtd_phys = virt_to_phys(controller->bulk_out_qtd);
+
+  controller->bulk_in_qtd = (ehci_qtd_t *)((uint8_t *)qtd_page + 320);
+  controller->bulk_in_qtd_phys = virt_to_phys(controller->bulk_in_qtd);
+
   controller->control_buffer = (uint8_t *)buffer_page;
   controller->control_buffer_phys = virt_to_phys(buffer_page);
+
+  controller->bulk_buffer = (uint8_t *)bulk_page;
+  controller->bulk_buffer_phys = virt_to_phys(bulk_page);
   controller->async_head_phys = physical;
   controller->async_head = head;
 
@@ -462,13 +518,30 @@ static int ehci_start_async_schedule(ehci_controller_t *controller) {
   head->endpoint_capabilities = 0;
   head->next_qtd = EHCI_LINK_TERMINATE;
   head->alternate_next_qtd = EHCI_LINK_TERMINATE;
+
   controller->control_qh->horizontal_link =
-      (uint32_t)physical | EHCI_LINK_QH;
+      (uint32_t)controller->bulk_out_qh_phys | EHCI_LINK_QH;
   controller->control_qh->endpoint_characteristics =
       EHCI_QH_SPEED_HIGH | EHCI_QH_DTC | EHCI_QH_MAX_PACKET_64;
   controller->control_qh->endpoint_capabilities = 0;
   controller->control_qh->next_qtd = EHCI_LINK_TERMINATE;
   controller->control_qh->alternate_next_qtd = EHCI_LINK_TERMINATE;
+
+  controller->bulk_out_qh->horizontal_link =
+      (uint32_t)controller->bulk_in_qh_phys | EHCI_LINK_QH;
+  controller->bulk_out_qh->endpoint_characteristics =
+      EHCI_QH_SPEED_HIGH | EHCI_QH_DTC | (512u << 16);
+  controller->bulk_out_qh->endpoint_capabilities = 0;
+  controller->bulk_out_qh->next_qtd = EHCI_LINK_TERMINATE;
+  controller->bulk_out_qh->alternate_next_qtd = EHCI_LINK_TERMINATE;
+
+  controller->bulk_in_qh->horizontal_link =
+      (uint32_t)physical | EHCI_LINK_QH;
+  controller->bulk_in_qh->endpoint_characteristics =
+      EHCI_QH_SPEED_HIGH | EHCI_QH_DTC | (512u << 16);
+  controller->bulk_in_qh->endpoint_capabilities = 0;
+  controller->bulk_in_qh->next_qtd = EHCI_LINK_TERMINATE;
+  controller->bulk_in_qh->alternate_next_qtd = EHCI_LINK_TERMINATE;
 
   uint16_t command = (uint16_t)pci_read_config(
       controller->pci->bus, controller->pci->device,
@@ -749,6 +822,118 @@ static int ehci_control_transfer(ehci_controller_t *controller,
   return completed ? 0 : -1;
 }
 
+int ehci_bulk_transfer_wrap(void *ctrl_ptr, void *dev_ptr,
+                            uint8_t ep_address, uint16_t max_packet,
+                            uint8_t *data_toggle, void *buffer,
+                            uint32_t length, int is_in) {
+  ehci_controller_t *controller = (ehci_controller_t *)ctrl_ptr;
+  ehci_usb_device_t *device = (ehci_usb_device_t *)dev_ptr;
+  if (!controller || !controller->async_started || !device ||
+      !controller->bulk_out_qh || !controller->bulk_in_qh ||
+      !controller->bulk_out_qtd || !controller->bulk_in_qtd ||
+      !controller->bulk_buffer || length > PAGE_SIZE) {
+    return -1;
+  }
+
+  ehci_queue_head_t *qh = is_in ? controller->bulk_in_qh : controller->bulk_out_qh;
+  ehci_qtd_t *qtd = is_in ? controller->bulk_in_qtd : controller->bulk_out_qtd;
+  uint64_t qtd_phys = is_in ? controller->bulk_in_qtd_phys : controller->bulk_out_qtd_phys;
+  uint8_t *dma_buf = controller->bulk_buffer;
+  uint64_t dma_buf_phys = controller->bulk_buffer_phys;
+
+  memset(qtd, 0, sizeof(*qtd));
+  if (!is_in && length > 0) {
+    memcpy(dma_buf, buffer, length);
+  }
+
+  qtd->next_qtd = EHCI_LINK_TERMINATE;
+  qtd->alternate_next_qtd = EHCI_LINK_TERMINATE;
+  qtd->token = EHCI_QTD_ACTIVE | EHCI_QTD_CERR_3 | EHCI_QTD_IOC |
+               (is_in ? EHCI_QTD_PID_IN : EHCI_QTD_PID_OUT) |
+               (length << 16);
+  if (data_toggle && *data_toggle) {
+    qtd->token |= EHCI_QTD_TOGGLE;
+  }
+  qtd->buffer[0] = (uint32_t)dma_buf_phys;
+  qtd->buffer[1] = (uint32_t)(dma_buf_phys + 0x1000) & ~0xFFFu;
+
+  uint8_t ep_num = ep_address & 0x0F;
+  uint32_t endpoint = (device->address & 0x7Fu) |
+                      ((uint32_t)(ep_num & 0x0Fu) << 8) |
+                      ((uint32_t)(device->speed & 3u) << 12) |
+                      EHCI_QH_DTC |
+                      ((uint32_t)(max_packet & 0x7FFu) << 16);
+
+  uint32_t capabilities = 0;
+  if (device->speed != 2 && device->hub_address) {
+    capabilities |= (uint32_t)device->hub_address << 16;
+    capabilities |= (uint32_t)device->hub_port << 23;
+  }
+
+  if (ehci_async_schedule_set(controller, 0) < 0) {
+    serial_print("[EHCI-B] err stop async\n");
+    return -1;
+  }
+
+  qh->endpoint_characteristics = endpoint;
+  qh->endpoint_capabilities = capabilities;
+  qh->current_qtd = 0;
+  qh->next_qtd = (uint32_t)qtd_phys;
+  qh->alternate_next_qtd = EHCI_LINK_TERMINATE;
+  qh->token = 0;
+  memset(qh->buffer, 0, sizeof(qh->buffer));
+  memset(qh->extended_buffer, 0, sizeof(qh->extended_buffer));
+  __atomic_thread_fence(__ATOMIC_RELEASE);
+
+  if (ehci_async_schedule_set(controller, 1) < 0) {
+    serial_print("[EHCI-B] err start async\n");
+    return -1;
+  }
+
+  int completed = 0;
+  for (uint32_t spin = 0; spin < EHCI_CONTROL_WAIT_SPINS; ++spin) {
+    uint32_t token = qtd->token;
+    if (!(token & EHCI_QTD_ACTIVE)) {
+      completed = !(token & (EHCI_QTD_HALTED | EHCI_QTD_BUFFER_ERROR |
+                             EHCI_QTD_BABBLE | EHCI_QTD_TRANSACTION_ERROR));
+      break;
+    }
+    if (controller->operational[1] & (EHCI_USBSTS_HOST_ERROR | EHCI_USBSTS_HALTED))
+      break;
+    __asm__ volatile("pause" ::: "memory");
+  }
+
+  ehci_async_schedule_set(controller, 0);
+  qh->next_qtd = EHCI_LINK_TERMINATE;
+  qh->token = 0;
+  __atomic_thread_fence(__ATOMIC_RELEASE);
+  ehci_async_schedule_set(controller, 1);
+
+  if (completed) {
+    if (is_in && length > 0) {
+      memcpy(buffer, dma_buf, length);
+    }
+    if (data_toggle) {
+      uint32_t packets = max_packet ? ((length + max_packet - 1) / max_packet) : 1;
+      if (packets & 1) {
+        *data_toggle ^= 1;
+      }
+    }
+    return 0;
+  }
+
+  serial_print("[EHCI-B] spin failed tok=");
+  serial_print_hex(qtd->token);
+  serial_print(" qh_tok=");
+  serial_print_hex(qh->token);
+  serial_print(" qh_cur=");
+  serial_print_hex(qh->current_qtd);
+  serial_print(" qh_next=");
+  serial_print_hex(qh->next_qtd);
+  serial_print("\n");
+  return -1;
+}
+
 static uint16_t ehci_read_le16(const uint8_t *bytes) {
   return (uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8);
 }
@@ -888,30 +1073,64 @@ static int ehci_get_configuration(ehci_controller_t *controller,
   return 0;
 }
 
-static int ehci_start_periodic_keyboard(ehci_controller_t *controller,
+static int ehci_start_periodic_endpoint(ehci_controller_t *controller,
                                         const ehci_usb_device_t *device,
                                         const usb_hid_boot_interface_t *hid) {
+  int slot_idx = -1;
+  for (int i = 0; i < controller->hid_endpoint_count; ++i) {
+    if (!controller->hid_endpoints[i].configured) {
+      slot_idx = i;
+      break;
+    }
+  }
+  if (slot_idx < 0) {
+    if (controller->hid_endpoint_count < EHCI_MAX_HID_ENDPOINTS) {
+      slot_idx = controller->hid_endpoint_count++;
+    } else {
+      return -1;
+    }
+  }
+
   uint8_t endpoint = hid->endpoint_address & 0x0f;
+  uint16_t min_packet = hid->protocol == 1 ? 8 : 3;
   if (!endpoint || !(hid->endpoint_address & 0x80) ||
-      hid->max_packet_size < 8 || hid->max_packet_size > PAGE_SIZE ||
+      hid->max_packet_size < min_packet || hid->max_packet_size > PAGE_SIZE ||
       !hid->interval)
     return -1;
 
-  void *frame_page = ehci_dma_page(controller);
-  void *qh_page = ehci_dma_page(controller);
-  void *qtd_page = ehci_dma_page(controller);
-  void *report_page = ehci_dma_page(controller);
-  if (!frame_page || !qh_page || !qtd_page || !report_page) return -1;
-  controller->periodic_list = (uint32_t *)frame_page;
-  controller->periodic_list_phys = virt_to_phys(frame_page);
-  controller->interrupt_qh = (ehci_queue_head_t *)qh_page;
-  controller->interrupt_qh_phys = virt_to_phys(qh_page);
-  controller->interrupt_qtd = (ehci_qtd_t *)qtd_page;
-  controller->interrupt_qtd_phys = virt_to_phys(qtd_page);
-  controller->report_buffer = (uint8_t *)report_page;
-  controller->report_buffer_phys = virt_to_phys(report_page);
-  controller->report_length = hid->max_packet_size;
-  controller->hid_interface = *hid;
+  if (!controller->periodic_list) {
+    void *frame_page = ehci_dma_page(controller);
+    if (!frame_page) return -1;
+    controller->periodic_list = (uint32_t *)frame_page;
+    controller->periodic_list_phys = virt_to_phys(frame_page);
+    for (uint32_t frame = 0; frame < 1024; ++frame)
+      controller->periodic_list[frame] = EHCI_LINK_TERMINATE;
+  }
+
+  ehci_hid_endpoint_t *ep = &controller->hid_endpoints[slot_idx];
+
+  if (!ep->interrupt_qh) {
+    void *qh_page = ehci_dma_page(controller);
+    void *qtd_page = ehci_dma_page(controller);
+    void *report_page = ehci_dma_page(controller);
+    if (!qh_page || !qtd_page || !report_page) return -1;
+
+    ep->interrupt_qh = (ehci_queue_head_t *)qh_page;
+    ep->interrupt_qh_phys = virt_to_phys(qh_page);
+    ep->interrupt_qtd = (ehci_qtd_t *)qtd_page;
+    ep->interrupt_qtd_phys = virt_to_phys(qtd_page);
+    ep->report_buffer = (uint8_t *)report_page;
+    ep->report_buffer_phys = virt_to_phys(report_page);
+  }
+
+  ep->report_length = hid->max_packet_size;
+  ep->hid_interface = *hid;
+  ep->device_address = device->address;
+  ep->hub_address = device->hub_address;
+  ep->hub_port = device->hub_port;
+  ep->root_port = (device->hub_address == 0) ? device->hub_port : 0;
+  ep->report_count = 0;
+  ep->input_activity_reported = 0;
 
   uint32_t endpoint_state = device->address |
                             ((uint32_t)endpoint << 8) |
@@ -924,51 +1143,64 @@ static int ehci_start_periodic_keyboard(ehci_controller_t *controller,
                              &caps, &frame_stride) < 0)
     return -1;
 
-  ehci_queue_head_t *qh = controller->interrupt_qh;
+  ehci_queue_head_t *qh = ep->interrupt_qh;
+  uint32_t next_hlink = qh->horizontal_link;
+  if (next_hlink == 0) next_hlink = EHCI_LINK_TERMINATE;
   memset(qh, 0, sizeof(*qh));
-  qh->horizontal_link = EHCI_LINK_TERMINATE;
+  qh->horizontal_link = next_hlink;
   qh->endpoint_characteristics = endpoint_state;
   qh->endpoint_capabilities = caps;
-  qh->next_qtd = (uint32_t)controller->interrupt_qtd_phys;
+  qh->next_qtd = (uint32_t)ep->interrupt_qtd_phys;
   qh->alternate_next_qtd = EHCI_LINK_TERMINATE;
   qh->token = 0;
 
-  ehci_qtd_t *qtd = controller->interrupt_qtd;
+  ehci_qtd_t *qtd = ep->interrupt_qtd;
   memset(qtd, 0, sizeof(*qtd));
   qtd->next_qtd = EHCI_LINK_TERMINATE;
   qtd->alternate_next_qtd = EHCI_LINK_TERMINATE;
   qtd->token = EHCI_QTD_ACTIVE | EHCI_QTD_CERR_3 | EHCI_QTD_PID_IN |
-               EHCI_QTD_IOC | ((uint32_t)controller->report_length << 16);
-  qtd->buffer[0] = (uint32_t)controller->report_buffer_phys;
+               EHCI_QTD_IOC | ((uint32_t)ep->report_length << 16);
+  qtd->buffer[0] = (uint32_t)ep->report_buffer_phys;
 
-  for (uint32_t frame = 0; frame < 1024; ++frame)
-    controller->periodic_list[frame] = EHCI_LINK_TERMINATE;
-  uint32_t link = (uint32_t)controller->interrupt_qh_phys | EHCI_LINK_QH;
-  for (uint32_t frame = 0; frame < 1024; frame += frame_stride)
-    controller->periodic_list[frame] = link;
-
-  if (ehci_wait_mask(&controller->operational[1], EHCI_USBSTS_PERIODIC_STATUS,
-                     0) < 0)
-    return -1;
-  controller->operational[0x14 / 4] =
-      (uint32_t)controller->periodic_list_phys;
-  __atomic_thread_fence(__ATOMIC_RELEASE);
-  controller->operational[0] |= EHCI_USBCMD_PERIODIC_ENABLE;
-  __atomic_thread_fence(__ATOMIC_SEQ_CST);
-  if (ehci_wait_mask(&controller->operational[1],
-                     EHCI_USBSTS_PERIODIC_STATUS,
-                     EHCI_USBSTS_PERIODIC_STATUS) < 0) {
-    controller->operational[0] &= ~EHCI_USBCMD_PERIODIC_ENABLE;
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
-    (void)ehci_wait_mask(&controller->operational[1],
-                         EHCI_USBSTS_PERIODIC_STATUS, 0);
-    return -1;
+  if (slot_idx > 0 && !(controller->hid_endpoints[slot_idx - 1].interrupt_qh->horizontal_link & ~EHCI_LINK_TERMINATE)) {
+    controller->hid_endpoints[slot_idx - 1].interrupt_qh->horizontal_link =
+        (uint32_t)ep->interrupt_qh_phys | EHCI_LINK_QH;
+  }
+  if (slot_idx == 0) {
+    uint32_t link = (uint32_t)ep->interrupt_qh_phys | EHCI_LINK_QH;
+    for (uint32_t frame = 0; frame < 1024; frame += frame_stride)
+      controller->periodic_list[frame] = link;
   }
 
-  controller->keyboard_configured = 1;
-  keyboard_set_usb_active(true);
-  serial_set_input_enabled(0);
-  serial_print("USB EHCI: periodic keyboard schedule active\n");
+  if (!(controller->operational[0] & EHCI_USBCMD_PERIODIC_ENABLE)) {
+    if (ehci_wait_mask(&controller->operational[1], EHCI_USBSTS_PERIODIC_STATUS, 0) < 0)
+      return -1;
+    controller->operational[0x14 / 4] = (uint32_t)controller->periodic_list_phys;
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    controller->operational[0] |= EHCI_USBCMD_PERIODIC_ENABLE;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    if (ehci_wait_mask(&controller->operational[1],
+                       EHCI_USBSTS_PERIODIC_STATUS,
+                       EHCI_USBSTS_PERIODIC_STATUS) < 0) {
+      controller->operational[0] &= ~EHCI_USBCMD_PERIODIC_ENABLE;
+      __atomic_thread_fence(__ATOMIC_SEQ_CST);
+      (void)ehci_wait_mask(&controller->operational[1],
+                           EHCI_USBSTS_PERIODIC_STATUS, 0);
+      return -1;
+    }
+  }
+
+  ep->configured = 1;
+
+  if (hid->protocol == 1) {
+    controller->keyboard_configured = 1;
+    keyboard_set_usb_active(true);
+    serial_set_input_enabled(0);
+    serial_print("USB EHCI: periodic keyboard schedule active\n");
+  } else if (hid->protocol == 2) {
+    serial_print("USB EHCI: periodic mouse schedule active\n");
+  }
+
   return 0;
 }
 
@@ -984,19 +1216,40 @@ static int ehci_configure_hid_device(ehci_controller_t *controller,
     return -1;
 
   usb_hid_boot_interface_t hid = {0};
-  if (usb_hid_find_boot_interface(descriptor, total, &hid) < 0 ||
-      ehci_set_configuration(controller, device, hid.configuration_value) < 0 ||
+  if (usb_hid_find_boot_interface(descriptor, total, &hid) < 0) {
+    uint8_t msc_cfg = 0, msc_iface = 0, msc_ep_in = 0, msc_ep_out = 0;
+    uint16_t msc_in_max = 0, msc_out_max = 0;
+    extern int usb_msc_find_interface(const uint8_t *desc, uint16_t len,
+                                      uint8_t *out_config, uint8_t *out_iface,
+                                      uint8_t *out_ep_in, uint16_t *out_ep_in_max,
+                                      uint8_t *out_ep_out, uint16_t *out_ep_out_max);
+    extern int usb_msc_register_device(void *controller, void *device,
+                                       uint8_t ep_in, uint16_t ep_in_max,
+                                       uint8_t ep_out, uint16_t ep_out_max);
+    if (usb_msc_find_interface(descriptor, total, &msc_cfg, &msc_iface,
+                               &msc_ep_in, &msc_in_max, &msc_ep_out, &msc_out_max) == 0) {
+      if (ehci_set_configuration(controller, device, msc_cfg) == 0) {
+        ehci_log("USB EHCI: Dispositivo USB Mass Storage (Pendrive) configurado!");
+        usb_msc_register_device(controller, device, msc_ep_in, msc_in_max, msc_ep_out, msc_out_max);
+        return 0;
+      }
+    }
+    return -1;
+  }
+  if (ehci_set_configuration(controller, device, hid.configuration_value) < 0 ||
       ehci_control_transfer(controller, device, 0x21, 11, 0,
                             hid.interface_number, 0) < 0)
     return -1;
 
-  if (hid.protocol != 1) return -1;
-  if (ehci_control_transfer(controller, device, 0x21, 9, 0x0200,
-                            hid.interface_number, 1) == 0)
-    ehci_log("USB EHCI: Caps Lock LED report sent");
-  else
-    ehci_log("USB EHCI: Caps Lock LED report failed");
-  return ehci_start_periodic_keyboard(controller, device, &hid);
+  if (hid.protocol != 1 && hid.protocol != 2) return -1;
+  if (hid.protocol == 1) {
+    if (ehci_control_transfer(controller, device, 0x21, 9, 0x0200,
+                              hid.interface_number, 1) == 0)
+      ehci_log("USB EHCI: Caps Lock LED report sent");
+    else
+      ehci_log("USB EHCI: Caps Lock LED report failed");
+  }
+  return ehci_start_periodic_endpoint(controller, device, &hid);
 }
 
 static int ehci_address_usb_device(ehci_controller_t *controller,
@@ -1113,6 +1366,20 @@ static int ehci_enumerate_hub(ehci_controller_t *controller,
   serial_print_hex(port_count);
   serial_print("\n");
 
+  ehci_hub_t *registered_hub = NULL;
+  for (uint8_t i = 0; i < controller->hub_count; ++i) {
+    if (controller->hubs[i].dev.address == hub->address) {
+      registered_hub = &controller->hubs[i];
+      break;
+    }
+  }
+  if (!registered_hub && controller->hub_count < EHCI_MAX_HUBS) {
+    registered_hub = &controller->hubs[controller->hub_count++];
+    memset(registered_hub, 0, sizeof(*registered_hub));
+    registered_hub->dev = *hub;
+    registered_hub->port_count = port_count;
+  }
+
   for (uint8_t port = 1; port <= port_count; ++port) {
     if (ehci_control_transfer(controller, hub, 0x23, USB_REQ_SET_FEATURE,
                               USB_FEATURE_PORT_POWER, port, 0) < 0)
@@ -1162,16 +1429,20 @@ static int ehci_enumerate_hub(ehci_controller_t *controller,
     ehci_usb_device_t child = {
         .address = 0,
         .speed = (status & (1u << 10)) ? 2 : ((status & (1u << 9)) ? 1 : 0),
-        .max_packet = 0,
+        .max_packet = (status & (1u << 10)) ? 64 : 8,
         .hub_address = hub->address,
         .hub_port = port,
     };
     uint8_t child_address = (*next_address)++;
     if (ehci_enumerate_device(controller, &child, child_address,
-                              (uint8_t)(depth + 1), next_address) == 0)
-      return 0;
+                              (uint8_t)(depth + 1), next_address) == 0) {
+      if (registered_hub) {
+        registered_hub->port_connected |= (1u << port);
+        registered_hub->port_device_address[port] = child_address;
+      }
+    }
   }
-  return -1;
+  return controller->hid_endpoint_count > 0 ? 0 : -1;
 }
 
 static int ehci_enumerate_device(ehci_controller_t *controller,
@@ -1186,7 +1457,7 @@ static int ehci_enumerate_device(ehci_controller_t *controller,
     return ehci_enumerate_hub(controller, device, depth, next_address);
 
   if (ehci_configure_hid_device(controller, device) < 0) return -1;
-  serial_print("USB EHCI: configured boot keyboard address ");
+  serial_print("USB EHCI: configured boot HID device address ");
   serial_print_hex(device->address);
   serial_print(" VID:PID ");
   serial_print_hex(vendor);
@@ -1196,22 +1467,187 @@ static int ehci_enumerate_device(ehci_controller_t *controller,
   return 0;
 }
 
+static void ehci_service_hub_ports(ehci_controller_t *controller) {
+  for (uint8_t h_idx = 0; h_idx < controller->hub_count; ++h_idx) {
+    ehci_hub_t *hub = &controller->hubs[h_idx];
+    if (!hub->port_count) continue;
+
+    for (uint8_t port = 1; port <= hub->port_count; ++port) {
+      uint32_t port_status = 0;
+      if (ehci_read_hub_port_status(controller, &hub->dev, port, &port_status) < 0)
+        continue;
+
+      uint16_t status = (uint16_t)port_status;
+      uint16_t changes = (uint16_t)(port_status >> 16);
+
+      if (changes & 1u) {
+        (void)ehci_control_transfer(controller, &hub->dev, 0x23,
+                                    USB_REQ_CLEAR_FEATURE,
+                                    USB_FEATURE_C_PORT_CONNECTION, port, 0);
+      }
+
+      int currently_connected = (status & 1u) ? 1 : 0;
+      int previously_connected = (hub->port_connected & (1u << port)) ? 1 : 0;
+
+      /* Desconexão de dispositivo na porta do hub */
+      if (!currently_connected && previously_connected) {
+        serial_print("USB EHCI: dispositivo desconectado da porta ");
+        serial_print_hex(port);
+        serial_print("\n");
+
+        uint8_t dev_addr = hub->port_device_address[port];
+        for (uint8_t ep_i = 0; ep_i < controller->hid_endpoint_count; ++ep_i) {
+          ehci_hid_endpoint_t *ep = &controller->hid_endpoints[ep_i];
+          if (ep->configured &&
+              ((dev_addr && ep->device_address == dev_addr) ||
+               (ep->hub_address == hub->dev.address && ep->hub_port == port))) {
+            ep->configured = 0;
+            if (ep->interrupt_qh) {
+              ep->interrupt_qh->token = EHCI_QTD_HALTED;
+              ep->interrupt_qh->next_qtd = EHCI_LINK_TERMINATE;
+            }
+            if (ep->interrupt_qtd) {
+              ep->interrupt_qtd->token = 0;
+            }
+            if (ep->hid_interface.protocol == 1) {
+              controller->keyboard_configured = 0;
+              keyboard_set_usb_active(false);
+              usb_hid_reset();
+              serial_print("USB EHCI: teclado desconectado, PS/2 fallback ativo\n");
+            } else if (ep->hid_interface.protocol == 2) {
+              static const uint8_t zero_mouse[3] = {0, 0, 0};
+              usb_hid_mouse_report(zero_mouse, 3);
+              serial_print("USB EHCI: mouse desconectado\n");
+            }
+          }
+        }
+        hub->port_connected &= ~(1u << port);
+        hub->port_device_address[port] = 0;
+      }
+      /* Conexão de dispositivo na porta do hub */
+      else if (currently_connected && !previously_connected) {
+        serial_print("USB EHCI: novo dispositivo detectado na porta ");
+        serial_print_hex(port);
+        serial_print("\n");
+
+        if (ehci_control_transfer(controller, &hub->dev, 0x23,
+                                  USB_REQ_SET_FEATURE,
+                                  USB_FEATURE_PORT_RESET, port, 0) < 0) {
+          continue;
+        }
+        ehci_delay_ms(50);
+        int reset_done = 0;
+        for (uint32_t attempt = 0; attempt < 10; ++attempt) {
+          if (ehci_read_hub_port_status(controller, &hub->dev, port, &port_status) < 0)
+            break;
+          status = (uint16_t)port_status;
+          changes = (uint16_t)(port_status >> 16);
+          if (!(status & (1u << 4)) && (changes & (1u << 4))) {
+            reset_done = 1;
+            break;
+          }
+          ehci_delay_ms(10);
+        }
+        if (!reset_done) {
+          serial_print("USB EHCI: timeout reset porta do hub\n");
+          continue;
+        }
+        (void)ehci_control_transfer(controller, &hub->dev, 0x23,
+                                    USB_REQ_CLEAR_FEATURE,
+                                    USB_FEATURE_C_PORT_RESET, port, 0);
+        if (ehci_read_hub_port_status(controller, &hub->dev, port, &port_status) < 0)
+          continue;
+        status = (uint16_t)port_status;
+        if (!(status & (1u << 1))) {
+          serial_print("USB EHCI: porta do hub nao habilitada pos-reset\n");
+          continue;
+        }
+
+        if (controller->next_device_address < 2 || controller->next_device_address > 120)
+          controller->next_device_address = 2;
+        uint8_t child_address = controller->next_device_address++;
+
+        ehci_usb_device_t child = {
+            .address = 0,
+            .speed = (status & (1u << 10)) ? 2 : ((status & (1u << 9)) ? 1 : 0),
+            .max_packet = (status & (1u << 10)) ? 64 : 8,
+            .hub_address = hub->dev.address,
+            .hub_port = port,
+        };
+
+        if (ehci_enumerate_device(controller, &child, child_address, 1,
+                                  &controller->next_device_address) == 0) {
+          hub->port_connected |= (1u << port);
+          hub->port_device_address[port] = child_address;
+          serial_print("USB EHCI: dispositivo conectado e configurado na porta ");
+          serial_print_hex(port);
+          serial_print(" endereco ");
+          serial_print_hex(child_address);
+          serial_print("\n");
+        } else {
+          serial_print("USB EHCI: falha ao enumerar dispositivo na porta ");
+          serial_print_hex(port);
+          serial_print("\n");
+        }
+      }
+    }
+  }
+}
+
 static void ehci_enumerate_root_ports(ehci_controller_t *controller) {
   volatile uint32_t *cap = (volatile uint32_t *)phys_to_virt(controller->bar);
   uint32_t hcsparams = cap[1];
   uint32_t debug_port = (hcsparams >> 20) & 0x0f;
   controller->port_count = hcsparams & 0x0f;
-  uint8_t next_address = 1;
+  if (controller->next_device_address < 1) controller->next_device_address = 1;
+
   for (uint32_t port = 0; port < controller->port_count; ++port) {
     if (debug_port && port + 1 == debug_port) continue;
     volatile uint32_t *portsc =
         &controller->operational[0x44 / 4 + port];
     uint32_t status = *portsc;
-    if (status & EHCI_PORT_CONNECTED)
-      controller->root_port_connected |= (uint16_t)(1u << port);
-    else
-      controller->root_port_connected &= (uint16_t)~(1u << port);
-    if (!(status & EHCI_PORT_CONNECTED)) continue;
+
+    /* Desconexão na root port */
+    if (!(status & EHCI_PORT_CONNECTED)) {
+      if (controller->root_port_connected & (1u << port)) {
+        controller->root_port_connected &= (uint16_t)~(1u << port);
+        uint8_t dev_addr = controller->root_device_address[port];
+        controller->root_device_address[port] = 0;
+        serial_print("USB EHCI: root port ");
+        serial_print_hex(port + 1);
+        serial_print(" desconectada\n");
+
+        for (uint8_t ep_i = 0; ep_i < controller->hid_endpoint_count; ++ep_i) {
+          ehci_hid_endpoint_t *ep = &controller->hid_endpoints[ep_i];
+          if (ep->configured &&
+              ((dev_addr && ep->device_address == dev_addr) ||
+               (ep->hub_address == 0 && ep->root_port == port + 1))) {
+            ep->configured = 0;
+            if (ep->interrupt_qh) {
+              ep->interrupt_qh->token = EHCI_QTD_HALTED;
+              ep->interrupt_qh->next_qtd = EHCI_LINK_TERMINATE;
+            }
+            if (ep->interrupt_qtd) ep->interrupt_qtd->token = 0;
+            if (ep->hid_interface.protocol == 1) {
+              controller->keyboard_configured = 0;
+              keyboard_set_usb_active(false);
+              usb_hid_reset();
+            } else if (ep->hid_interface.protocol == 2) {
+              static const uint8_t zero_mouse[3] = {0, 0, 0};
+              usb_hid_mouse_report(zero_mouse, 3);
+            }
+          }
+        }
+      }
+      continue;
+    }
+
+    /* Se já estava conectada e inicializada, prossegue */
+    if (controller->root_port_connected & (1u << port)) {
+      continue;
+    }
+
+    controller->root_port_connected |= (uint16_t)(1u << port);
     char line[64];
     char *p = ehci_append_text(line, "USB EHCI: connected root port ");
     p = ehci_append_hex(p, port + 1, 1);
@@ -1223,20 +1659,21 @@ static void ehci_enumerate_root_ports(ehci_controller_t *controller) {
       ehci_log("USB EHCI: root port reset/enable failed");
       continue;
     }
-    if (next_address > 126)
-      continue;
+    if (controller->next_device_address > 120) controller->next_device_address = 2;
     ehci_usb_device_t root = {
         .address = 0,
         .speed = 2,
         .max_packet = 64,
         .hub_address = 0,
-        .hub_port = 0,
+        .hub_port = (uint8_t)(port + 1),
     };
-    uint8_t address = next_address++;
+    uint8_t address = controller->next_device_address++;
     if (ehci_enumerate_device(controller, &root, address, 0,
-                              &next_address) == 0)
-      return;
-    ehci_log("USB EHCI: root device enumeration failed");
+                              &controller->next_device_address) == 0) {
+      controller->root_device_address[port] = address;
+    } else {
+      ehci_log("USB EHCI: root device enumeration failed");
+    }
   }
 }
 
@@ -1253,8 +1690,7 @@ void usb_ehci_poll(void) {
 
   for (int index = 0; index < ehci_controller_total; ++index) {
     ehci_controller_t *controller = &ehci_controllers[index];
-    if (controller->started && !controller->keyboard_configured &&
-        ++controller->root_scan_ticks >= 10) {
+    if (controller->started && ++controller->root_scan_ticks >= 10) {
       controller->root_scan_ticks = 0;
       volatile uint32_t *cap = (volatile uint32_t *)phys_to_virt(controller->bar);
       uint32_t ports = cap[1] & 0x0f;
@@ -1264,66 +1700,76 @@ void usb_ehci_poll(void) {
         uint16_t bit = (uint16_t)(1u << port);
         uint32_t status = controller->operational[0x11 + port];
         if (!(status & EHCI_PORT_CONNECTED)) {
-          controller->root_port_connected &= (uint16_t)~bit;
+          if (controller->root_port_connected & bit) {
+            controller->root_scan_pending = 1;
+          }
         } else if (!(controller->root_port_connected & bit)) {
-          controller->root_port_connected |= bit;
           controller->root_scan_pending = 1;
         }
       }
     }
-    if (!controller->keyboard_configured || !controller->interrupt_qtd ||
-        !controller->report_buffer)
-      continue;
+    for (uint8_t ep_i = 0; ep_i < controller->hid_endpoint_count; ++ep_i) {
+      ehci_hid_endpoint_t *ep = &controller->hid_endpoints[ep_i];
+      if (!ep->configured || !ep->interrupt_qtd || !ep->report_buffer)
+        continue;
 
-    /* Clear any transient interrupt or host error status bits */
-    uint32_t sts = controller->operational[1];
-    if (sts & (EHCI_USBSTS_HOST_ERROR | (1u << 1) | (1u << 2))) {
-      controller->operational[1] = sts;
-    }
+      /* Clear any transient interrupt or host error status bits */
+      uint32_t sts = controller->operational[1];
+      if (sts & (EHCI_USBSTS_HOST_ERROR | (1u << 1) | (1u << 2))) {
+        controller->operational[1] = sts;
+      }
 
-    uint32_t token = controller->interrupt_qtd->token;
-    if (token & EHCI_QTD_ACTIVE) continue;
+      uint32_t token = ep->interrupt_qtd->token;
+      if (token & EHCI_QTD_ACTIVE) continue;
 
-    if (!(token & (EHCI_QTD_HALTED | EHCI_QTD_BUFFER_ERROR |
-                   EHCI_QTD_BABBLE | EHCI_QTD_TRANSACTION_ERROR))) {
-      uint32_t remaining = (token >> 16) & 0x7fffu;
-      if (remaining <= controller->report_length) {
-        uint32_t received = controller->report_length - remaining;
-        if (usb_hid_keyboard_report(controller->report_buffer, received) ==
-            0) {
-          if (!controller->report_count)
-            serial_print("USB EHCI: keyboard report received\n");
-          int activity = controller->report_buffer[0] != 0;
-          for (uint32_t byte = 2; byte < 8 && !activity; ++byte)
-            activity = controller->report_buffer[byte] != 0;
-          if (activity && !controller->input_activity_reported) {
-            serial_print("USB EHCI: keyboard input event observed\n");
-            controller->input_activity_reported = 1;
+      if (!(token & (EHCI_QTD_HALTED | EHCI_QTD_BUFFER_ERROR |
+                     EHCI_QTD_BABBLE | EHCI_QTD_TRANSACTION_ERROR))) {
+        uint32_t remaining = (token >> 16) & 0x7fffu;
+        if (remaining <= ep->report_length) {
+          uint32_t received = ep->report_length - remaining;
+          if (ep->hid_interface.protocol == 1) {
+            if (usb_hid_keyboard_report(ep->report_buffer, received) == 0) {
+              if (!ep->report_count)
+                serial_print("USB EHCI: keyboard report received\n");
+              int activity = ep->report_buffer[0] != 0;
+              for (uint32_t byte = 2; byte < 8 && !activity; ++byte)
+                activity = ep->report_buffer[byte] != 0;
+              if (activity && !ep->input_activity_reported) {
+                serial_print("USB EHCI: keyboard input event observed\n");
+                ep->input_activity_reported = 1;
+              }
+              ep->report_count++;
+            }
+          } else if (ep->hid_interface.protocol == 2) {
+            if (usb_hid_mouse_report(ep->report_buffer, received) == 0) {
+              if (!ep->report_count)
+                serial_print("USB EHCI: mouse report received\n");
+              ep->report_count++;
+            }
           }
-          controller->report_count++;
         }
       }
+
+      memset(ep->report_buffer, 0, ep->report_length);
+      ehci_qtd_t *qtd = ep->interrupt_qtd;
+      memset(qtd, 0, sizeof(*qtd));
+      qtd->next_qtd = EHCI_LINK_TERMINATE;
+      qtd->alternate_next_qtd = EHCI_LINK_TERMINATE;
+      qtd->token = EHCI_QTD_ACTIVE | EHCI_QTD_CERR_3 | EHCI_QTD_PID_IN |
+                   EHCI_QTD_IOC | ((uint32_t)ep->report_length << 16);
+      qtd->buffer[0] = (uint32_t)ep->report_buffer_phys;
+
+      /* Memory barrier ensuring qTD contents are committed before the QH points to it */
+      __atomic_thread_fence(__ATOMIC_RELEASE);
+
+      /* Update the Queue Head Next qTD pointer to trigger the next transfer on the active schedule */
+      ehci_queue_head_t *qh = ep->interrupt_qh;
+      if (token & EHCI_QTD_HALTED) {
+        qh->token &= ~EHCI_QTD_HALTED;
+      }
+      qh->next_qtd = (uint32_t)ep->interrupt_qtd_phys;
+      __atomic_thread_fence(__ATOMIC_RELEASE);
     }
-
-    memset(controller->report_buffer, 0, controller->report_length);
-    ehci_qtd_t *qtd = controller->interrupt_qtd;
-    memset(qtd, 0, sizeof(*qtd));
-    qtd->next_qtd = EHCI_LINK_TERMINATE;
-    qtd->alternate_next_qtd = EHCI_LINK_TERMINATE;
-    qtd->token = EHCI_QTD_ACTIVE | EHCI_QTD_CERR_3 | EHCI_QTD_PID_IN |
-                 EHCI_QTD_IOC | ((uint32_t)controller->report_length << 16);
-    qtd->buffer[0] = (uint32_t)controller->report_buffer_phys;
-
-    /* Memory barrier ensuring qTD contents are committed before the QH points to it */
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-
-    /* Update the Queue Head Next qTD pointer to trigger the next transfer on the active schedule */
-    ehci_queue_head_t *qh = controller->interrupt_qh;
-    if (token & EHCI_QTD_HALTED) {
-      qh->token &= ~EHCI_QTD_HALTED;
-    }
-    qh->next_qtd = (uint32_t)controller->interrupt_qtd_phys;
-    __atomic_thread_fence(__ATOMIC_RELEASE);
   }
 
   ehci_poll_active = 0;
@@ -1331,19 +1777,30 @@ void usb_ehci_poll(void) {
 }
 
 /* Control transfers can wait for hardware; drain connection work from a
- * process-context syscall, while the timer only detects and queues it. */
+ * process-context syscall or desktop loop, while the timer only detects and queues it. */
 void usb_ehci_service(void) {
   usb_ehci_poll();
+
+  static uint32_t last_scan_ticks = 0;
+  extern uint32_t timer_ticks;
+  if (timer_ticks - last_scan_ticks < 20) {
+    return;
+  }
+  last_scan_ticks = timer_ticks;
+
   for (int index = 0; index < ehci_controller_total; ++index) {
     ehci_controller_t *controller = &ehci_controllers[index];
-    if (!controller->root_scan_pending || controller->keyboard_configured)
-      continue;
-    controller->root_scan_pending = 0;
-    ehci_enumerate_root_ports(controller);
+    if (!controller->started) continue;
+
+    if (controller->root_scan_pending) {
+      controller->root_scan_pending = 0;
+      ehci_enumerate_root_ports(controller);
+    }
+
+    ehci_service_hub_ports(controller);
+
     if (controller->keyboard_configured) {
       ehci_status = "usb ehci keyboard ready";
-      ehci_log("USB EHCI: boot keyboard ready after reconnect");
-      break;
     }
   }
 }
@@ -1374,14 +1831,8 @@ void usb_ehci_probe(void) {
       ehci_log("USB EHCI: asynchronous DMA schedule did not start");
       continue;
     }
-    /* Intel's PCH datasheet specifies CONFIGFLAG as the last controller
-     * configuration action; its 0->1 transition also clears PORTSC.Owner
-     * and routes ports to EHCI. Do this after RUN and the async schedule are
-     * active, before reading root-port state or issuing USB transactions. */
     controller->operational[0x10] |= EHCI_CONFIGURED;
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
-    /* Give port routing and connection detection time to settle on hardware
-     * before the one-time root-port scan. */
     ehci_delay_ms(100);
     ehci_started_total++;
     ehci_log("USB EHCI: asynchronous DMA schedule active; enumeration pending");
@@ -1390,7 +1841,6 @@ void usb_ehci_probe(void) {
     if (controller->keyboard_configured) {
       ehci_status = "usb ehci keyboard ready";
       ehci_log("USB EHCI: boot keyboard ready");
-      break;
     }
   }
 

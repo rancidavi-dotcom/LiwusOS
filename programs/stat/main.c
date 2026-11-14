@@ -19,6 +19,20 @@ static int write_unsigned(uint64_t value, unsigned base) {
     return 0;
 }
 
+static const char *get_res_name(uint64_t res_type, uint32_t mode) {
+    if ((mode & 0170000u) == 0040000u) return "[DIR  ] Directory";
+    switch (res_type) {
+        case 1: return "[TEXT ] Text Document";
+        case 2: return "[EXEC ] Executable Program";
+        case 3: return "[IMAGE] Bitmap Graphic";
+        case 4: return "[AUDIO] Audio Stream";
+        case 5: return "[DEV  ] Hardware Device";
+        case 6: return "[IPC  ] Inter-Process Channel";
+        case 7: return "[DIR  ] Directory";
+        default: return "[DATA ] Binary Data";
+    }
+}
+
 int main(int argc, char **argv, char **envp) {
     (void)envp;
     if (argc != 2) {
@@ -33,10 +47,9 @@ int main(int argc, char **argv, char **envp) {
         return 1;
     }
 
-    const char *type = (info.st_mode & 0170000u) == 0040000u
-        ? "directory" : "regular file";
+    const char *res = get_res_name(info.st_rdev, info.st_mode);
     if (write_text("Path: ") < 0 || write_text(argv[1]) < 0 ||
-        write_text("\nType: ") < 0 || write_text(type) < 0 ||
+        write_text("\nResource: ") < 0 || write_text(res) < 0 ||
         write_text("\nSize: ") < 0 || write_unsigned(info.st_size, 10) < 0 ||
         write_text(" bytes\nMode: ") < 0 ||
         write_unsigned(info.st_mode & 0777u, 8) < 0 ||

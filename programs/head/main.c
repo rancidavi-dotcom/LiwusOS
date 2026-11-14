@@ -7,15 +7,21 @@ static int fail(const char *message) {
 
 int main(int argc, char **argv, char **envp) {
     (void)envp;
-    if (argc != 2) return fail("usage: head FILE\n");
+    int fd = 0;
+    int need_close = 0;
 
-    int fd = liw_open(argv[1], LIW_O_RDONLY);
-    if (fd < 0) return fail("head: cannot open file\n");
-    struct liw_stat info;
-    if (liw_fstat(fd, &info) < 0 ||
-        (info.st_mode & 0170000u) == 0040000u) {
-        liw_close(fd);
-        return fail("head: path is not a regular file\n");
+    if (argc == 2) {
+        fd = liw_open(argv[1], LIW_O_RDONLY);
+        if (fd < 0) return fail("head: cannot open file\n");
+        struct liw_stat info;
+        if (liw_fstat(fd, &info) < 0 ||
+            (info.st_mode & 0170000u) == 0040000u) {
+            liw_close(fd);
+            return fail("head: path is not a regular file\n");
+        }
+        need_close = 1;
+    } else if (argc != 1) {
+        return fail("usage: head [FILE]\n");
     }
 
     unsigned char buffer[512];
@@ -40,7 +46,7 @@ int main(int argc, char **argv, char **envp) {
             break;
         }
     }
-    if (liw_close(fd) < 0 && result == 0)
+    if (need_close && liw_close(fd) < 0 && result == 0)
         result = fail("head: close failed\n");
     return result;
 }
