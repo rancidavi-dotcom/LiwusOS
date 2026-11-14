@@ -1136,6 +1136,7 @@ static void apply_single_decl(const html_stylesheet_t *ss,
         if (ci_eq(rval, "grid") || ci_eq(rval, "inline-grid"))
             css_trace_grid("display-observed", prop, val);
         if (ci_eq(rval, "none")) st->display = CSS_DISP_NONE;
+        else if (ci_eq(rval, "contents")) st->display = CSS_DISP_CONTENTS;
         else if (ci_eq(rval, "block") || ci_eq(rval, "flow-root")) st->display = CSS_DISP_BLOCK;
         else if (ci_eq(rval, "inline")) st->display = CSS_DISP_INLINE;
         else if (ci_eq(rval, "inline-block")) st->display = CSS_DISP_INLINE_BLOCK;
@@ -1278,41 +1279,56 @@ static void apply_single_decl(const html_stylesheet_t *ss,
             apply_single_edge_len(ss, edges[0], &values[3], margin, margin ? -24 : 0, margin ? 120 : 180);
             apply_single_edge_len(ss, edges[count > 1 ? 1 : 0], &values[1], margin, margin ? -24 : 0, margin ? 120 : 180);
         }
+    } else if (ci_eq(prop, "padding-block") || ci_eq(prop, "margin-block")) {
+        char edges[2][96];
+        int count = split_ws_tokens(rval, edges, 2);
+        bool margin = ci_eq(prop, "margin-block");
+        int16_t *values = margin ? st->margin : st->pad;
+        if (count > 0) {
+            apply_single_edge_len(ss, edges[0], &values[0], margin, margin ? -24 : 0, margin ? 120 : 180);
+            apply_single_edge_len(ss, edges[count > 1 ? 1 : 0], &values[2], margin, margin ? -24 : 0, margin ? 120 : 180);
+        }
     } else if (ci_eq(prop, "box-sizing")) {
         if (ci_eq(rval, "border-box")) st->border_box = true;
         else if (ci_eq(rval, "content-box")) st->border_box = false;
     } else if (ci_eq(prop, "padding")) {
         apply_box_shorthand(ss, rval, st->pad, false, 0, 180);
-    } else if (ci_eq(prop, "padding-top")) {
+    } else if (ci_eq(prop, "padding-top") || ci_eq(prop, "padding-block-start")) {
         apply_single_edge_len(ss, val, &st->pad[0], false, 0, 180);
-    } else if (ci_eq(prop, "padding-right")) {
+    } else if (ci_eq(prop, "padding-right") || ci_eq(prop, "padding-inline-end")) {
         apply_single_edge_len(ss, val, &st->pad[1], false, 0, 180);
-    } else if (ci_eq(prop, "padding-bottom")) {
+    } else if (ci_eq(prop, "padding-bottom") || ci_eq(prop, "padding-block-end")) {
         apply_single_edge_len(ss, val, &st->pad[2], false, 0, 180);
-    } else if (ci_eq(prop, "padding-left")) {
+    } else if (ci_eq(prop, "padding-left") || ci_eq(prop, "padding-inline-start")) {
         apply_single_edge_len(ss, val, &st->pad[3], false, 0, 180);
     } else if (ci_eq(prop, "margin")) {
         apply_box_shorthand(ss, rval, st->margin, true, -24, 120);
-    } else if (ci_eq(prop, "margin-top")) {
+    } else if (ci_eq(prop, "margin-top") || ci_eq(prop, "margin-block-start")) {
         apply_single_edge_len(ss, val, &st->margin[0], true, -24, 120);
-    } else if (ci_eq(prop, "margin-right")) {
+    } else if (ci_eq(prop, "margin-right") || ci_eq(prop, "margin-inline-end")) {
         apply_single_edge_len(ss, val, &st->margin[1], true, -24, 120);
-    } else if (ci_eq(prop, "margin-bottom")) {
+    } else if (ci_eq(prop, "margin-bottom") || ci_eq(prop, "margin-block-end")) {
         apply_single_edge_len(ss, val, &st->margin[2], true, -24, 120);
-    } else if (ci_eq(prop, "margin-left")) {
+    } else if (ci_eq(prop, "margin-left") || ci_eq(prop, "margin-inline-start")) {
         apply_single_edge_len(ss, val, &st->margin[3], true, -24, 120);
         if (parse_int_prefix(rval, NULL) <= -500) st->offscreen_hidden = true;
     } else if (ci_eq(prop, "border")) {
         apply_border_side(ss, val, st, 0x0F);
-    } else if (ci_eq(prop, "border-top")) {
+    } else if (ci_eq(prop, "border-block")) {
+        apply_border_side(ss, val, st, 0x05);
+    } else if (ci_eq(prop, "border-inline")) {
+        apply_border_side(ss, val, st, 0x0A);
+    } else if (ci_eq(prop, "border-top") || ci_eq(prop, "border-block-start")) {
         apply_border_side(ss, val, st, 0x01);
-    } else if (ci_eq(prop, "border-right")) {
+    } else if (ci_eq(prop, "border-right") || ci_eq(prop, "border-inline-end")) {
         apply_border_side(ss, val, st, 0x02);
-    } else if (ci_eq(prop, "border-bottom")) {
+    } else if (ci_eq(prop, "border-bottom") || ci_eq(prop, "border-block-end")) {
         apply_border_side(ss, val, st, 0x04);
-    } else if (ci_eq(prop, "border-left")) {
+    } else if (ci_eq(prop, "border-left") || ci_eq(prop, "border-inline-start")) {
         apply_border_side(ss, val, st, 0x08);
-    } else if (ci_eq(prop, "border-color")) {
+    } else if (ci_eq(prop, "border-color") || ci_eq(prop, "border-top-color") ||
+               ci_eq(prop, "border-right-color") || ci_eq(prop, "border-bottom-color") ||
+               ci_eq(prop, "border-left-color")) {
         lv_color_t c;
         bool tr = false;
         if (html_css_parse_color(ss, val, &c, &tr) && !tr) {
@@ -1325,12 +1341,38 @@ static void apply_single_decl(const html_stylesheet_t *ss,
         for (int i = 0; i < 4; i++) {
             if (b[i] != HTML_CSS_UNSET) st->border_w[i] = b[i];
         }
+    } else if (ci_eq(prop, "border-top-width") || ci_eq(prop, "border-block-start-width")) {
+        apply_single_edge_len(ss, val, &st->border_w[0], false, 0, 12);
+    } else if (ci_eq(prop, "border-right-width") || ci_eq(prop, "border-inline-end-width")) {
+        apply_single_edge_len(ss, val, &st->border_w[1], false, 0, 12);
+    } else if (ci_eq(prop, "border-bottom-width") || ci_eq(prop, "border-block-end-width")) {
+        apply_single_edge_len(ss, val, &st->border_w[2], false, 0, 12);
+    } else if (ci_eq(prop, "border-left-width") || ci_eq(prop, "border-inline-start-width")) {
+        apply_single_edge_len(ss, val, &st->border_w[3], false, 0, 12);
+    } else if (ci_eq(prop, "box-shadow")) {
+        if (ci_contains(rval, "inset") &&
+            (ci_contains(rval, "-1px") || ci_contains(rval, "-2px") ||
+             ci_contains(rval, "-.0625rem"))) {
+            char tok[8][96];
+            int n = split_ws_tokens(rval, tok, 8);
+            for (int i = 0; i < n; i++) {
+                lv_color_t c;
+                bool tr = false;
+                if (html_css_parse_color(ss, tok[i], &c, &tr) && !tr) {
+                    if (st->border_w[2] == HTML_CSS_UNSET || st->border_w[2] == 0)
+                        st->border_w[2] = ci_contains(rval, "-2px") ? 2 : 1;
+                    st->has_border_color = true;
+                    st->border_color = c;
+                    break;
+                }
+            }
+        }
     } else if (ci_eq(prop, "border-radius")) {
         int16_t px = HTML_CSS_UNSET;
         if (parse_css_length(ss, val, &px, NULL, NULL) && px != HTML_CSS_UNSET) {
             st->radius = clamp_i16(px, 0, 28);
         }
-    } else if (ci_eq(prop, "width")) {
+    } else if (ci_eq(prop, "width") || ci_eq(prop, "inline-size")) {
         int16_t px = HTML_CSS_UNSET, pct = HTML_CSS_UNSET;
         bool is_auto = false;
         if (parse_css_length(ss, val, &px, &pct, &is_auto)) {
@@ -1345,18 +1387,18 @@ static void apply_single_decl(const html_stylesheet_t *ss,
                 st->width_px = HTML_CSS_UNSET;
             }
         }
-    } else if (ci_eq(prop, "max-width")) {
+    } else if (ci_eq(prop, "max-width") || ci_eq(prop, "max-inline-size")) {
         int16_t px = HTML_CSS_UNSET, pct = HTML_CSS_UNSET;
         if (parse_css_length(ss, val, &px, &pct, NULL)) {
             if (px != HTML_CSS_UNSET) st->max_width_px = px;
             else if (pct != HTML_CSS_UNSET) st->max_width_pct = pct;
         }
-    } else if (ci_eq(prop, "min-width")) {
+    } else if (ci_eq(prop, "min-width") || ci_eq(prop, "min-inline-size")) {
         int16_t px = HTML_CSS_UNSET;
         if (parse_css_length(ss, val, &px, NULL, NULL) && px != HTML_CSS_UNSET) {
             st->min_width_px = px;
         }
-    } else if (ci_eq(prop, "height")) {
+    } else if (ci_eq(prop, "height") || ci_eq(prop, "block-size")) {
         int16_t px = HTML_CSS_UNSET;
         if (parse_css_length(ss, val, &px, NULL, NULL) && px != HTML_CSS_UNSET) {
             st->height_px = px;
@@ -1365,7 +1407,7 @@ static void apply_single_decl(const html_stylesheet_t *ss,
                 sr->seen_zero_h = (px == 0);
             }
         }
-    } else if (ci_eq(prop, "min-height")) {
+    } else if (ci_eq(prop, "min-height") || ci_eq(prop, "min-block-size")) {
         int16_t px = HTML_CSS_UNSET;
         if (parse_css_length(ss, val, &px, NULL, NULL) && px != HTML_CSS_UNSET) {
             st->min_height_px = px;

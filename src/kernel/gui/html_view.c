@@ -1616,6 +1616,7 @@ static bool is_inline_tag(const char *t) {
 }
 
 static bool style_needs_box(const css_style_t *st, const char *tag, const css_style_t *parent_st) {
+    if (st->display == CSS_DISP_CONTENTS) return false;
     if (strcmp(tag, "thead") == 0 || strcmp(tag, "tbody") == 0 ||
         strcmp(tag, "tfoot") == 0) {
         return false;
@@ -1814,8 +1815,115 @@ static void flush_text_buffer(html_parser_t *p) {
 
 /* ---- Tag Open Handlers ---- */
 
+static void render_shields_badge(html_parser_t *p, lv_obj_t *parent, const char *raw_spec) {
+    if (!p || !parent || !raw_spec || p->widget_count + 4 >= HTML_MAX_WIDGETS) return;
+    const char *spec = raw_spec;
+    const char *marker = strstr(spec, "badge/");
+    if (marker) spec = marker + 6;
+
+    char part1[48], part2[48], part3[48];
+    part1[0] = part2[0] = part3[0] = '\0';
+
+    const char *hyphen1 = strchr(spec, '-');
+    if (!hyphen1) return;
+    size_t l1 = (size_t)(hyphen1 - spec);
+    if (l1 >= sizeof(part1)) l1 = sizeof(part1) - 1;
+    memcpy(part1, spec, l1);
+    part1[l1] = '\0';
+
+    const char *rest = hyphen1 + 1;
+    const char *hyphen2 = strrchr(rest, '-');
+    if (hyphen2 && hyphen2 > rest) {
+        size_t l2 = (size_t)(hyphen2 - rest);
+        if (l2 >= sizeof(part2)) l2 = sizeof(part2) - 1;
+        memcpy(part2, rest, l2);
+        part2[l2] = '\0';
+        hc_copy(hyphen2 + 1, part3, sizeof(part3));
+    } else {
+        hc_copy(rest, part2, sizeof(part2));
+    }
+
+    char *q = strchr(part3, '?');
+    if (q) *q = '\0';
+    q = strchr(part2, '?');
+    if (q) *q = '\0';
+
+    for (char *c = part1; *c; c++) { if (*c == '_') *c = ' '; }
+    for (char *c = part2; *c; c++) { if (*c == '_') *c = ' '; }
+
+    lv_color_t badge_col = lv_color_hex(0x007ec6); /* default blue */
+    if (hc_contains_ci(part3, "green") || hc_contains_ci(part3, "brightgreen") || hc_contains_ci(part3, "4c1") || hc_contains_ci(part3, "success"))
+        badge_col = lv_color_hex(0x2ea043);
+    else if (hc_contains_ci(part3, "red") || hc_contains_ci(part3, "critical") || hc_contains_ci(part3, "e05d44"))
+        badge_col = lv_color_hex(0xe05d44);
+    else if (hc_contains_ci(part3, "orange") || hc_contains_ci(part3, "fe7d37"))
+        badge_col = lv_color_hex(0xfe7d37);
+    else if (hc_contains_ci(part3, "yellow") || hc_contains_ci(part3, "dfb317"))
+        badge_col = lv_color_hex(0xdfb317);
+    else if (hc_contains_ci(part3, "black") || hc_contains_ci(part3, "dark"))
+        badge_col = lv_color_hex(0x24292f);
+
+    lv_obj_t *badge = lv_obj_create(parent);
+    if (!badge) return;
+    p->widget_count++;
+    lv_obj_set_size(badge, LV_SIZE_CONTENT, 20);
+    lv_obj_clear_flag(badge, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(badge, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(badge, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_all(badge, 0, 0);
+    lv_obj_set_style_pad_column(badge, 0, 0);
+    lv_obj_set_style_border_width(badge, 0, 0);
+    lv_obj_set_style_radius(badge, 3, 0);
+    lv_obj_set_style_clip_corner(badge, true, 0);
+
+    lv_obj_t *left = lv_obj_create(badge);
+    lv_obj_t *right = lv_obj_create(badge);
+    if (!left || !right) return;
+    p->widget_count += 2;
+
+    lv_obj_set_size(left, LV_SIZE_CONTENT, 20);
+    lv_obj_set_style_bg_color(left, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_bg_opa(left, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(left, 0, 0);
+    lv_obj_set_style_pad_hor(left, 6, 0);
+    lv_obj_set_style_pad_ver(left, 1, 0);
+    lv_obj_clear_flag(left, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *lbl_l = lv_label_create(left);
+    lv_obj_set_style_text_font(lbl_l, html_font_for_px(11), 0);
+    lv_obj_set_style_text_color(lbl_l, lv_color_white(), 0);
+    lv_label_set_text(lbl_l, part1);
+    lv_obj_center(lbl_l);
+
+    lv_obj_set_size(right, LV_SIZE_CONTENT, 20);
+    lv_obj_set_style_bg_color(right, badge_col, 0);
+    lv_obj_set_style_bg_opa(right, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(right, 0, 0);
+    lv_obj_set_style_pad_hor(right, 6, 0);
+    lv_obj_set_style_pad_ver(left, 1, 0);
+    lv_obj_clear_flag(right, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *lbl_r = lv_label_create(right);
+    lv_obj_set_style_text_font(lbl_r, html_font_for_px(11), 0);
+    lv_obj_set_style_text_color(lbl_r, lv_color_white(), 0);
+    lv_label_set_text(lbl_r, part2[0] ? part2 : part3);
+    lv_obj_center(lbl_r);
+
+    if (p->a_depth > 0 && p->cur_href[0]) {
+        href_click_ctx_t *hctx = (href_click_ctx_t *)page_alloc(p->pm, sizeof(href_click_ctx_t));
+        if (hctx) {
+            hctx->pm = p->pm;
+            hctx->href = page_strdup(p->pm, p->cur_href);
+            lv_obj_add_flag(badge, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(badge, obj_href_click_cb, LV_EVENT_CLICKED, hctx);
+        }
+    }
+}
+
 static void handle_img_tag(html_parser_t *p, const char *attrs, size_t alen) {
-    char raw_src[HTML_URL_MAX], alt[128], w_str[16], h_str[16];
+    char raw_src[HTML_URL_MAX], alt[128], w_str[16], h_str[16], csrc[HTML_URL_MAX];
+    csrc[0] = '\0';
+    extract_attr(attrs, alen, "data-canonical-src", csrc, sizeof(csrc));
     extract_attr(attrs, alen, "src", raw_src, sizeof(raw_src));
     if (!raw_src[0] || hc_contains_ci(raw_src, "R0lGODlh")) {
         char dsrc[HTML_URL_MAX];
@@ -1826,6 +1934,16 @@ static void handle_img_tag(html_parser_t *p, const char *attrs, size_t alen) {
     extract_attr(attrs, alen, "alt", alt, sizeof(alt));
     extract_attr(attrs, alen, "width", w_str, sizeof(w_str));
     extract_attr(attrs, alen, "height", h_str, sizeof(h_str));
+
+    if (hc_contains_ci(csrc, "shields.io/badge/") || hc_contains_ci(raw_src, "shields.io/badge/")) {
+        box_frame_t *owner = NULL;
+        lv_obj_t *parent = current_flow_parent(p, &owner);
+        if (parent && owner) {
+            close_cur_spangroup(owner);
+            render_shields_badge(p, parent, csrc[0] ? csrc : raw_src);
+            return;
+        }
+    }
 
     if (!raw_src[0]) return;
     int attr_w = hc_parse_int(w_str);
@@ -2032,7 +2150,7 @@ static void handle_input_tag(html_parser_t *p, const char *attrs, size_t alen) {
         if (input_style->width_px >= 0 && input_style->width_px != HTML_CSS_UNSET)
             iw = input_style->width_px;
         else if (input_style->width_pct > 0 && input_style->width_pct <= 100)
-            iw = (owner->avail_w * input_style->width_pct) / 100;
+            iw = (owner->width_is_content || owner->is_flex_row) ? 160 : (owner->avail_w * input_style->width_pct) / 100;
         if (input_style->max_width_px > 0 && iw > input_style->max_width_px)
             iw = input_style->max_width_px;
         if (iw < 40) iw = 40;
@@ -2041,12 +2159,19 @@ static void handle_input_tag(html_parser_t *p, const char *attrs, size_t alen) {
     lv_obj_set_width(ta, iw);
     if (input_style && input_style->flex_grow)
         lv_obj_set_flex_grow(ta, input_style->flex_grow);
-    lv_obj_set_style_bg_color(ta, lv_color_white(), 0);
-    lv_obj_set_style_text_color(ta, lv_color_hex(0x111827), 0);
+    bool dark = p->ss && p->ss->prefer_dark_scheme;
+    if (input_style && input_style->has_bg && input_style->bg_transparent) {
+        lv_obj_set_style_bg_opa(ta, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(ta, 0, 0);
+    } else {
+        lv_obj_set_style_bg_color(ta, (input_style && input_style->has_bg) ? input_style->bg : (dark ? lv_color_hex(0x0d1117) : lv_color_white()), 0);
+        lv_obj_set_style_border_width(ta, 1, 0);
+        lv_obj_set_style_border_color(ta, (input_style && input_style->has_border_color) ? input_style->border_color : (dark ? lv_color_hex(0x30363d) : lv_color_hex(0x9ca3af)), 0);
+    }
+    lv_color_t txt_col = (input_style && input_style->has_color) ? input_style->color : (dark ? lv_color_hex(0xf0f6fc) : lv_color_hex(0x111827));
+    lv_obj_set_style_text_color(ta, txt_col, 0);
     lv_obj_set_style_text_font(ta, html_font_for_px(14), 0);
-    lv_obj_set_style_border_width(ta, 1, 0);
-    lv_obj_set_style_border_color(ta, lv_color_hex(0x9ca3af), 0);
-    lv_obj_set_style_radius(ta, 6, 0);
+    lv_obj_set_style_radius(ta, (input_style && input_style->radius != HTML_CSS_UNSET) ? input_style->radius : 6, 0);
     lv_obj_set_style_pad_hor(ta, 8, 0);
     lv_obj_set_style_pad_ver(ta, 5, 0);
 
@@ -2178,6 +2303,12 @@ static lv_obj_t *create_container_box(html_parser_t *p, const char *tag,
     }
 
     const css_style_t *parent_st = (p->depth >= 2) ? &p->style[p->depth - 2] : NULL;
+    for (int pd = p->depth - 2; pd >= 0; pd--) {
+        if (p->style[pd].display != CSS_DISP_CONTENTS) {
+            parent_st = &p->style[pd];
+            break;
+        }
+    }
     bool parent_is_flex = parent_st && (parent_st->display == CSS_DISP_FLEX ||
                                         parent_st->display == CSS_DISP_INLINE_FLEX ||
                                         parent_st->display == CSS_DISP_GRID);
@@ -2186,6 +2317,11 @@ static lv_obj_t *create_container_box(html_parser_t *p, const char *tag,
     uint8_t grid_slot = (st->grid_col_start > 0)
                       ? (uint8_t)(st->grid_col_start - 1) : auto_grid_slot;
     uint8_t grid_span = st->grid_col_span ? st->grid_col_span : 1;
+
+    const char *cur_cls = (p->depth > 0) ? p->dom[p->depth - 1].cls : "";
+    bool is_page_layout_pane = hc_contains_ci(cur_cls, "PageLayout-Pane") &&
+                               !hc_contains_ci(cur_cls, "PageLayout-PaneWrapper");
+    bool is_page_layout_content = hc_contains_ci(cur_cls, "PageLayout-ContentWrapper");
 
     int box_w = owner->avail_w;
     bool row_flex_basis = parent_st && parent_st->flex_dir == CSS_FLEX_ROW &&
@@ -2205,7 +2341,10 @@ static lv_obj_t *create_container_box(html_parser_t *p, const char *tag,
     } else if (row_flex_basis) {
         box_w = (owner->avail_w * st->flex_basis_pct) / 100;
     } else if (st->width_px > 0) {
-        box_w = (st->width_px < owner->avail_w) ? st->width_px : owner->avail_w;
+        int target_w = st->width_px;
+        if (is_page_layout_pane && p->viewport_w < 1050 && target_w > 256)
+            target_w = 256;
+        box_w = (target_w < owner->avail_w) ? target_w : owner->avail_w;
     } else if (st->width_pct > 0 && st->width_pct <= 100) {
         box_w = (owner->avail_w * st->width_pct) / 100;
     }
@@ -2459,6 +2598,22 @@ static lv_obj_t *create_container_box(html_parser_t *p, const char *tag,
         return cell;
     }
 
+    if (parent_is_flex && parent_st->flex_dir == CSS_FLEX_ROW &&
+        actual_parent == parent && st->margin[3] == HTML_CSS_LEN_AUTO &&
+        p->widget_count + 1 < HTML_MAX_WIDGETS) {
+        lv_obj_t *spacer = lv_obj_create(actual_parent);
+        if (spacer) {
+            p->widget_count++;
+            lv_obj_set_size(spacer, 0, 1);
+            lv_obj_set_flex_grow(spacer, 1);
+            lv_obj_set_style_bg_opa(spacer, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(spacer, 0, 0);
+            lv_obj_set_style_pad_all(spacer, 0, 0);
+            lv_obj_clear_flag(spacer, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+            html_place_ordered_flex_child(parent, spacer, st->flex_order);
+        }
+    }
+
     lv_obj_t *box = lv_obj_create(actual_parent);
     if (!box) return NULL;
     p->widget_count++;
@@ -2469,21 +2624,35 @@ static lv_obj_t *create_container_box(html_parser_t *p, const char *tag,
     if (st->flex_grow && !full_track_flex_item)
         lv_obj_set_flex_grow(box, st->flex_grow);
 
+    if (st->max_width_px > 0)
+        lv_obj_set_style_max_width(box, st->max_width_px, 0);
+    else if (st->max_width_pct > 0 && st->max_width_pct <= 100)
+        lv_obj_set_style_max_width(box, LV_PCT(st->max_width_pct), 0);
+    if (st->min_width_px > 0)
+        lv_obj_set_style_min_width(box, st->min_width_px, 0);
+
     /* A later desktop rule setting `width: auto` clears `st->width_pct` and
      * sets `st->width_px = HTML_CSS_LEN_AUTO` (-32767). Never lock a flex-grow
      * item into `width_is_content` (which would overwrite flex_grow with a
      * fixed pixel width on close). */
     bool has_explicit_w = (st->width_px > 0 || st->width_pct > 0 ||
-                           row_flex_basis ||
-                           st->max_width_px > 0 || is_floating || grid_track_applied);
+                           row_flex_basis || is_floating || grid_track_applied);
     if (parent_stretches_width) {
         lv_obj_set_width(box, LV_PCT(100));
-    } else if (has_explicit_w) {
+    } else if (st->width_px > 0 || row_flex_basis || is_floating || grid_track_applied) {
         lv_obj_set_width(box, box_w);
+    } else if (st->width_pct > 0 && st->width_pct <= 100) {
+        if (parent_is_flex && parent_st->flex_dir == CSS_FLEX_ROW &&
+            st->flex_grow > 0 && st->width_pct == 100) {
+            lv_obj_set_width(box, 0);
+        } else {
+            lv_obj_set_width(box, LV_PCT(st->width_pct));
+        }
     } else if (st->display == CSS_DISP_INLINE_BLOCK || st->display == CSS_DISP_INLINE_FLEX ||
                (parent_is_flex && st->flex_grow == 0)) {
         lv_obj_set_width(box, LV_SIZE_CONTENT);
-        lv_obj_set_style_max_width(box, owner->avail_w, 0);
+        if (st->max_width_px <= 0 && st->max_width_pct <= 0)
+            lv_obj_set_style_max_width(box, owner->avail_w, 0);
         frame->width_is_content = true;
     } else if (parent_is_flex && st->flex_grow > 0) {
         lv_obj_set_width(box, 0);
@@ -2549,10 +2718,23 @@ static lv_obj_t *create_container_box(html_parser_t *p, const char *tag,
         st->flex_grow && owner->avail_w - pad_h > frame->avail_w) {
         frame->avail_w = owner->avail_w - pad_h;
     }
+    if (is_page_layout_content && owner->avail_w >= 620) {
+        int pane_reserve = (p->viewport_w < 1050) ? 280 : 320;
+        if (owner->avail_w - pane_reserve - pad_h < frame->avail_w)
+            frame->avail_w = owner->avail_w - pane_reserve - pad_h;
+    }
     if (frame->avail_w < 60) frame->avail_w = 60;
     frame->lv_box = box;
     frame->active_flow = box;
     if (attrs && alen) {
+        char aria_cur[24];
+        if (extract_attr(attrs, alen, "aria-current", aria_cur, sizeof(aria_cur)) &&
+            hc_eq_ci(aria_cur, "page")) {
+            lv_obj_set_style_border_width(box, 2, 0);
+            lv_obj_set_style_border_color(box, lv_color_hex(0xf78166), 0);
+            lv_obj_set_style_border_opa(box, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_side(box, LV_BORDER_SIDE_BOTTOM, 0);
+        }
         char element_id[64];
         char onclick[8];
         extract_attr(attrs, alen, "id", element_id, sizeof(element_id));
@@ -2722,7 +2904,14 @@ static void handle_open_tag(html_parser_t *p, const char *tag, const char *attrs
         extract_attr(attrs, alen, "onclick", onclick, sizeof(onclick));
         bool has_dom_id = nd->id[0] && onclick[0] && p->pm->opts.on_dom_event &&
                           !is_inline_tag(tag);
-        if (!self_closing && (style_needs_box(&p->style[d], tag, parent_st) ||
+        const css_style_t *box_parent_st = parent_st;
+        for (int pd = d - 1; pd >= 0; pd--) {
+            if (p->style[pd].display != CSS_DISP_CONTENTS) {
+                box_parent_st = &p->style[pd];
+                break;
+            }
+        }
+        if (!self_closing && (style_needs_box(&p->style[d], tag, box_parent_st) ||
                               has_dom_id) &&
             strcmp(tag, "body") != 0 && strcmp(tag, "html") != 0) {
             create_container_box(p, tag, &p->style[d], attrs, alen, html, html_len, tag_end, &p->box[d]);
@@ -2745,6 +2934,14 @@ static int html_measure_intrinsic_flex_width(lv_obj_t *obj, unsigned depth) {
     if (lv_obj_check_type(obj, &lv_spangroup_class)) {
         uint32_t text_width = lv_spangroup_get_expand_width(obj, 0);
         return text_width > INT32_MAX ? INT32_MAX : (int)text_width;
+    }
+
+    if (depth > 0) {
+        lv_coord_t style_w = lv_obj_get_style_width(obj, LV_PART_MAIN);
+        if (style_w > 0 && style_w != LV_SIZE_CONTENT &&
+            !LV_COORD_IS_PCT(style_w)) {
+            return (int)style_w;
+        }
     }
 
     uint32_t child_count = lv_obj_get_child_cnt(obj);
@@ -3302,6 +3499,7 @@ void html_view_render(lv_obj_t *container, const char *content, size_t len,
 
     int vw = (opts && opts->viewport_w > 120) ? opts->viewport_w
            : (lv_obj_get_width(container) > 120 ? (int)lv_obj_get_width(container) - 20 : 880);
+    int media_vw = (vw >= 760 && vw < 1080) ? 1080 : vw;
 
     bool is_html = hc_contains_ci(content, "<html") || hc_contains_ci(content, "<body") ||
                    hc_contains_ci(content, "<div") || hc_contains_ci(content, "<p") ||
@@ -3327,7 +3525,7 @@ void html_view_render(lv_obj_t *container, const char *content, size_t len,
 
     html_page_mem_t *pm = (html_page_mem_t *)kmalloc(sizeof(html_page_mem_t));
     html_parser_t *p = (html_parser_t *)kmalloc(sizeof(html_parser_t));
-    html_stylesheet_t *ss = html_css_create(vw);
+    html_stylesheet_t *ss = html_css_create(media_vw);
     if (!pm || !p || !ss) {
         if (pm) kfree(pm);
         if (p) kfree(p);
@@ -3502,6 +3700,29 @@ void html_view_render(lv_obj_t *container, const char *content, size_t len,
         /* Jump right past script/style raw bodies quickly */
         if (!closing && (strcmp(tname, "script") == 0 || strcmp(tname, "style") == 0 ||
                          strcmp(tname, "svg") == 0)) {
+            if (strcmp(tname, "svg") == 0 && p->hidden_depth == 0) {
+                char scls[128];
+                extract_attr(attrs, alen, "class", scls, sizeof(scls));
+                if (scls[0]) {
+                    if (hc_contains_ci(scls, "octicon-file-directory")) {
+                        hc_copy(LV_SYMBOL_DIRECTORY " ", p->raw_buf, sizeof(p->raw_buf));
+                        p->raw_len = strlen(p->raw_buf);
+                        flush_text_buffer(p);
+                    } else if (hc_contains_ci(scls, "octicon-file")) {
+                        hc_copy(LV_SYMBOL_FILE " ", p->raw_buf, sizeof(p->raw_buf));
+                        p->raw_len = strlen(p->raw_buf);
+                        flush_text_buffer(p);
+                    } else if (hc_contains_ci(scls, "octicon-git-branch") || hc_contains_ci(scls, "octicon-repo-forked")) {
+                        hc_copy(LV_SYMBOL_SHUFFLE " ", p->raw_buf, sizeof(p->raw_buf));
+                        p->raw_len = strlen(p->raw_buf);
+                        flush_text_buffer(p);
+                    } else if (hc_contains_ci(scls, "octicon-check")) {
+                        hc_copy(LV_SYMBOL_OK " ", p->raw_buf, sizeof(p->raw_buf));
+                        p->raw_len = strlen(p->raw_buf);
+                        flush_text_buffer(p);
+                    }
+                }
+            }
             i = find_close_tag_pos(content, len, gt + 1, tname);
             continue;
         }

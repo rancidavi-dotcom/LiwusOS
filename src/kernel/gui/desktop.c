@@ -157,7 +157,7 @@ static void init_cursor(void) {
 /* =========================================================================
  * Sistema de Janelas (Arrasto, Minimizar, Maximizar/Restaurar, Fechar)
  * ========================================================================= */
-#define MAX_MANAGED_WINS 8
+#define MAX_MANAGED_WINS 12
 
 typedef struct {
     lv_obj_t *win;
@@ -553,6 +553,16 @@ static lv_obj_t *win_browser = NULL;
 static lv_obj_t *win_pkgmgr = NULL;
 static lv_obj_t *win_installer = NULL;
 static lv_obj_t *win_about = NULL;
+static lv_obj_t *win_settings = NULL;
+static lv_obj_t *lbl_settings_network = NULL;
+static lv_obj_t *lbl_settings_status = NULL;
+static lv_obj_t *btn_settings_layout[3];
+static lv_obj_t *dd_settings_resolution = NULL;
+static lv_obj_t *lbl_settings_display = NULL;
+static vga_display_mode_t g_settings_modes[VGA_DISPLAY_MAX_MODES];
+static int g_settings_mode_count = 0;
+static char g_settings_mode_options[1024];
+static void desktop_resize_for_display(void);
 
 static lv_obj_t *lbl_inst_disk = NULL;
 static lv_obj_t *ta_inst_hostname = NULL;
@@ -748,6 +758,7 @@ static void create_browser_window(void);
 static void create_pkgmgr_window(void);
 static void create_installer_window(void);
 static void create_about_window(void);
+static void create_settings_window(void);
 static void pkgmgr_refresh_list(void);
 static void pkgmgr_refresh_sysupdate_ui(void);
 static void pkgmgr_set_status(const char *msg, uint32_t color_hex);
@@ -818,6 +829,128 @@ static void win_close_event_cb(lv_event_t *e) {
             if (lbl_calc_display) lv_label_set_text(lbl_calc_display, g_calc_str);
         }
     }
+}
+
+static void settings_refresh_choices(void) {
+    static const int layout_ids[] = { KB_LAYOUT_ABNT2, KB_LAYOUT_US, KB_LAYOUT_US_INTL };
+    for (int i = 0; i < 3; i++) {
+        if (!btn_settings_layout[i]) continue;
+        bool active = (int)keyboard_get_layout() == layout_ids[i];
+        lv_obj_set_style_bg_color(btn_settings_layout[i],
+                                  lv_color_hex(active ? 0x215d80 : BZ_BUTTON), 0);
+        lv_obj_set_style_border_color(btn_settings_layout[i],
+                                      lv_color_hex(active ? BZ_ACCENT : BZ_BUTTON_LINE), 0);
+    }
+}
+
+static void settings_load_display_modes(void) {
+    g_settings_mode_count = vga_display_modes(g_settings_modes, VGA_DISPLAY_MAX_MODES);
+    if (g_settings_mode_count < 0) g_settings_mode_count = 0;
+    g_settings_mode_options[0] = '\0';
+    size_t used = 0;
+    for (int i = 0; i < g_settings_mode_count; i++) {
+        int n = lv_snprintf(g_settings_mode_options + used,
+                            sizeof(g_settings_mode_options) - used,
+                            "%s%u x %u", i ? "\n" : "",
+                            (unsigned)g_settings_modes[i].width,
+                            (unsigned)g_settings_modes[i].height);
+        if (n < 0 || (size_t)n >= sizeof(g_settings_mode_options) - used) break;
+        used += (size_t)n;
+    }
+    if (dd_settings_resolution) {
+        if (used) lv_dropdown_set_options_static(dd_settings_resolution, g_settings_mode_options);
+        else lv_dropdown_set_options_static(dd_settings_resolution, "Nenhum modo EDID disponivel");
+        for (int i = 0; i < g_settings_mode_count; i++) {
+            if (g_settings_modes[i].width == vga_get_fb_width() &&
+                g_settings_modes[i].height == vga_get_fb_height()) {
+                lv_dropdown_set_selected(dd_settings_resolution, (uint16_t)i);
+                break;
+            }
+        }
+    }
+    if (lbl_settings_display) {
+        uint16_t vendor_id = 0, device_id = 0;
+        bool has_pci_adapter = vga_display_adapter_ids(&vendor_id, &device_id) != 0;
+        if (g_settings_mode_count > 0) {
+            const vga_display_mode_t *low = &g_settings_modes[0];
+            const vga_display_mode_t *high = &g_settings_modes[g_settings_mode_count - 1];
+            lv_label_set_text_fmt(lbl_settings_display,
+                "PCI %04X:%04X | Atual: %u x %u | EDID: %u x %u ate %u x %u",
+                (unsigned)vendor_id, (unsigned)device_id,
+                (unsigned)vga_get_fb_width(), (unsigned)vga_get_fb_height(),
+                (unsigned)low->width, (unsigned)low->height,
+                (unsigned)high->width, (unsigned)high->height);
+        } else {
+            if (has_pci_adapter) {
+                lv_label_set_text_fmt(lbl_settings_display,
+                    "PCI %04X:%04X | Atual: %u x %u | Sem driver de troca ao vivo",
+                    (unsigned)vendor_id, (unsigned)device_id,
+                    (unsigned)vga_get_fb_width(), (unsigned)vga_get_fb_height());
+            } else {
+                lv_label_set_text_fmt(lbl_settings_display,
+                    "Adaptador PCI indisponivel | Atual: %u x %u",
+                    (unsigned)vga_get_fb_width(), (unsigned)vga_get_fb_height());
+            }
+        }
+    }
+}
+
+static void settings_refresh_network(void) {
+    if (!lbl_settings_network) return;
+    char ip[16] = "0.0.0.0", mask[16] = "0.0.0.0", gateway[16] = "0.0.0.0";
+    uint32_t rx = 0, tx = 0;
+    bool has_ip = net_has_ip();
+    if (has_ip) net_get_ip_strings(ip, mask, gateway);
+    net_get_packet_counts(&rx, &tx);
+    lv_label_set_text_fmt(lbl_settings_network,
+        "Adaptador: %s\nLink: %s\nIP: %s\nGateway: %s\nPacotes: RX %u / TX %u",
+        net_get_driver_name() ? net_get_driver_name() : "indisponivel",
+        net_get_link_status() ? "ativo" : "sem link",
+        has_ip ? ip : "aguardando DHCP", has_ip ? gateway : "--",
+        (unsigned)rx, (unsigned)tx);
+}
+
+static void settings_layout_cb(lv_event_t *e) {
+    int selected = (int)(intptr_t)lv_event_get_user_data(e);
+    static const keyboard_layout_t layouts[] = {
+        KB_LAYOUT_ABNT2, KB_LAYOUT_US, KB_LAYOUT_US_INTL
+    };
+    static const char *saved[] = { "ABNT2\n", "US\n", "US_INTL\n" };
+    if (selected < 0 || selected >= 3) return;
+    keyboard_set_layout(layouts[selected]);
+    sdfs_create_dir("/etc");
+    uint32_t saved_len = (uint32_t)strlen(saved[selected]);
+    if (sdfs_write_file("/etc/keyboard.conf", (uint8_t *)saved[selected], saved_len) == saved_len) {
+        if (lbl_settings_status) lv_label_set_text(lbl_settings_status,
+            "Layout aplicado agora e salvo para os proximos boots.");
+    } else if (lbl_settings_status) {
+        lv_label_set_text(lbl_settings_status, "Layout aplicado; nao foi possivel salvar no disco.");
+    }
+    settings_refresh_choices();
+}
+
+static void settings_resolution_cb(lv_event_t *e) {
+    (void)e;
+    if (g_settings_mode_count <= 0 || !dd_settings_resolution) return;
+    uint16_t selected = lv_dropdown_get_selected(dd_settings_resolution);
+    if (selected >= (uint16_t)g_settings_mode_count) return;
+    vga_display_mode_t mode = g_settings_modes[selected];
+    int result = lvgl_port_set_resolution(mode.width, mode.height);
+    if (result == 0) {
+        desktop_resize_for_display();
+        if (lbl_settings_status) lv_label_set_text_fmt(lbl_settings_status,
+            "Resolucao alterada agora para %u x %u.",
+            (unsigned)mode.width, (unsigned)mode.height);
+        settings_load_display_modes();
+    } else if (lbl_settings_status) {
+        lv_label_set_text(lbl_settings_status,
+            "O adaptador recusou este modo; a resolucao atual foi mantida.");
+    }
+}
+
+static void settings_refresh_cb(lv_event_t *e) {
+    (void)e;
+    settings_refresh_network();
 }
 
 static void bz_style_title_button(lv_obj_t *btn, bool is_close) {
@@ -982,6 +1115,17 @@ static void dock_snes_cb(lv_event_t *e) {
     run_snes_app(0, NULL);
 }
 
+static void dock_settings_cb(lv_event_t *e) {
+    (void)e;
+    lv_obj_clear_flag(win_settings, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(win_settings);
+    set_browser_url_focus(false);
+    set_pkg_input_focus(false);
+    set_inst_host_focus(false);
+    settings_refresh_choices();
+    settings_refresh_network();
+}
+
 static void dock_about_cb(lv_event_t *e) {
     (void)e;
     lv_obj_clear_flag(win_about, LV_OBJ_FLAG_HIDDEN);
@@ -1077,6 +1221,126 @@ static void create_sysmon_window(void) {
     lv_obj_set_style_bg_color(bar_ram, lv_color_hex(BZ_ACCENT), LV_PART_INDICATOR);
 
     lv_obj_add_flag(win_sysmon, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void create_settings_window(void) {
+    if (win_settings) return;
+    uint32_t sw = desktop_screen_w();
+    uint32_t sh = desktop_screen_h();
+    lv_coord_t ww = sw >= 1100 ? 700 : 660;
+    lv_coord_t wh = 450;
+    lv_coord_t x = ((lv_coord_t)sw - ww) / 2;
+    lv_coord_t y = ((lv_coord_t)sh - PANEL_H - wh) / 2;
+    if (x < 0) x = 8;
+    if (y < 0) y = 8;
+    win_settings = lv_win_create(lv_scr_act(), WIN_HEADER_H);
+    setup_window(win_settings, ww, wh, x, y);
+    add_window_controls(win_settings, "Settings - Configuracoes do Sistema");
+
+    lv_obj_t *content = lv_win_get_content(win_settings);
+    lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(content, 0);
+    lv_obj_set_style_pad_all(content, 14, 0);
+
+    lv_obj_t *intro = lv_label_create(content);
+    lv_label_set_text(intro, "Personalize o LiwusOS. O layout do teclado muda imediatamente.");
+    lv_obj_align(intro, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    lv_obj_t *keyboard_card = lv_obj_create(content);
+    lv_obj_set_size(keyboard_card, 300, 160);
+    lv_obj_set_pos(keyboard_card, 0, 32);
+    lv_obj_clear_flag(keyboard_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(keyboard_card, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_bg_opa(keyboard_card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(keyboard_card, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_radius(keyboard_card, 4, 0);
+    lv_obj_set_style_pad_all(keyboard_card, 12, 0);
+    lv_obj_t *kb_title = lv_label_create(keyboard_card);
+    lv_label_set_text(kb_title, "TECLADO");
+    lv_obj_set_style_text_color(kb_title, lv_color_hex(BZ_ACCENT), 0);
+    lv_obj_align(kb_title, LV_ALIGN_TOP_LEFT, 0, 0);
+    static const char *layout_names[] = { "ABNT2 - Brasil", "US - QWERTY", "US Internacional" };
+    for (int i = 0; i < 3; i++) {
+        btn_settings_layout[i] = lv_btn_create(keyboard_card);
+        lv_obj_set_size(btn_settings_layout[i], 260, 30);
+        lv_obj_set_pos(btn_settings_layout[i], 0, 27 + i * 36);
+        bz_style_button(btn_settings_layout[i]);
+        lv_obj_t *label = lv_label_create(btn_settings_layout[i]);
+        lv_label_set_text(label, layout_names[i]);
+        lv_obj_center(label);
+        lv_obj_add_event_cb(btn_settings_layout[i], settings_layout_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    }
+
+    lv_obj_t *network_card = lv_obj_create(content);
+    lv_obj_set_size(network_card, 300, 160);
+    lv_obj_set_pos(network_card, 316, 32);
+    lv_obj_clear_flag(network_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(network_card, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_bg_opa(network_card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(network_card, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_radius(network_card, 4, 0);
+    lv_obj_set_style_pad_all(network_card, 12, 0);
+    lv_obj_t *network_title = lv_label_create(network_card);
+    lv_label_set_text(network_title, "REDE");
+    lv_obj_set_style_text_color(network_title, lv_color_hex(BZ_ACCENT), 0);
+    lv_obj_align(network_title, LV_ALIGN_TOP_LEFT, 0, 0);
+    lbl_settings_network = lv_label_create(network_card);
+    lv_obj_set_width(lbl_settings_network, 270);
+    lv_label_set_long_mode(lbl_settings_network, LV_LABEL_LONG_WRAP);
+    lv_obj_align(lbl_settings_network, LV_ALIGN_TOP_LEFT, 0, 27);
+    lv_obj_t *refresh = lv_btn_create(network_card);
+    lv_obj_set_size(refresh, 100, 26);
+    lv_obj_align(refresh, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    bz_style_button(refresh);
+    lv_obj_t *refresh_label = lv_label_create(refresh);
+    lv_label_set_text(refresh_label, "Atualizar");
+    lv_obj_center(refresh_label);
+    lv_obj_add_event_cb(refresh, settings_refresh_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *display_card = lv_obj_create(content);
+    lv_obj_set_size(display_card, 616, 144);
+    lv_obj_set_pos(display_card, 0, 202);
+    lv_obj_clear_flag(display_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(display_card, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_bg_opa(display_card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(display_card, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_radius(display_card, 4, 0);
+    lv_obj_set_style_pad_all(display_card, 12, 0);
+    lv_obj_t *display_title = lv_label_create(display_card);
+    lv_label_set_text(display_title, "RESOLUCAO DO MONITOR");
+    lv_obj_set_style_text_color(display_title, lv_color_hex(BZ_ACCENT), 0);
+    lv_obj_align(display_title, LV_ALIGN_TOP_LEFT, 0, 0);
+    lbl_settings_display = lv_label_create(display_card);
+    lv_obj_set_width(lbl_settings_display, 590);
+    lv_obj_align(lbl_settings_display, LV_ALIGN_TOP_LEFT, 0, 24);
+    dd_settings_resolution = lv_dropdown_create(display_card);
+    lv_obj_set_size(dd_settings_resolution, 300, 34);
+    lv_obj_set_pos(dd_settings_resolution, 0, 49);
+    bz_style_button(dd_settings_resolution);
+    lv_dropdown_set_options_static(dd_settings_resolution, "Lendo EDID do monitor...");
+    lv_obj_t *apply_mode = lv_btn_create(display_card);
+    lv_obj_set_size(apply_mode, 150, 34);
+    lv_obj_set_pos(apply_mode, 320, 49);
+    bz_style_button(apply_mode);
+    lv_obj_t *apply_label = lv_label_create(apply_mode);
+    lv_label_set_text(apply_label, "Aplicar agora");
+    lv_obj_center(apply_label);
+    lv_obj_add_event_cb(apply_mode, settings_resolution_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *display_note = lv_label_create(display_card);
+    lv_label_set_text(display_note, "Modos lidos do EDID; a alteracao e feita ao vivo.");
+    lv_obj_set_style_text_color(display_note, lv_color_hex(BZ_TEXT_DIM), 0);
+    lv_obj_align(display_note, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+    lbl_settings_status = lv_label_create(content);
+    lv_obj_set_width(lbl_settings_status, lv_pct(100));
+    lv_label_set_long_mode(lbl_settings_status, LV_LABEL_LONG_DOT);
+    lv_label_set_text(lbl_settings_status, "Escolha uma resolucao anunciada pelo monitor e aplique.");
+    lv_obj_align(lbl_settings_status, LV_ALIGN_TOP_LEFT, 0, 356);
+    lv_obj_set_style_text_color(lbl_settings_status, lv_color_hex(BZ_TEXT_DIM), 0);
+    settings_refresh_choices();
+    settings_load_display_modes();
+    settings_refresh_network();
+    lv_obj_add_flag(win_settings, LV_OBJ_FLAG_HIDDEN);
 }
 
 /* =========================================================================
@@ -1710,7 +1974,7 @@ static uint8_t *browser_execute_scripts(const uint8_t *source, size_t length,
 static void browser_render_document(const uint8_t *body, size_t size) {
     if (!body || !obj_browser_view) return;
     char page_title[96];
-    int vw = (int)lv_obj_get_width(obj_browser_view) - 24;
+    int vw = (int)lv_obj_get_width(obj_browser_view);
     if (vw < 300) vw = 760;
 
     html_view_opts_t opts;
@@ -3578,6 +3842,7 @@ static task_item_t g_task_items[] = {
     { LV_SYMBOL_PLUS,     "Calc",     dock_calc_cb,      &win_calc,      NULL, NULL, -1, false },
     { LV_SYMBOL_PLAY,     "DOOM",     dock_doom_cb,      NULL,           NULL, NULL, -1, false },
     { LV_SYMBOL_PLAY,     "SNES",     dock_snes_cb,      NULL,           NULL, NULL, -1, false },
+    { LV_SYMBOL_SETTINGS, "Settings", dock_settings_cb,  &win_settings, NULL, NULL, -1, false },
 };
 #define TASK_ITEM_COUNT ((int)(sizeof(g_task_items) / sizeof(g_task_items[0])))
 
@@ -3609,7 +3874,7 @@ static void desktop_bg_press_cb(lv_event_t *e) {
 
 /* Janela visivel mais ao topo (a "janela ativa"). */
 static lv_obj_t *desktop_active_window(void) {
-    lv_obj_t *wins[] = { win_terminal, win_browser, win_pkgmgr, win_installer, win_sysmon, win_calc, win_about };
+    lv_obj_t *wins[] = { win_terminal, win_browser, win_pkgmgr, win_installer, win_sysmon, win_calc, win_about, win_settings };
     lv_obj_t *top = NULL;
     int32_t top_idx = -1;
     for (size_t i = 0; i < sizeof(wins) / sizeof(wins[0]); i++) {
@@ -3619,6 +3884,53 @@ static lv_obj_t *desktop_active_window(void) {
         if (idx > top_idx) { top_idx = idx; top = w; }
     }
     return top;
+}
+
+static void desktop_resize_for_display(void) {
+    uint32_t sw = desktop_screen_w(), sh = desktop_screen_h();
+    if (g_taskbar) {
+        lv_obj_set_size(g_taskbar, (lv_coord_t)sw, PANEL_H);
+        lv_obj_set_pos(g_taskbar, 0, (lv_coord_t)(sh - PANEL_H));
+        int visible = 0;
+        for (int i = 0; i < TASK_ITEM_COUNT; i++)
+            if (!g_task_items[i].live_only || is_live_mode) visible++;
+        int task_w = visible ? ((int)sw - 390) / visible : 112;
+        if (task_w > 112) task_w = 112;
+        if (task_w < 42) task_w = 42;
+        for (int i = 0; i < TASK_ITEM_COUNT; i++) {
+            task_item_t *it = &g_task_items[i];
+            if (!it->btn) continue;
+            lv_obj_set_width(it->btn, (lv_coord_t)task_w);
+            if (it->indicator) lv_obj_set_width(it->indicator, (lv_coord_t)(task_w - 10));
+        }
+    }
+    if (g_start_menu) {
+        lv_coord_t mh = is_live_mode ? 514 : 466;
+        if (mh > (lv_coord_t)sh - PANEL_H) mh = (lv_coord_t)sh - PANEL_H;
+        lv_obj_set_size(g_start_menu, 320, mh);
+        lv_obj_set_pos(g_start_menu, 0, (lv_coord_t)sh - PANEL_H - mh);
+    }
+    lv_obj_t *wins[] = { win_terminal, win_browser, win_pkgmgr, win_installer,
+                         win_sysmon, win_calc, win_about, win_settings };
+    for (size_t i = 0; i < sizeof(wins) / sizeof(wins[0]); i++) {
+        lv_obj_t *win = wins[i];
+        if (!win) continue;
+        lv_coord_t w = lv_obj_get_width(win), h = lv_obj_get_height(win);
+        if (w > (lv_coord_t)sw) { w = (lv_coord_t)sw; lv_obj_set_width(win, w); }
+        if (h > (lv_coord_t)sh - PANEL_H) { h = (lv_coord_t)sh - PANEL_H; lv_obj_set_height(win, h); }
+        lv_coord_t x = lv_obj_get_x(win), y = lv_obj_get_y(win);
+        if (win == win_settings) {
+            x = ((lv_coord_t)sw - w) / 2;
+            y = ((lv_coord_t)sh - PANEL_H - h) / 2;
+        }
+        if (x + w > (lv_coord_t)sw) x = (lv_coord_t)sw - w;
+        if (y + h > (lv_coord_t)sh - PANEL_H) y = (lv_coord_t)sh - PANEL_H - h;
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        lv_obj_set_pos(win, x, y);
+    }
+    lv_obj_update_layout(lv_scr_act());
+    lv_refr_now(NULL);
 }
 
 static void task_btn_click_cb(lv_event_t *e) {
@@ -3927,6 +4239,7 @@ static void create_start_menu(void) {
     menu_add_entry(list, LV_SYMBOL_PLUS, "Calculadora", "Operacoes basicas", menu_item_cb, (void *)dock_calc_cb);
     menu_add_entry(list, LV_SYMBOL_PLAY, "DOOM", "Shareware (id Software, 1993)", menu_item_cb, (void *)dock_doom_cb);
     menu_add_entry(list, LV_SYMBOL_PLAY, "Emulador de SNES", "Jogar ROMs proprias de Super Nintendo", menu_item_cb, (void *)dock_snes_cb);
+    menu_add_entry(list, LV_SYMBOL_SETTINGS, "Settings", "Teclado, resolucao e status de rede", menu_item_cb, (void *)dock_settings_cb);
     menu_add_entry(list, LV_SYMBOL_FILE, "Sobre o LiwusOS", NULL, menu_item_cb, (void *)dock_about_cb);
 
     /* Rodape com energia */
@@ -3986,6 +4299,7 @@ void desktop_init(void) {
     /* Pre-cria as janelas essenciais */
     create_terminal_window();
     create_sysmon_window();
+    create_settings_window();
     create_calc_window();
     create_browser_window();
     create_pkgmgr_window();
