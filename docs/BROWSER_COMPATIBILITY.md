@@ -228,8 +228,9 @@ execute; their presence does not imply standards-complete browser behavior:
     character-data mutations with subtree/attribute filters and microtask
     delivery; typed `MutationRecord`, `NodeFilter`, `TreeWalker`, and
     `NodeIterator` surfaces are available for DOM traversal. `ResizeObserver`/
-    `IntersectionObserver` provide typed entry objects and bounded initial
-    observations for layout libraries. `matchMedia()` returns an event-capable
+    `IntersectionObserver` provide typed entry objects, thresholds/rootMargin,
+    and bounded re-notification on viewport scroll/resize for lazy-content
+    loaders. `matchMedia()` returns an event-capable
     `MediaQueryList` with legacy listener aliases and bounded composition of
     `not`, `and`, and comma-separated alternatives. `onchange` receives a typed
     `MediaQueryListEvent` when the bounded viewport changes through

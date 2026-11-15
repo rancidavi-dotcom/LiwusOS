@@ -386,7 +386,7 @@ int test_ring3_processes(void) {
             "const iter=document.createNodeIterator(document.body,NodeFilter.SHOW_ELEMENT);if(!iter.nextNode())throw new Error('NodeIterator failed');"
             "const mr=new MutationRecord({type:'attributes',target:output,attributeName:'data-x'});if(mr.type!=='attributes'||mr.target!==output)throw new Error('MutationRecord failed');"
             "let resizeSeen=false;new ResizeObserver(function(entries){resizeSeen=entries.length===1&&entries[0] instanceof ResizeObserverEntry;}).observe(document.body);"
-            "let intersectSeen=false;new IntersectionObserver(function(entries){intersectSeen=entries.length===1&&entries[0] instanceof IntersectionObserverEntry;}).observe(document.body);"
+            "let intersectSeen=false,intersectionTicks=0;const intersectionObserver=new IntersectionObserver(function(entries){intersectSeen=entries.length===1&&entries[0] instanceof IntersectionObserverEntry;intersectionTicks++;},{rootMargin:'4px',threshold:[0,1]});intersectionObserver.observe(document.body);scrollTo(1,2);if(!intersectSeen||intersectionTicks!==1||intersectionObserver.rootMargin!=='4px'||intersectionObserver.thresholds.length!==2)throw new Error('IntersectionObserver update failed');intersectionObserver.disconnect();"
             "const deferred=Promise.withResolvers();deferred.resolve(7);"
             "deferred.promise.then(function(v){if(v!==7)throw new Error('Promise.withResolvers failed');});"
             "const anim=picked.animate([{opacity:0},{opacity:1}],{duration:1});"
