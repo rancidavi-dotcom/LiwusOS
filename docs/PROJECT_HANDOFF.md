@@ -14,7 +14,10 @@ LiwusOS is an independent, bare-metal x86_64 OS with its own kernel, architectur
   the ring-3 shell. See `docs/HARDWARE_PC_H61.md`.
 - **Physical graphics:** GPU model/PCI ID and display connector are not yet
   recorded. Settings now reports the PCI adapter; its live modesetting backend
-  supports QEMU Standard VGA only. Do not claim physical resolution switching.
+  supports QEMU Standard VGA only. Boot media now asks GRUB to try common
+  high-resolution modes in descending order before falling back to `auto`;
+  physical mode selection still depends on firmware/GPU support and is not a
+  generic kernel KMS driver.
 - **Current product:** LVGL desktop, LiwusWeb, networking, HDA, native shell,
   Settings, SDK apps and SNES emulator are in the current build. The README is
   the feature summary; the browser and hardware docs describe limitations.

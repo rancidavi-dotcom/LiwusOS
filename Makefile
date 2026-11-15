@@ -594,7 +594,7 @@ $(USER_EDITOR_ELF): $(OBJ_DIR)/programs/user_editor/main.o $(OBJ_DIR)/programs/u
 $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) $(NATIVE_UTIL_LXES) $(PKG_REPO_LXES) $(KILO_LXE) $(DOOM_LXE) $(SNES_LXE) $(TCC_LXE) $(C_DEMO_LXE) assets/readme.txt assets/doom1.wad
 	@mkdir -p repo build/hd_isodir/boot/grub
 	cp $(KERNEL_BIN) build/hd_isodir/boot/kernel.bin
-	printf 'set timeout=1\nset default=0\ninsmod all_video\ninsmod gfxterm\ninsmod vbe\ninsmod vga\nset gfxmode=auto\nset gfxpayload=keep\nterminal_output gfxterm\nmenuentry "LiwusOS x86_64 (Instalado no HD)" {\n\tset gfxpayload=keep\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\n' > build/hd_isodir/boot/grub/grub.cfg
+	printf 'set timeout=1\nset default=0\ninsmod all_video\ninsmod gfxterm\ninsmod vbe\ninsmod vga\nset gfxmode=3840x2160,2560x1440,1920x1080,1920x1200,1600x900,1366x768,1280x720,1024x768,auto\nset gfxpayload=keep\nterminal_output gfxterm\nmenuentry "LiwusOS x86_64 (Instalado no HD)" {\n\tset gfxpayload=keep\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\n' > build/hd_isodir/boot/grub/grub.cfg
 	$(GRUB) -d /usr/lib/grub/i386-pc --fonts="" --locales="" --themes="" -o build/hd_boot.img build/hd_isodir
 	tar -cf initrd.tar -C repo . --format=ustar
 	tar -rf initrd.tar --format=ustar --transform='s|hd_boot.img|boot/hd_boot.img|' -C build hd_boot.img
