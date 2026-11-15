@@ -45,10 +45,10 @@ TEST_ISO_IMAGE = liwusos-test.iso
 # files. User-editable examples opt into UID/GID 1000 on their tar entries.
 export TAR_OPTIONS := --owner=0 --group=0 --numeric-owner
 UPDATE_FEED_DIR ?= build/update-feed
-UPDATE_VERSION ?= 2.2.21
+UPDATE_VERSION ?= 2.2.32
 UPDATE_DATE ?= 2026-11-14
 UPDATE_BASE_URL ?= https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo
-UPDATE_NOTES ?= LiwusOS 2.2.21: modo maximo via EDID sem resolucao fixa; Settings com volume HDA persistente; correcao OTA e shell
+UPDATE_NOTES ?= LiwusOS 2.2.32: player MP3 nativo Ring-3, saida PCM real via HDA e deteccao de containers MP4
 LINUX_STATIC_TEST_DEP =
 LINUX_STATIC_EXPECT ?= Hello from an unmodified static GNU/Linux ELF
 ifneq ($(strip $(LINUX_STATIC_ELF)),)

@@ -67,7 +67,7 @@ def main() -> None:
         (
             f"VERSION={args.version}",
             f"DATE={args.date}",
-            "PACKAGES=kilo,c_demo,neofetch,sysbench",
+            "PACKAGES=kilo,c_demo,neofetch,sysbench,play",
             f"NOTES={args.notes}",
             f"BOOT_IMAGE_URL={base}/hd_boot.img?v={args.version}",
             f"BOOT_IMAGE_SIZE={boot_size}",
