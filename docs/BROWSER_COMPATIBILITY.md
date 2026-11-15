@@ -286,7 +286,10 @@ execute; their presence does not imply standards-complete browser behavior:
     detection and teardown paths do not crash. WebSocket/EventSource transport
     is intentionally not implemented yet; connections close with an explicit
     error instead of pretending to be connected.
-  - Performance: `performance.now()`, `timeOrigin`, `mark()`, `measure()`.
+  - Performance: relative `performance.now()`, `timeOrigin`, typed-in-shape
+    `mark()`/`measure()` entries, `getEntries*()` and mark/measure clearing.
+    The timeline is bounded to the page lifetime and does not expose kernel
+    profiling or resource timing beyond entries created by the page.
   - Locale helpers: bounded fallbacks for `Intl.PluralRules`, `Intl.ListFormat`,
     `Intl.Collator`, and `Intl.Segmenter` when the QuickJS build does not
     provide them. Segmenter output is limited to word/grapheme boundaries and
