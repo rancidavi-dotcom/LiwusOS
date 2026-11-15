@@ -246,6 +246,7 @@ int test_ring3_processes(void) {
             "const attrs=output.attributes;if(!(attrs instanceof NamedNodeMap)||attrs.getNamedItem('data-label').value!=='A & B'||attrs.item(0)===null)throw new Error('NamedNodeMap failed');"
             "const attrNode=output.getAttributeNode('data-label');if(!attrNode||attrNode.value!=='A & B'||output.getAttributeNodeNS(null,'data-label').value!=='A & B')throw new Error('Attr node failed');"
             "let pathSeen=false;output.addEventListener('path',function(ev){const path=ev.composedPath();pathSeen=path[0]===output;});output.dispatchEvent(new Event('path',{bubbles:true}));if(!pathSeen)throw new Error('Event composedPath failed');"
+            "const assocForm=document.createElement('form');const assocControl=document.createElement('input');assocControl.name='q';assocForm.appendChild(assocControl);document.body.appendChild(assocForm);if(assocForm.elements.length!==1||assocControl.form!==assocForm||assocForm.elements.namedItem('q')!==assocControl)throw new Error('form control association failed');"
             "document.title='Script title';"
             "output.textContent='mutated <&';"
             "if(output.textContent!=='mutated <&')"

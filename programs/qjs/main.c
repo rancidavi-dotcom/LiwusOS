@@ -1109,6 +1109,7 @@ static const char qjs_web_env_bootstrap[] =
     "        });\n"
     "      }\n"
     "    });\n"
+    "    if (!Object.getOwnPropertyDescriptor(proto, 'form')) Object.defineProperty(proto, 'form', { get: function() { var node = this.parentNode; while (node) { if (String(node.tagName || '').toUpperCase() === 'FORM') return node; node = node.parentNode; } return null; }, configurable: true });\n"
     "\n"
     "    var boolAttrs = ['disabled', 'checked', 'hidden', 'required', 'readOnly', 'multiple', 'selected', 'open'];\n"
     "    boolAttrs.forEach(function(prop) {\n"
