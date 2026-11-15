@@ -1,10 +1,10 @@
-VERSION=2.2.37
+VERSION=2.2.38
 DATE=2026-11-15
 PACKAGES=kilo,c_demo,neofetch,sysbench,play,tube
-NOTES=LiwusOS 2.2.37: Suporte a resolucoes nativas de tela (Full HD 1920x1080 / 1600x900 / 1366x768) no HD/Live e travamento de mouse (pointer lock) no Craft para rotacao 360 livre da camera
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.37
+NOTES=LiwusOS 2.2.38: Correcao definitiva do sensor de mouse do Craft (rotacao livre da camera 360) e selecao de resolucao nativa 1080p/1366p no GRUB e instalador HD
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.38
 BOOT_IMAGE_SIZE=5388288
-BOOT_IMAGE_CRC32=04d5dc7a
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.37
+BOOT_IMAGE_CRC32=f560076b
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.38
 SYSTEM_ARCHIVE_SIZE=16906240
-SYSTEM_ARCHIVE_CRC32=40f0d2bc
+SYSTEM_ARCHIVE_CRC32=6196e97f
