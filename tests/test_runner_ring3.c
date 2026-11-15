@@ -295,6 +295,7 @@ int test_ring3_processes(void) {
             "if(typeof new Blob(['x']).stream!=='function'||typeof new Blob(['x']).bytes!=='function')throw new Error('blob streams failed');"
             "const up=new URLPattern('https://*.example.test/*');if(!up.test('https://www.example.test/repo')||up.test('https://other.test/repo')||!up.exec('https://www.example.test/repo'))throw new Error('URLPattern failed');"
             "const fr=new FileReader();if(fr.readyState!==FileReader.EMPTY||typeof fr.readAsText!=='function')throw new Error('FileReader surface failed');"
+            "let frLoaded=false;fr.onload=function(){frLoaded=fr.result==='hello'&&fr.readyState===FileReader.DONE;};fr.readAsText(new Blob(['hello']));queueMicrotask(function(){if(!frLoaded)throw new Error('FileReader async read failed');});"
             "const rect=new DOMRect(1,2,3,4);if(rect.right!==4||rect.bottom!==6||rect.left!==1||rect.top!==2||!(rect instanceof DOMRectReadOnly))throw new Error('DOMRect failed');"
             "const matrix=new DOMMatrix([1,0,0,1,5,6]);const rotated=matrix.rotate(90);if(matrix.e!==5||matrix.f!==6||rotated.is2D!==true||matrix.inverse().e!==-5||matrix.toFloat32Array().length!==6||matrix.toString().indexOf('matrix(')!==0)throw new Error('DOMMatrix failed');"
             "if(!visualViewport||visualViewport.width!==innerWidth||visualViewport.scale!==1)throw new Error('visualViewport failed');"
