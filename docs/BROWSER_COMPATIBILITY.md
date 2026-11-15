@@ -152,6 +152,9 @@ execute; their presence does not imply standards-complete browser behavior:
     upgrade, connection, disconnection, and observed-attribute callbacks for
     component code; custom-element constructors do not create native renderer
     nodes beyond the existing DOM bridge.
+    `attachInternals()` returns a bounded `ElementInternals`-like object with
+    custom states and validity/form hooks for component feature detection; it
+    does not connect custom elements to a native form submission pipeline.
     Dialog and popover methods (`showModal`, `close`, `showPopover`,
     `hidePopover`, and `togglePopover`) are bounded state/event shims; they do
     not create a separate top-layer compositor surface.
