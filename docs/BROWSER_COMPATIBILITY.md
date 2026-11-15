@@ -244,7 +244,7 @@ execute; their presence does not imply standards-complete browser behavior:
     delivery; typed `MutationRecord`, `NodeFilter`, `TreeWalker`, and
     `NodeIterator` surfaces are available for DOM traversal. `ResizeObserver`/
     `IntersectionObserver` provide typed entry objects, viewport/root geometry,
-    threshold/rootMargin handling, and bounded re-notification on viewport
+    normalized threshold/rootMargin handling, and bounded re-notification on viewport
     scroll/resize for responsive and lazy-content loaders. DOM mutations also
     schedule one coalesced resize notification at the next microtask.
     DOM mutations also schedule one coalesced intersection notification at the
