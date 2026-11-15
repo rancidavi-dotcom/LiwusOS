@@ -269,7 +269,9 @@ execute; their presence does not imply standards-complete browser behavior:
     This does not access the host clipboard or implement OS drag/drop transport.
   - Form and window compatibility: `submit()`, `requestSubmit()`,
     `checkValidity()`, `reportValidity()`, `Promise.withResolvers()`,
-    `window.open()`, and `getSelection()` are available as bounded shims.
+    `window.open()`, bounded same-page `window.postMessage()`/`message` events,
+    and `getSelection()` are available as bounded shims. Opened windows do not
+    create a separate native process or compositor surface.
     Common `on*` DOM handler properties (`onclick`, `oninput`, `onchange`,
     `onsubmit`, focus/keyboard/pointer and clipboard handlers) are wired to the
     native bounded event dispatcher.
