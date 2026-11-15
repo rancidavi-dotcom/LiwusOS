@@ -144,6 +144,9 @@ execute; their presence does not imply standards-complete browser behavior:
     upgrade, connection, disconnection, and observed-attribute callbacks for
     component code; custom-element constructors do not create native renderer
     nodes beyond the existing DOM bridge.
+    Dialog and popover methods (`showModal`, `close`, `showPopover`,
+    `hidePopover`, and `togglePopover`) are bounded state/event shims; they do
+    not create a separate top-layer compositor surface.
   - Streams: bounded `ReadableStream`, `WritableStream`, `TransformStream`,
     `TextEncoderStream`, and `TextDecoderStream` surfaces. `ReadableStream`
     exposes `values()`/`Symbol.asyncIterator` and a resolving `reader.closed`
