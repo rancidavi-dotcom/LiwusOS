@@ -178,8 +178,9 @@ execute; their presence does not imply standards-complete browser behavior:
     delivery; typed `MutationRecord`, `NodeFilter`, `TreeWalker`, and
     `NodeIterator` surfaces are available for DOM traversal. `ResizeObserver`/
     `IntersectionObserver` provide typed entry objects and bounded initial
-    observations for layout libraries. `matchMedia()`
-    returns an event-capable `MediaQueryList` with legacy listener aliases.
+    observations for layout libraries. `matchMedia()` returns an event-capable
+    `MediaQueryList` with legacy listener aliases and bounded composition of
+    `not`, `and`, and comma-separated alternatives.
   - Scheduling and cancellation: `requestIdleCallback()`/
     `cancelIdleCallback()`, `AbortSignal.any()`, `AbortSignal.throwIfAborted()`,
     and `navigator.sendBeacon()` (using the existing fetch bridge) are exposed.
