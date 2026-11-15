@@ -241,7 +241,9 @@ execute; their presence does not imply standards-complete browser behavior:
     threshold/rootMargin handling, and bounded re-notification on viewport
     scroll/resize for responsive and lazy-content loaders. DOM mutations also
     schedule one coalesced resize notification at the next microtask.
-    `matchMedia()` returns an event-capable
+    DOM mutations also schedule one coalesced intersection notification at the
+    next microtask, allowing dynamically inserted lazy-content targets to be
+    observed without a polling loop. `matchMedia()` returns an event-capable
     `MediaQueryList` with legacy listener aliases and bounded composition of
     `not`, `and`, and comma-separated alternatives. `onchange` receives a typed
     `MediaQueryListEvent` when the bounded viewport changes through
