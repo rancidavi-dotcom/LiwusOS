@@ -77,7 +77,8 @@ execute; their presence does not imply standards-complete browser behavior:
   - Comprehensive `console` (`log`, `info`, `warn`, `error`, `debug`, `trace`, `dir`, `table`).
   - Full bounded `EventTarget` interface on `window` and DOM elements (`addEventListener`, `removeEventListener`, `dispatchEvent`), including `once`, `capture`, `passive`, `AbortSignal` removal, and object listeners with `handleEvent()`.
   - Standard event constructors: `Event`, `CustomEvent`, `UIEvent`, `FocusEvent`,
-    `MouseEvent`, `PointerEvent`, `KeyboardEvent`, `InputEvent`, `SubmitEvent`,
+    `MouseEvent`, `PointerEvent`, `WheelEvent`, `KeyboardEvent`, `InputEvent`,
+    `CompositionEvent`, `Touch`, `TouchEvent`, `SubmitEvent`,
     `MessageEvent`, `ProgressEvent`, `ErrorEvent`, `CloseEvent`, `PopStateEvent`,
     `HashChangeEvent`, `ToggleEvent`, and `CommandEvent`. These constructors provide the commonly consumed
     fields and inherit from the corresponding event base; native capture/bubble
