@@ -147,7 +147,8 @@ execute; their presence does not imply standards-complete browser behavior:
     `HTMLLinkElement.supports()` cover common module/preload feature queries;
     image elements expose a resolving `decode()` shim plus bounded
     `currentSrc`, `complete`, `naturalWidth`, and `naturalHeight` metadata
-    derived from the resolved source/declared dimensions. `audio`/`video`
+    derived from the resolved source/declared dimensions; `srcset` density
+    candidates are selected against the bounded viewport/DPR values. `audio`/`video`
     elements expose
     feature-detection, playback-state, and event shims (`play`, `pause`,
     `load`, `canPlayType`, `currentTime`, `requestVideoFrameCallback`, and
