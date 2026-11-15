@@ -143,6 +143,12 @@ execute; their presence does not imply standards-complete browser behavior:
     `FontFaceSet` operations (`add`, `delete`, `has`, `clear`, `forEach`) are
     also available, but no font download or WOFF2 decoding is implemented.
     Codec and media transport are not implemented.
+  - Resource-element reflection: common `script`, `link`, `img`, and media
+    attributes (`src`, `rel`, `as`, `media`, `integrity`, `nonce`, CORS and
+    referrer policy fields, `fetchPriority`, `decoding`, `loading`, plus
+    boolean `async`/`defer`/`noModule` and media playback flags) round-trip
+    through the DOM attribute bridge. This exposes metadata used by loaders;
+    it does not add a second asynchronous fetch scheduler or SRI enforcement.
   - Platform compatibility: bounded `CSS.supports()` (including common
     `selector(...)` feature queries)/`CSS.escape()`,
     `CSS.registerProperty()` for up to 128 validated custom-property
@@ -185,7 +191,7 @@ execute; their presence does not imply standards-complete browser behavior:
     Chromium-compatible UA (`Chrome/120`) so sites do not select legacy or
     text-only fallbacks solely because LiwusWeb is unknown. This is an
     interoperability choice, not a claim of Chromium engine parity.
-  - `fetch(input, init)` returning real Promises, with support for `Headers`, `Request`, and `Response`; pre-aborted and in-flight `AbortSignal` cancellation rejects the JavaScript promise (the bounded native request may still finish in the worker).
+  - `fetch(input, init)` returning real Promises, with support for `Headers`, `Request`, and `Response`; `Request` exposes the commonly probed Fetch metadata (`destination`, `integrity`, `keepalive`, `referrerPolicy`, `duplex`, `priority`, and `isHistoryNavigation`) and preserves it through `clone()`. Pre-aborted and in-flight `AbortSignal` cancellation rejects the JavaScript promise (the bounded native request may still finish in the worker).
     The browser bridge forwards the bounded request method, sanitized custom
     headers, and up to 2 KiB of an in-memory body to the native HTTP client;
     this enables small form/API requests while retaining an explicit size
