@@ -239,7 +239,8 @@ execute; their presence does not imply standards-complete browser behavior:
     `FileReader` supports asynchronous text, ArrayBuffer and data URL reads
     with bounded load/error events.
   - Observers: `MutationObserver` now records bounded `childList`, attribute and
-    character-data mutations with subtree/attribute filters and microtask
+    character-data mutations with subtree/attribute filters, normalized
+    `attributeFilter`/old-value options, and microtask
     delivery; typed `MutationRecord`, `NodeFilter`, `TreeWalker`, and
     `NodeIterator` surfaces are available for DOM traversal. `ResizeObserver`/
     `IntersectionObserver` provide typed entry objects, viewport/root geometry,

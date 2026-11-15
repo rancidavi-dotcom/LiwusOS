@@ -281,6 +281,7 @@ int test_ring3_processes(void) {
             "mo.observe(section,{childList:true,characterData:true,subtree:true});section.appendChild(document.createElement('small'));"
             "const textTarget=document.createElement('i');section.appendChild(textTarget);textTarget.textContent='first-updated';textTarget.remove();"
             "queueMicrotask(function(){if(!observed||!textObserved||!recordTyped)throw new Error('MutationObserver failed');});"
+            "const attrProbe=document.createElement('div');let attrOldSeen=false;const attrObserver=new MutationObserver(function(records){if(records.some(function(r){return r.oldValue==='one';}))attrOldSeen=true;});attrObserver.observe(attrProbe,{attributeFilter:['data-probe'],attributeOldValue:true});attrProbe.setAttribute('data-probe','one');attrProbe.setAttribute('data-probe','two');queueMicrotask(function(){if(!attrOldSeen)throw new Error('MutationObserver option normalization failed');attrObserver.disconnect();});"
             "const first=section.querySelector('i');"
             "const picked=section.querySelector('span.pick');"
             "if(!first||!picked||section.querySelector('i + span.pick')!==picked||"
