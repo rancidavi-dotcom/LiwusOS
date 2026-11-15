@@ -12,3 +12,5 @@ evidência de vídeo testado no PC H61.
   anunciada pelo monitor virtual, 720 × 400.
 - `settings-audio-live-2048x1152.png`: janela Settings em 2048 × 1152, incluindo
   o controle de volume HDA aplicado imediatamente e salvo no SDFS.
+- `browser-search-engines-2048x1152.png`: janela LiwusWeb real com a página de
+  pesquisa integrada e os quatro mecanismos disponíveis na barra superior.
