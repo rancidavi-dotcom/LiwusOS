@@ -25,16 +25,16 @@ mb2_tags_start:
   .long 15     /* ACPI new RSDP */
   .long 8      /* framebuffer information */
 
-  /* Framebuffer tag (Type 5):
-   * width=0, height=0, depth=32, flags=1
-   * Permite ao GRUB escolher a melhor resolução nativa suportada pelo monitor (ex: 1920x1080, 1600x900, 1366x768).
+  /* Framebuffer tag (Type 5): solicita resolucao grafica ao GRUB.
+   * flags=1 (opcional): se 1920x1080 nao estiver disponivel no VBE do BIOS,
+   * o GRUB escolhe a maior resolucao suportada (ex: 1600x900, 1366x768, 1280x1024, 1024x768).
    */
   .align 8
   .word 5      /* type = 5 */
   .word 1      /* flags = 1 (opcional) */
   .long 20     /* size = 20 */
-  .long 0      /* width: 0 = qualquer resolucao suportada */
-  .long 0      /* height: 0 = qualquer resolucao suportada */
+  .long 1920   /* width: 1920 pixels */
+  .long 1080   /* height: 1080 pixels */
   .long 32     /* depth: 32 bpp */
 
   .align 8

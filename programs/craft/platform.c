@@ -158,6 +158,7 @@ int glfwGetKey(GLFWwindow *w, int key) {
     return w && key >= 0 && key < (int)sizeof(w->keys) ? w->keys[key] : 0;
 }
 void glfwGetCursorPos(GLFWwindow *w, double *x, double *y) {
+    (void)refresh_window_state();
     if (x) *x = w ? w->cursor_x : 0;
     if (y) *y = w ? w->cursor_y : 0;
 }

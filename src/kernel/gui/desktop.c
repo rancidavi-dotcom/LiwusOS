@@ -1537,10 +1537,10 @@ int desktop_craft_window_state(uint32_t *width, uint32_t *height, int32_t *close
     if (height) *height = (uint32_t)lv_obj_get_height(content);
     if (closed) *closed = craft_close_requested ? 1 : 0;
     if (mouse_x || mouse_y) {
-        int32_t mx = 0, my = 0, left = 0, right = 0;
-        struct { int32_t x, y, left, right; } mouse = {0};
-        extern int sys_mouse_get(void *);
-        if (sys_mouse_get(&mouse) == 0) { mx = mouse.x; my = mouse.y; left = mouse.left; right = mouse.right; }
+        int32_t mx = get_mouse_x();
+        int32_t my = get_mouse_y();
+        int32_t left = is_left_clicked() ? 1 : 0;
+        int32_t right = is_right_clicked() ? 1 : 0;
         if (g_craft_mouse_grabbed) {
             int32_t cx = (area.x1 + area.x2) / 2;
             int32_t cy = (area.y1 + area.y2) / 2;
@@ -1548,10 +1548,7 @@ int desktop_craft_window_state(uint32_t *width, uint32_t *height, int32_t *close
             int32_t dy = my - cy;
             g_craft_virtual_mx += dx;
             g_craft_virtual_my += dy;
-            if (dx != 0 || dy != 0) {
-                extern void mouse_set_coords(int32_t x, int32_t y);
-                mouse_set_coords(cx, cy);
-            }
+            mouse_set_coords(cx, cy);
             if (mouse_x) *mouse_x = g_craft_virtual_mx;
             if (mouse_y) *mouse_y = g_craft_virtual_my;
         } else {
