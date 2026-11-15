@@ -99,7 +99,9 @@ execute; their presence does not imply standards-complete browser behavior:
     `setAttributeNode()`, `toggleAttribute()`, `replaceChildren()`, reflected
     HTML properties such as `id`, `className`, `value`, `href`, and common
     `aria-*` names, and bounded form-control association through
-    `form`/`elements`/`name` (including `form="id"`),
+    `form`/`elements`/`name` (including `form="id"`), and input selection and
+    validity surfaces (`selectionStart`, `select()`, `validity`,
+    `setCustomValidity()`),
     `before()`, `after()`, `remove()`, and `innerText`.
   - Collection compatibility: bounded snapshot results from `querySelectorAll()`
     are branded as `NodeList`, while `getElementsByTagName()` and
