@@ -1116,6 +1116,20 @@ int sys_write(int fd, const void *buf, uint32_t count) {
     if (f->description &&
         !(f->description->access & FD_ACCESS_WRITE)) return -EBADF;
     fs_node_t *node = (fs_node_t *)f->socket_ptr;
+    /* Audio e um stream binario: nao o fragmente no buffer de terminal de 64
+     * bytes, pois cada chamada precisa conter amostras stereo completas. */
+    if ((node->flags & FS_CHARDEVICE) && strcmp(node->name, "sound") == 0) {
+      uint32_t amount = count > 32768u ? 32768u : count;
+      uint8_t *audio_buf = (uint8_t *)kmalloc(amount);
+      if (!audio_buf) return -12;
+      if (copy_from_user(audio_buf, buf, amount) < 0) {
+        kfree(audio_buf);
+        return -EFAULT;
+      }
+      uint32_t written = write_fs(node, 0, amount, audio_buf);
+      kfree(audio_buf);
+      return (int)written;
+    }
     /* See sys_read(): IPCFS channels are non-seekable message streams. */
     if (node->flags & FS_PIPE) {
       uint8_t channel_buf[512];

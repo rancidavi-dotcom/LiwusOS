@@ -1,4 +1,5 @@
 #include "vfs.h"
+#include "kernel/media.h"
 #include "kheap.h"
 #include "string.h"
 #include "serial.h"
@@ -390,6 +391,7 @@ const char *liwus_resource_type_name(liwus_resource_type_t type) {
         case LIWUS_RES_EXEC:    return "EXEC ";
         case LIWUS_RES_IMAGE:   return "IMAGE";
         case LIWUS_RES_AUDIO:   return "AUDIO";
+        case LIWUS_RES_VIDEO:   return "VIDEO";
         case LIWUS_RES_DEVICE:  return "DEV  ";
         case LIWUS_RES_CHANNEL: return "IPC  ";
         case LIWUS_RES_DIR:     return "DIR  ";
@@ -423,9 +425,12 @@ liwus_resource_type_t vfs_detect_resource_type(fs_node_t *node, const char *path
             return LIWUS_RES_EXEC;
         if (magic[0] == 'B' && magic[1] == 'M')
             return LIWUS_RES_IMAGE;
-        if (read_bytes >= 12 && magic[0] == 'R' && magic[1] == 'I' && magic[2] == 'F' && magic[3] == 'F' &&
-            magic[8] == 'W' && magic[9] == 'A' && magic[10] == 'V' && magic[11] == 'E')
-            return LIWUS_RES_AUDIO;
+        liwus_media_info_t media;
+        if (liwus_media_probe(magic, read_bytes, &media) == 0) {
+            if (media.kind == LIWUS_MEDIA_MP4) return LIWUS_RES_VIDEO;
+            if (media.kind == LIWUS_MEDIA_WAV || media.kind == LIWUS_MEDIA_MP3)
+                return LIWUS_RES_AUDIO;
+        }
     }
 
     if (read_bytes > 0) {

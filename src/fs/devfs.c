@@ -1,4 +1,5 @@
 #include "fs/devfs.h"
+#include "hda.h"
 #include "kheap.h"
 #include "string.h"
 #include "vga.h"
@@ -130,7 +131,10 @@ static uint32_t dev_zero_read(fs_node_t *node, uint32_t offset, uint32_t size, u
 
 /* dev:sound */
 static uint32_t dev_sound_write(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
-    (void)node; (void)offset; (void)buffer;
+    (void)node; (void)offset;
+    /* Formato nativo: PCM assinado little-endian, 16-bit, stereo, 48 kHz. */
+    if (!buffer || size == 0 || (size % 4u) != 0u || !hda_is_available()) return 0;
+    hda_play_pcm((const int16_t *)buffer, size / 4u);
     return size;
 }
 

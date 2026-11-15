@@ -46,6 +46,7 @@ void cmd_kblayout(int argc, char **argv);
 void cmd_msense(int argc, char **argv);
 void cmd_beep(int argc, char **argv);
 void cmd_sound(int argc, char **argv);
+void cmd_play(int argc, char **argv);
 void cmd_screenshot(int argc, char **argv);
 void cmd_lspci(int argc, char **argv);
 void cmd_wget(int argc, char **argv);

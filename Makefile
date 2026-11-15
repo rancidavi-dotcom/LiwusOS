@@ -162,6 +162,8 @@ ELEVATE_LXE = build/liwus-sdk/bin/elevate.lxe
 PKG_REPO_LXES = $(NEOFETCH_LXE) $(SNAKE_LXE) $(MATRIX_LXE) $(SYSBENCH_LXE)
 NATIVE_UTIL_LXES = $(MKDIR_LXE) $(RM_LXE) $(MV_LXE) $(CP_LXE) \
 	$(TOUCH_LXE) $(ECHO_LXE) $(RMDIR_LXE) $(STAT_LXE) $(HEAD_LXE) $(WEBTEXT_LXE) $(QJS_LXE) $(C_DEMO_LXE) $(TCC_LXE) $(KILO_LXE) $(DOOM_LXE) $(WHOAMI_LXE) $(ELEVATE_LXE)
+PLAY_LXE = build/liwus-sdk/bin/play.lxe
+NATIVE_UTIL_LXES += $(PLAY_LXE)
 EXTERNAL_SDK_TEST_LXE = build/external-test.lxe
 SDK_LIBRARY = build/liwus-sdk/lib/libliwus.a
 SDK_OPENLIBM = build/liwus-sdk/lib/libopenlibm.a
@@ -329,6 +331,10 @@ $(NATIVE_HELLO_LXE): programs/native-hello/main.c \
 		include/liwus/string.h include/liwus/fcntl.h include/liwus/mman.h \
 		include/uapi/syscall_nums.h
 	$(MAKE) -C programs/native-hello lxe
+
+$(PLAY_LXE): programs/play/main.c programs/play/Makefile third_party/minimp3/minimp3.h \
+		$(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
+	$(MAKE) -C programs/play all
 
 $(SDK_LIBRARY): lib/liwus/libliwus.a
 	@mkdir -p $(dir $@)
@@ -625,6 +631,8 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 	tar -rf initrd.tar --format=ustar --transform='s|whoami.lxe|bin/whoami.lxe|' -C build/liwus-sdk/bin whoami.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|elevate.lxe|bin/elevate|' -C build/liwus-sdk/bin elevate.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|elevate.lxe|bin/elevate.lxe|' -C build/liwus-sdk/bin elevate.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|play.lxe|play|' -C build/liwus-sdk/bin play.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|play.lxe|bin/play.lxe|' -C build/liwus-sdk/bin play.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|head.lxe|bin/head.lxe|' -C build/liwus-sdk/bin head.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|webtext.lxe|bin/webtext.lxe|' -C build/liwus-sdk/bin webtext.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|qjs.lxe|bin/qjs.lxe|' -C build/liwus-sdk/bin qjs.lxe
@@ -692,7 +700,7 @@ update-feed: $(ISO_IMAGE)
 test-harness:
 	python3 tests/harness/validate_serial.py --self-test
 
-test-unit: test-harness $(TEST_OBJ_DIR)/host/test_vma_host $(TEST_OBJ_DIR)/host/test_liwsh_parser $(TEST_OBJ_DIR)/host/test_usb_hid $(TEST_OBJ_DIR)/host/test_usb_xhci_ring $(TEST_OBJ_DIR)/host/test_usb_ehci_schedule $(TEST_OBJ_DIR)/host/test_webdom $(TEST_OBJ_DIR)/host/test_html_css_nth $(TEST_OBJ_DIR)/host/test_html_sibling_map $(TEST_OBJ_DIR)/host/test_html_external_script $(TEST_OBJ_DIR)/host/test_quickjs_module $(TEST_OBJ_DIR)/host/test_qjs_module_url $(TEST_OBJ_DIR)/host/test_browser_url $(TEST_OBJ_DIR)/host/test_liwus_malloc
+test-unit: test-harness $(TEST_OBJ_DIR)/host/test_vma_host $(TEST_OBJ_DIR)/host/test_liwsh_parser $(TEST_OBJ_DIR)/host/test_usb_hid $(TEST_OBJ_DIR)/host/test_usb_xhci_ring $(TEST_OBJ_DIR)/host/test_usb_ehci_schedule $(TEST_OBJ_DIR)/host/test_webdom $(TEST_OBJ_DIR)/host/test_html_css_nth $(TEST_OBJ_DIR)/host/test_html_sibling_map $(TEST_OBJ_DIR)/host/test_html_external_script $(TEST_OBJ_DIR)/host/test_quickjs_module $(TEST_OBJ_DIR)/host/test_qjs_module_url $(TEST_OBJ_DIR)/host/test_browser_url $(TEST_OBJ_DIR)/host/test_liwus_malloc $(TEST_OBJ_DIR)/host/test_media_probe
 	$(TEST_OBJ_DIR)/host/test_vma_host
 	$(TEST_OBJ_DIR)/host/test_liwsh_parser
 	$(TEST_OBJ_DIR)/host/test_usb_hid
@@ -706,6 +714,7 @@ test-unit: test-harness $(TEST_OBJ_DIR)/host/test_vma_host $(TEST_OBJ_DIR)/host/
 	$(TEST_OBJ_DIR)/host/test_qjs_module_url
 	$(TEST_OBJ_DIR)/host/test_browser_url
 	$(TEST_OBJ_DIR)/host/test_liwus_malloc
+	$(TEST_OBJ_DIR)/host/test_media_probe
 
 $(TEST_OBJ_DIR)/host/test_browser_url: tests/host/test_browser_url.c \
 		src/kernel/gui/browser_url.c include/gui/browser_url.h
@@ -728,6 +737,13 @@ $(TEST_OBJ_DIR)/host/test_liwus_malloc: tests/host/test_liwus_malloc.c \
 		-ffunction-sections -fdata-sections -Wl,--gc-sections \
 		-Iinclude -o $@ tests/host/test_liwus_malloc.c \
 		$(TEST_OBJ_DIR)/host/liwus_malloc_test_impl.o
+
+$(TEST_OBJ_DIR)/host/test_media_probe: tests/host/test_media_probe.c \
+		src/kernel/core/media.c include/kernel/media.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O1 -g -Wall -Wextra -Werror \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		-Iinclude -o $@ tests/host/test_media_probe.c src/kernel/core/media.c
 
 $(TEST_OBJ_DIR)/host/test_html_css_nth: tests/host/test_html_css_nth.c \
 		src/kernel/gui/html_css.c include/gui/html_css.h

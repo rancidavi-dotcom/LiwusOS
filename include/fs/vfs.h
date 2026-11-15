@@ -105,7 +105,8 @@ typedef enum {
     LIWUS_RES_TEXT,       /* Texto puro legível (TXT, HTML, scripts) */
     LIWUS_RES_EXEC,       /* Executável nativo (LXE / ELF do Liwus) */
     LIWUS_RES_IMAGE,      /* Imagens gráficas (BMP, ícones) */
-    LIWUS_RES_AUDIO,      /* Áudio e som (WAV, PCM) */
+    LIWUS_RES_AUDIO,      /* Áudio e som (WAV, MP3, PCM) */
+    LIWUS_RES_VIDEO,      /* Container audiovisual (MP4/MOV) */
     LIWUS_RES_DEVICE,     /* Hardware físico (Tela, Entropia, Som) */
     LIWUS_RES_CHANNEL,    /* Canal de IPC dinâmico em memória */
     LIWUS_RES_DIR         /* Pasta / Coleção de recursos */

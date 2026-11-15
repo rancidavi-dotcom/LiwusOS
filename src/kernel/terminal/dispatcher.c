@@ -196,6 +196,25 @@ void cmd_snes(int argc, char **argv) {
     if (run_snes_app(argc, argv) < 0) vga_puts("snes: falha ao carregar o emulador\n");
 }
 
+void cmd_play(int argc, char **argv) {
+    extern int launch_initrd_program_argv(const char *filename, char *const argv[]);
+    extern int sys_waitpid(int pid, int *status, int options);
+    if (argc != 2) {
+        vga_puts("Uso: play arquivo.mp3\n");
+        return;
+    }
+    char *prog_argv[3] = {"play", argv[1], NULL};
+    int pid = launch_initrd_program_argv("/bin/play.lxe", prog_argv);
+    if (pid <= 0) pid = launch_initrd_program_argv("play", prog_argv);
+    if (pid <= 0) pid = launch_initrd_program_argv("bin/play.lxe", prog_argv);
+    if (pid <= 0) {
+        vga_puts("play: executavel nao encontrado\n");
+        return;
+    }
+    int status = 0;
+    sys_waitpid(pid, &status, 0);
+}
+
 void cmd_dhcp(int argc, char **argv) {
     (void)argc; (void)argv;
     extern void cmd_ifconfig(int argc, char **argv);
@@ -217,6 +236,7 @@ static const terminal_command_t commands[] = {
     {"edit", cmd_kilo, "Editor de texto Kilo (ex: edit arquivo.c)"},
     {"doom", cmd_doom, "Jogo DOOM Shareware (tela cheia)"},
     {"snes", cmd_snes, "Emulador de SNES (tela cheia)"},
+    {"play", cmd_play, "Reproduz audio MP3 pela saida HDA"},
     {"dhcp", cmd_dhcp, "Renova / solicita IP do roteador via DHCP"},
     {"mkdir", cmd_mkdir, "Create directory"},
     {"touch", cmd_touch, "Create empty file"},
