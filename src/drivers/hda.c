@@ -985,6 +985,132 @@ static void hda_ensure_stream_running(void) {
     }
 }
 
+/* =========================================================================
+ * Ring Buffer Circular DMA Sincronizado com LPIB (48 kHz Stereo 16-bit)
+ * ========================================================================= */
+static uint32_t hda_ring_write_pos = 0;
+static bool hda_ring_active = false;
+static uint32_t hda_ring_last_tick = 0;
+
+static uint32_t hda_get_hw_sample_pos(void) {
+    if (!hda_initialized || !hda_mmio_base) return 0;
+    uint32_t lpib = hda_read32(hda_stream_offset + HDA_SD_LPIB);
+    return (lpib / 4U) % HDA_BUFFER_SAMPLES;
+}
+
+uint32_t hda_stream_queued_samples(void) {
+    if (!hda_initialized || !hda_dma_buffer || !hda_ring_active) return 0;
+    uint32_t now = timer_ticks;
+    if (now - hda_ring_last_tick > 25U) {
+        hda_ring_active = false;
+        return 0;
+    }
+    uint32_t hw_pos = hda_get_hw_sample_pos();
+    return (hda_ring_write_pos + HDA_BUFFER_SAMPLES - hw_pos) % HDA_BUFFER_SAMPLES;
+}
+
+void hda_stream_stop(void) {
+    hda_ring_active = false;
+    hda_ring_write_pos = 0;
+    if (hda_initialized && hda_dma_buffer) {
+        memset(hda_dma_buffer, 0, HDA_BUFFER_BYTES);
+        asm volatile("mfence" ::: "memory");
+    }
+}
+
+uint32_t hda_stream_write_nonblocking(const int16_t *samples, uint32_t num_samples) {
+    if (!hda_initialized || !hda_dma_buffer || !samples || num_samples == 0) return 0;
+
+    hda_ensure_stream_running();
+    uint32_t now = timer_ticks;
+    uint32_t hw_pos = hda_get_hw_sample_pos();
+
+    if (!hda_ring_active || (now - hda_ring_last_tick > 22U)) {
+        memset(hda_dma_buffer, 0, HDA_BUFFER_BYTES);
+        /* Posiciona o ponteiro de escrita ~10ms (480 amostras) a frente do LPIB */
+        hda_ring_write_pos = (hw_pos + 480U) % HDA_BUFFER_SAMPLES;
+        hda_ring_active = true;
+    }
+
+    uint32_t queued = (hda_ring_write_pos + HDA_BUFFER_SAMPLES - hw_pos) % HDA_BUFFER_SAMPLES;
+    /* Se o ponteiro de hardware ultrapassou o de escrita (underrun), ressincroniza */
+    if (queued > HDA_BUFFER_SAMPLES - 256U) {
+        hda_ring_write_pos = (hw_pos + 480U) % HDA_BUFFER_SAMPLES;
+        queued = 480U;
+    }
+
+    const uint32_t max_queue = HDA_BUFFER_SAMPLES - 1024U; /* ~149 ms max fill */
+    if (queued >= max_queue) {
+        return 0;
+    }
+
+    uint32_t avail = max_queue - queued;
+    uint32_t to_write = (num_samples < avail) ? num_samples : avail;
+    int32_t vol = (int32_t)hda_volume;
+
+    uint32_t wp = hda_ring_write_pos;
+    for (uint32_t i = 0; i < to_write; i++) {
+        int32_t left = ((int32_t)samples[i * 2 + 0] * vol) / 100;
+        int32_t right = ((int32_t)samples[i * 2 + 1] * vol) / 100;
+        hda_dma_buffer[wp * 2 + 0] = (int16_t)left;
+        hda_dma_buffer[wp * 2 + 1] = (int16_t)right;
+        wp++;
+        if (wp >= HDA_BUFFER_SAMPLES) wp = 0;
+    }
+
+    /* Mantem uma janela de silencio limpa (512 amostras = ~10.6ms) logo a frente
+     * do ponteiro de escrita para evitar repeticao de audio antigo em caso de pausa. */
+    uint32_t guard = wp;
+    for (uint32_t g = 0; g < 512U; g++) {
+        hda_dma_buffer[guard * 2 + 0] = 0;
+        hda_dma_buffer[guard * 2 + 1] = 0;
+        guard++;
+        if (guard >= HDA_BUFFER_SAMPLES) guard = 0;
+    }
+
+    hda_ring_write_pos = wp;
+    hda_ring_last_tick = timer_ticks;
+    asm volatile("mfence" ::: "memory");
+    return to_write;
+}
+
+void hda_stream_write(const int16_t *samples, uint32_t num_samples) {
+    if (!hda_initialized || !hda_dma_buffer || !samples || num_samples == 0) return;
+
+    uint32_t written = 0;
+    uint32_t stall_loops = 0;
+
+    while (written < num_samples) {
+        uint32_t n = hda_stream_write_nonblocking(samples + written * 2U,
+                                                  num_samples - written);
+        if (n > 0) {
+            written += n;
+            stall_loops = 0;
+            if (written >= num_samples) break;
+        } else {
+            stall_loops++;
+            /* Caso o LPIB trave em algum emulador sem clock de stream, força avanço seguro */
+            if (stall_loops > 45U) {
+                hda_ring_active = false;
+                stall_loops = 0;
+            }
+        }
+        hda_sleep_ms(4);
+    }
+}
+
+void hda_stream_drain(void) {
+    if (!hda_initialized || !hda_dma_buffer || !hda_ring_active) return;
+    uint32_t loops = 0;
+    while (loops < 45U) {
+        uint32_t q = hda_stream_queued_samples();
+        if (q < 384U) break;
+        hda_sleep_ms(4);
+        loops++;
+    }
+    hda_stream_stop();
+}
+
 /* Reproduz um tom sonoro (Alta fidelidade HDA, ou PC Speaker como fallback) */
 void hda_beep(uint32_t freq_hz, uint32_t duration_ms) {
     if (freq_hz < 20) freq_hz = 20;
@@ -992,6 +1118,7 @@ void hda_beep(uint32_t freq_hz, uint32_t duration_ms) {
     if (duration_ms == 0) duration_ms = 100;
 
     if (hda_initialized && hda_dma_buffer) {
+        hda_ring_active = false;
         /* Síntese de onda senoidal limpa via Intel HDA (Realtek DAC) */
         uint32_t sample_rate = 48000;
         uint32_t step = ((uint64_t)freq_hz * 256ULL * 65536ULL) / sample_rate;
@@ -1024,34 +1151,9 @@ void hda_beep(uint32_t freq_hz, uint32_t duration_ms) {
 
 /* Reproduz buffer PCM estéreo cru de 16-bit 48kHz */
 void hda_play_pcm(const int16_t *samples, uint32_t num_samples) {
-    if (!hda_initialized || !hda_dma_buffer || !samples) return;
-
-    uint32_t sample_rate = 48000;
-    uint32_t played = 0;
-
-    while (played < num_samples) {
-        uint32_t chunk = num_samples - played;
-        if (chunk > HDA_BUFFER_SAMPLES) chunk = HDA_BUFFER_SAMPLES;
-
-        for (uint32_t i = 0; i < chunk; i++) {
-            int32_t left = (int32_t)samples[(played + i) * 2 + 0];
-            int32_t right = (int32_t)samples[(played + i) * 2 + 1];
-
-            hda_dma_buffer[i * 2 + 0] = (int16_t)((left * hda_volume) / 100);
-            hda_dma_buffer[i * 2 + 1] = (int16_t)((right * hda_volume) / 100);
-        }
-        asm volatile("mfence" ::: "memory");
-        hda_ensure_stream_running();
-
-        played += chunk;
-        uint32_t chunk_ms = (chunk * 1000) / sample_rate;
-        if (chunk_ms > 0) {
-            hda_sleep_ms(chunk_ms);
-        }
-    }
-
-    memset(hda_dma_buffer, 0, HDA_BUFFER_BYTES);
-    asm volatile("mfence" ::: "memory");
+    if (!hda_initialized || !hda_dma_buffer || !samples || num_samples == 0) return;
+    hda_stream_write(samples, num_samples);
+    hda_stream_drain();
 }
 
 /* Som harmônico de inicialização do LiwusOS (Acorde de boas-vindas: C5 -> E5 -> G5 -> C6) */

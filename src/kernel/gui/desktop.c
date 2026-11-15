@@ -26,6 +26,12 @@
 #include "gui/html_font.h"
 #include "gui/browser_url.h"
 #include "kernel/users.h"
+#include "kernel/media.h"
+
+#define MINIMP3_IMPLEMENTATION
+#define MINIMP3_ONLY_MP3
+#define MINIMP3_NONSTANDARD_BUT_LOGICAL
+#include "minimp3.h"
 
 #include "lvgl.h"
 #include "lvgl_port.h"
@@ -690,6 +696,7 @@ static lv_obj_t *win_pkgmgr = NULL;
 static lv_obj_t *win_installer = NULL;
 static lv_obj_t *win_about = NULL;
 static lv_obj_t *win_settings = NULL;
+static lv_obj_t *win_player = NULL;
 static lv_obj_t *lbl_settings_network = NULL;
 static lv_obj_t *lbl_settings_status = NULL;
 static lv_obj_t *lbl_settings_volume = NULL;
@@ -1011,6 +1018,10 @@ static void create_pkgmgr_window(void);
 static void create_installer_window(void);
 static void create_about_window(void);
 static void create_settings_window(void);
+static void create_player_window(void);
+static void player_open_file(const char *path);
+static void player_poll_stream(void);
+static void dock_player_cb(lv_event_t *e);
 static void pkgmgr_refresh_list(void);
 static void pkgmgr_refresh_sysupdate_ui(void);
 static void pkgmgr_set_status(const char *msg, uint32_t color_hex);
@@ -1079,6 +1090,8 @@ static void win_close_event_cb(lv_event_t *e) {
             g_calc_op = 0;
             g_calc_new_num = true;
             if (lbl_calc_display) lv_label_set_text(lbl_calc_display, g_calc_str);
+        } else if (win == win_player) {
+            hda_stream_stop();
         }
     }
 }
@@ -4970,6 +4983,486 @@ static void create_about_window(void) {
 }
 
 /* =========================================================================
+ * Player Nativo de Audio e Video (MP3 / MP4 / WAV)
+ * ========================================================================= */
+static lv_obj_t *lbl_player_track = NULL;
+static lv_obj_t *lbl_player_time = NULL;
+static lv_obj_t *slider_player_seek = NULL;
+static lv_obj_t *slider_player_vol = NULL;
+static lv_obj_t *btn_player_play = NULL;
+static lv_obj_t *lbl_player_play_btn = NULL;
+static lv_obj_t *btn_player_track_mp3 = NULL;
+static lv_obj_t *btn_player_track_mp4 = NULL;
+static lv_obj_t *obj_player_viewport = NULL;
+static lv_obj_t *img_player_video = NULL;
+
+#define PLAYER_VIDEO_W 240
+#define PLAYER_VIDEO_H 136
+
+static uint32_t g_player_frame_pixels[PLAYER_VIDEO_W * PLAYER_VIDEO_H];
+static lv_img_dsc_t g_player_img_dsc;
+
+static uint8_t *g_player_file_data = NULL;
+static uint32_t g_player_file_size = 0;
+static char g_player_cur_path[64] = "";
+static bool g_player_is_playing = false;
+static uint32_t g_player_duration_ms = 0;
+static uint32_t g_player_elapsed_ms = 0;
+static uint32_t g_player_play_start_tick = 0;
+
+static liwus_media_info_t g_player_minfo;
+static liwus_mp4_index_t g_player_mp4;
+
+/* Estado do stream MP3 */
+static mp3dec_t g_player_mp3dec;
+static uint32_t g_player_mp3_offset = 0;
+
+/* Estado do stream MP4 */
+static uint32_t g_player_v_idx = 0;
+static uint32_t g_player_a_idx = 0;
+
+static void player_format_time(uint32_t ms, char *buf, size_t max_len) {
+    uint32_t sec = ms / 1000U;
+    uint32_t min = sec / 60U;
+    sec %= 60U;
+    lv_snprintf(buf, max_len, "%02u:%02u", min, sec);
+}
+
+static void player_update_ui_progress(void) {
+    if (!lbl_player_time || !slider_player_seek) return;
+    char cur_str[16], tot_str[16], full_str[48];
+    player_format_time(g_player_elapsed_ms, cur_str, sizeof(cur_str));
+    player_format_time(g_player_duration_ms, tot_str, sizeof(tot_str));
+    lv_snprintf(full_str, sizeof(full_str), "%s / %s", cur_str, tot_str);
+    lv_label_set_text(lbl_player_time, full_str);
+
+    if (g_player_duration_ms > 0) {
+        int val = (int)(((uint64_t)g_player_elapsed_ms * 1000ULL) / g_player_duration_ms);
+        if (val > 1000) val = 1000;
+        lv_slider_set_value(slider_player_seek, val, LV_ANIM_OFF);
+    } else {
+        lv_slider_set_value(slider_player_seek, 0, LV_ANIM_OFF);
+    }
+}
+
+static void player_stop(void) {
+    g_player_is_playing = false;
+    hda_stream_stop();
+    if (lbl_player_play_btn) {
+        lv_label_set_text(lbl_player_play_btn, LV_SYMBOL_PLAY "  Reproduzir");
+    }
+}
+
+static void player_play_or_pause(void) {
+    if (!g_player_file_data || g_player_file_size == 0) return;
+    if (g_player_is_playing) {
+        g_player_is_playing = false;
+        hda_stream_stop();
+        if (lbl_player_play_btn) {
+            lv_label_set_text(lbl_player_play_btn, LV_SYMBOL_PLAY "  Reproduzir");
+        }
+    } else {
+        g_player_is_playing = true;
+        g_player_play_start_tick = timer_ticks - (g_player_elapsed_ms / 10U);
+        if (lbl_player_play_btn) {
+            lv_label_set_text(lbl_player_play_btn, LV_SYMBOL_PAUSE "  Pausar");
+        }
+    }
+}
+
+static void player_load_blank_screen(void) {
+    for (int y = 0; y < PLAYER_VIDEO_H; y++) {
+        for (int x = 0; x < PLAYER_VIDEO_W; x++) {
+            g_player_frame_pixels[y * PLAYER_VIDEO_W + x] = 0xFF151D26U;
+        }
+    }
+    if (img_player_video) lv_obj_invalidate(img_player_video);
+}
+
+static void player_open_file(const char *path) {
+    if (!path || !path[0]) return;
+    player_stop();
+
+    if (g_player_file_data) {
+        kfree(g_player_file_data);
+        g_player_file_data = NULL;
+        g_player_file_size = 0;
+    }
+
+    uint32_t sz = 0;
+    uint8_t *loaded = (uint8_t *)sdfs_read_file(path, &sz);
+    if (!loaded || sz == 0) {
+        const char *norm = path;
+        while (*norm == '/') norm++;
+        uint32_t ir_sz = 0;
+        void *ir_ptr = initrd_get_file(norm, &ir_sz);
+        if (ir_ptr && ir_sz > 0) {
+            loaded = (uint8_t *)kmalloc(ir_sz);
+            if (loaded) {
+                memcpy(loaded, ir_ptr, ir_sz);
+                sz = ir_sz;
+            }
+        }
+    }
+
+    if (!loaded || sz < 16) {
+        if (loaded) kfree(loaded);
+        if (lbl_player_track) lv_label_set_text_fmt(lbl_player_track, "Erro ao abrir: %s", path);
+        return;
+    }
+
+    g_player_file_data = loaded;
+    g_player_file_size = sz;
+    strncpy(g_player_cur_path, path, sizeof(g_player_cur_path) - 1);
+    g_player_cur_path[sizeof(g_player_cur_path) - 1] = '\0';
+
+    memset(&g_player_minfo, 0, sizeof(g_player_minfo));
+    memset(&g_player_mp4, 0, sizeof(g_player_mp4));
+    g_player_elapsed_ms = 0;
+    g_player_duration_ms = 0;
+    g_player_mp3_offset = 0;
+    g_player_v_idx = 0;
+    g_player_a_idx = 0;
+    mp3dec_init(&g_player_mp3dec);
+
+    if (liwus_media_probe(loaded, sz, &g_player_minfo) == 0) {
+        if (g_player_minfo.kind == LIWUS_MEDIA_MP4) {
+            if (liwus_mp4_parse(loaded, sz, &g_player_mp4) == 0) {
+                g_player_duration_ms = g_player_mp4.duration_ms;
+                if (lbl_player_track) {
+                    lv_label_set_text_fmt(lbl_player_track,
+                        "Video: %s | %ux%u | %s (%u frames)",
+                        path, g_player_mp4.width, g_player_mp4.height,
+                        g_player_mp4.video_fourcc, g_player_mp4.video_sample_count);
+                }
+                const uint8_t *v0 = NULL;
+                uint32_t v0_sz = 0, v0_pts = 0;
+                if (liwus_mp4_get_video_sample(&g_player_mp4, loaded, sz, 0, &v0, &v0_sz, &v0_pts) == 0) {
+                    liwus_mp4_decode_video_frame(g_player_mp4.video_codec, v0, v0_sz,
+                                                 g_player_mp4.width, g_player_mp4.height,
+                                                 g_player_frame_pixels, PLAYER_VIDEO_W, PLAYER_VIDEO_H);
+                    if (img_player_video) lv_obj_invalidate(img_player_video);
+                }
+            } else {
+                if (lbl_player_track) lv_label_set_text_fmt(lbl_player_track, "MP4 sem trilhas compativeis: %s", path);
+            }
+        } else if (g_player_minfo.kind == LIWUS_MEDIA_MP3) {
+            /* Duracao estimada CBR/VBR a partir do tamanho (tipico 128 kbps = 16000 B/s) */
+            g_player_duration_ms = (uint32_t)(((uint64_t)sz * 1000ULL) / 16000ULL);
+            if (lbl_player_track) {
+                lv_label_set_text_fmt(lbl_player_track, "Audio MP3: %s (%u KiB)", path, sz / 1024U);
+            }
+            player_load_blank_screen();
+        } else if (g_player_minfo.kind == LIWUS_MEDIA_WAV) {
+            if (g_player_minfo.sample_rate > 0 && g_player_minfo.channels > 0) {
+                uint32_t bytes_per_sec = g_player_minfo.sample_rate * g_player_minfo.channels * 2U;
+                g_player_duration_ms = (uint32_t)(((uint64_t)sz * 1000ULL) / bytes_per_sec);
+            }
+            if (lbl_player_track) {
+                lv_label_set_text_fmt(lbl_player_track, "Audio WAV: %s (%u Hz)", path, g_player_minfo.sample_rate);
+            }
+            player_load_blank_screen();
+        }
+    }
+
+    player_update_ui_progress();
+    player_play_or_pause();
+}
+
+static void player_play_btn_cb(lv_event_t *e) {
+    (void)e;
+    player_play_or_pause();
+}
+
+static void player_stop_btn_cb(lv_event_t *e) {
+    (void)e;
+    player_stop();
+    g_player_elapsed_ms = 0;
+    g_player_mp3_offset = 0;
+    g_player_v_idx = 0;
+    g_player_a_idx = 0;
+    player_update_ui_progress();
+}
+
+static void player_track_mp3_cb(lv_event_t *e) {
+    (void)e;
+    player_open_file("/musica.mp3");
+}
+
+static void player_track_mp4_cb(lv_event_t *e) {
+    (void)e;
+    player_open_file("/video.mp4");
+}
+
+static void player_seek_cb(lv_event_t *e) {
+    (void)e;
+    if (!slider_player_seek || g_player_duration_ms == 0) return;
+    int val = lv_slider_get_value(slider_player_seek);
+    uint32_t target_ms = (uint32_t)(((uint64_t)val * (uint64_t)g_player_duration_ms) / 1000ULL);
+    g_player_elapsed_ms = target_ms;
+    g_player_play_start_tick = timer_ticks - (target_ms / 10U);
+
+    hda_stream_stop();
+
+    if (g_player_minfo.kind == LIWUS_MEDIA_MP4 && g_player_mp4.has_video) {
+        /* Procura o frame de video mais proximo do PTS */
+        for (uint32_t v = 0; v < g_player_mp4.video_sample_count; v++) {
+            const uint8_t *vp = NULL;
+            uint32_t vsz = 0, pts = 0;
+            if (liwus_mp4_get_video_sample(&g_player_mp4, g_player_file_data, g_player_file_size,
+                                           v, &vp, &vsz, &pts) == 0) {
+                if (pts >= target_ms || v == g_player_mp4.video_sample_count - 1U) {
+                    g_player_v_idx = v;
+                    liwus_mp4_decode_video_frame(g_player_mp4.video_codec, vp, vsz,
+                                                 g_player_mp4.width, g_player_mp4.height,
+                                                 g_player_frame_pixels, PLAYER_VIDEO_W, PLAYER_VIDEO_H);
+                    if (img_player_video) lv_obj_invalidate(img_player_video);
+                    break;
+                }
+            }
+        }
+        for (uint32_t a = 0; a < g_player_mp4.audio_sample_count; a++) {
+            const uint8_t *ap = NULL;
+            uint32_t asz = 0, pts = 0;
+            if (liwus_mp4_get_audio_sample(&g_player_mp4, g_player_file_data, g_player_file_size,
+                                           a, &ap, &asz, &pts) == 0) {
+                if (pts >= target_ms) {
+                    g_player_a_idx = a;
+                    break;
+                }
+            }
+        }
+    } else if (g_player_minfo.kind == LIWUS_MEDIA_MP3) {
+        g_player_mp3_offset = (uint32_t)(((uint64_t)val * (uint64_t)g_player_file_size) / 1000ULL);
+    }
+    player_update_ui_progress();
+}
+
+static void player_vol_cb(lv_event_t *e) {
+    (void)e;
+    if (!slider_player_vol) return;
+    int val = lv_slider_get_value(slider_player_vol);
+    hda_set_volume((uint8_t)val);
+}
+
+static void player_poll_stream(void) {
+    if (!g_player_is_playing || !g_player_file_data || g_player_file_size == 0) return;
+
+    uint32_t now_ticks = timer_ticks;
+    g_player_elapsed_ms = (now_ticks - g_player_play_start_tick) * 10U;
+    if (g_player_duration_ms > 0 && g_player_elapsed_ms >= g_player_duration_ms) {
+        player_stop();
+        g_player_elapsed_ms = g_player_duration_ms;
+        player_update_ui_progress();
+        return;
+    }
+
+    static int16_t pcm[MINIMP3_MAX_SAMPLES_PER_FRAME * 2];
+    static int16_t out_pcm[MINIMP3_MAX_SAMPLES_PER_FRAME * 4];
+
+    /* MP3 Streaming */
+    if (g_player_minfo.kind == LIWUS_MEDIA_MP3) {
+        while (hda_stream_queued_samples() < 4096U && g_player_mp3_offset < g_player_file_size) {
+            mp3dec_frame_info_t info;
+            int decoded = mp3dec_decode_frame(&g_player_mp3dec,
+                                              g_player_file_data + g_player_mp3_offset,
+                                              (int)(g_player_file_size - g_player_mp3_offset),
+                                              pcm, &info);
+            if (info.frame_bytes <= 0) {
+                g_player_mp3_offset++;
+                continue;
+            }
+            g_player_mp3_offset += (size_t)info.frame_bytes;
+            if (decoded <= 0 || info.channels < 1 || info.channels > 2 || info.hz <= 0) {
+                continue;
+            }
+            uint32_t out_cnt = liwus_pcm_resample_to_48k_stereo(
+                pcm, (uint32_t)decoded, (uint16_t)info.channels, (uint32_t)info.hz,
+                out_pcm, MINIMP3_MAX_SAMPLES_PER_FRAME * 2U);
+            if (out_cnt > 0) {
+                hda_stream_write_nonblocking(out_pcm, out_cnt);
+            }
+        }
+        if (g_player_mp3_offset >= g_player_file_size && hda_stream_queued_samples() == 0) {
+            player_stop();
+        }
+    }
+    /* MP4 Container Streaming */
+    else if (g_player_minfo.kind == LIWUS_MEDIA_MP4) {
+        /* Alimenta o audio ate manter a fila preenchida */
+        if (g_player_mp4.has_audio && g_player_mp4.audio_codec == LIWUS_ACODEC_MP3) {
+            while (hda_stream_queued_samples() < 4096U && g_player_a_idx < g_player_mp4.audio_sample_count) {
+                const uint8_t *ap = NULL;
+                uint32_t asz = 0, pts = 0;
+                if (liwus_mp4_get_audio_sample(&g_player_mp4, g_player_file_data, g_player_file_size,
+                                               g_player_a_idx, &ap, &asz, &pts) == 0 && ap && asz > 0) {
+                    mp3dec_frame_info_t info;
+                    int decoded = mp3dec_decode_frame(&g_player_mp3dec, ap, (int)asz, pcm, &info);
+                    if (decoded > 0 && info.channels >= 1 && info.channels <= 2 && info.hz > 0) {
+                        uint32_t out_cnt = liwus_pcm_resample_to_48k_stereo(
+                            pcm, (uint32_t)decoded, (uint16_t)info.channels, (uint32_t)info.hz,
+                            out_pcm, MINIMP3_MAX_SAMPLES_PER_FRAME * 2U);
+                        if (out_cnt > 0) {
+                            hda_stream_write_nonblocking(out_pcm, out_cnt);
+                        }
+                    }
+                }
+                g_player_a_idx++;
+            }
+        }
+
+        /* Apresenta os quadros de video sincronizados com o relogio em ms */
+        if (g_player_mp4.has_video && g_player_v_idx < g_player_mp4.video_sample_count) {
+            const uint8_t *vp = NULL;
+            uint32_t vsz = 0, pts = 0;
+            if (liwus_mp4_get_video_sample(&g_player_mp4, g_player_file_data, g_player_file_size,
+                                           g_player_v_idx, &vp, &vsz, &pts) == 0) {
+                if (g_player_elapsed_ms >= pts) {
+                    liwus_mp4_decode_video_frame(g_player_mp4.video_codec, vp, vsz,
+                                                 g_player_mp4.width, g_player_mp4.height,
+                                                 g_player_frame_pixels, PLAYER_VIDEO_W, PLAYER_VIDEO_H);
+                    if (img_player_video) lv_obj_invalidate(img_player_video);
+                    g_player_v_idx++;
+                }
+            }
+        }
+    }
+
+    player_update_ui_progress();
+}
+
+static void create_player_window(void) {
+    if (win_player) return;
+
+    g_player_img_dsc.header.always_zero = 0;
+    g_player_img_dsc.header.w = PLAYER_VIDEO_W;
+    g_player_img_dsc.header.h = PLAYER_VIDEO_H;
+    g_player_img_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+    g_player_img_dsc.data_size = sizeof(g_player_frame_pixels);
+    g_player_img_dsc.data = (const uint8_t *)g_player_frame_pixels;
+    player_load_blank_screen();
+
+    win_player = lv_win_create(lv_scr_act(), WIN_HEADER_H);
+    setup_window(win_player, 540, 390, 240, 90);
+    add_window_controls(win_player, "  Player de Midia (MP3 / MP4)");
+
+    lv_obj_t *content = lv_win_get_content(win_player);
+    lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_all(content, 10, 0);
+    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(content, 8, 0);
+
+    /* Viewport de video estilo monitor Slate */
+    obj_player_viewport = lv_obj_create(content);
+    lv_obj_clear_flag(obj_player_viewport, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(obj_player_viewport, lv_pct(100), 164);
+    lv_obj_set_style_bg_color(obj_player_viewport, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_bg_opa(obj_player_viewport, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(obj_player_viewport, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_border_width(obj_player_viewport, 1, 0);
+    lv_obj_set_style_radius(obj_player_viewport, 6, 0);
+    lv_obj_set_style_pad_all(obj_player_viewport, 2, 0);
+
+    img_player_video = lv_img_create(obj_player_viewport);
+    lv_img_set_src(img_player_video, &g_player_img_dsc);
+    lv_obj_center(img_player_video);
+
+    /* Info da faixa / video */
+    lbl_player_track = lv_label_create(content);
+    lv_obj_set_style_text_font(lbl_player_track, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_player_track, lv_color_hex(BZ_ACCENT), 0);
+    lv_label_set_text(lbl_player_track, "Abra um arquivo MP3 ou MP4 para reproduzir.");
+
+    /* Barra de progresso / seek */
+    lv_obj_t *row_prog = lv_obj_create(content);
+    lv_obj_clear_flag(row_prog, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(row_prog, lv_pct(100), 28);
+    lv_obj_set_style_bg_opa(row_prog, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row_prog, 0, 0);
+    lv_obj_set_style_pad_all(row_prog, 0, 0);
+    lv_obj_set_flex_flow(row_prog, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row_prog, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    slider_player_seek = lv_slider_create(row_prog);
+    lv_obj_set_size(slider_player_seek, 400, 10);
+    lv_slider_set_range(slider_player_seek, 0, 1000);
+    lv_slider_set_value(slider_player_seek, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(slider_player_seek, lv_color_hex(BZ_BUTTON), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(slider_player_seek, lv_color_hex(BZ_ACCENT), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider_player_seek, lv_color_hex(BZ_ACCENT), LV_PART_KNOB);
+    lv_obj_add_event_cb(slider_player_seek, player_seek_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lbl_player_time = lv_label_create(row_prog);
+    lv_obj_set_style_text_font(lbl_player_time, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_player_time, lv_color_hex(BZ_TEXT_DIM), 0);
+    lv_label_set_text(lbl_player_time, "00:00 / 00:00");
+
+    /* Controles de reproducao (Play, Stop, Volume, Exemplos) */
+    lv_obj_t *row_ctrl = lv_obj_create(content);
+    lv_obj_clear_flag(row_ctrl, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(row_ctrl, lv_pct(100), 40);
+    lv_obj_set_style_bg_opa(row_ctrl, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row_ctrl, 0, 0);
+    lv_obj_set_style_pad_all(row_ctrl, 0, 0);
+    lv_obj_set_flex_flow(row_ctrl, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row_ctrl, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(row_ctrl, 8, 0);
+
+    btn_player_play = lv_btn_create(row_ctrl);
+    lv_obj_set_size(btn_player_play, 130, 32);
+    bz_style_button(btn_player_play);
+    lv_obj_set_style_bg_color(btn_player_play, lv_color_hex(BZ_ACCENT_DARK), 0);
+    lbl_player_play_btn = lv_label_create(btn_player_play);
+    lv_label_set_text(lbl_player_play_btn, LV_SYMBOL_PLAY "  Reproduzir");
+    lv_obj_center(lbl_player_play_btn);
+    lv_obj_add_event_cb(btn_player_play, player_play_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *btn_stop = lv_btn_create(row_ctrl);
+    lv_obj_set_size(btn_stop, 80, 32);
+    bz_style_button(btn_stop);
+    lv_obj_t *lbl_stop = lv_label_create(btn_stop);
+    lv_label_set_text(lbl_stop, LV_SYMBOL_STOP "  Parar");
+    lv_obj_center(lbl_stop);
+    lv_obj_add_event_cb(btn_stop, player_stop_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    btn_player_track_mp3 = lv_btn_create(row_ctrl);
+    lv_obj_set_size(btn_player_track_mp3, 110, 32);
+    bz_style_button(btn_player_track_mp3);
+    lv_obj_t *lbl_mp3 = lv_label_create(btn_player_track_mp3);
+    lv_label_set_text(lbl_mp3, LV_SYMBOL_AUDIO "  musica.mp3");
+    lv_obj_center(lbl_mp3);
+    lv_obj_add_event_cb(btn_player_track_mp3, player_track_mp3_cb, LV_EVENT_CLICKED, NULL);
+
+    btn_player_track_mp4 = lv_btn_create(row_ctrl);
+    lv_obj_set_size(btn_player_track_mp4, 100, 32);
+    bz_style_button(btn_player_track_mp4);
+    lv_obj_t *lbl_mp4 = lv_label_create(btn_player_track_mp4);
+    lv_label_set_text(lbl_mp4, LV_SYMBOL_VIDEO "  video.mp4");
+    lv_obj_center(lbl_mp4);
+    lv_obj_add_event_cb(btn_player_track_mp4, player_track_mp4_cb, LV_EVENT_CLICKED, NULL);
+
+    slider_player_vol = lv_slider_create(row_ctrl);
+    lv_obj_set_size(slider_player_vol, 60, 10);
+    lv_slider_set_range(slider_player_vol, 0, 100);
+    lv_slider_set_value(slider_player_vol, hda_get_volume(), LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(slider_player_vol, lv_color_hex(BZ_BUTTON), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(slider_player_vol, lv_color_hex(BZ_GREEN), LV_PART_INDICATOR);
+    lv_obj_add_event_cb(slider_player_vol, player_vol_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_add_flag(win_player, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void dock_player_cb(lv_event_t *e) {
+    (void)e;
+    if (!win_player) create_player_window();
+    lv_obj_clear_flag(win_player, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(win_player);
+    set_browser_url_focus(false);
+    set_pkg_input_focus(false);
+    set_inst_host_focus(false);
+}
+
+/* =========================================================================
  * Painel Inferior (Barra de Tarefas estilo KDE Plasma) e Menu Iniciar
  * ========================================================================= */
 typedef struct {
@@ -4992,6 +5485,7 @@ static task_item_t g_task_items[] = {
     { LV_SYMBOL_PLUS,     "Calc",     dock_calc_cb,      &win_calc,      NULL, NULL, -1, false },
     { LV_SYMBOL_PLAY,     "DOOM",     dock_doom_cb,      NULL,           NULL, NULL, -1, false },
     { LV_SYMBOL_PLAY,     "SNES",     dock_snes_cb,      NULL,           NULL, NULL, -1, false },
+    { LV_SYMBOL_AUDIO,    "Midia",    dock_player_cb,    &win_player,    NULL, NULL, -1, false },
     { LV_SYMBOL_SETTINGS, "Settings", dock_settings_cb,  &win_settings, NULL, NULL, -1, false },
 };
 #define TASK_ITEM_COUNT ((int)(sizeof(g_task_items) / sizeof(g_task_items[0])))
@@ -5024,7 +5518,7 @@ static void desktop_bg_press_cb(lv_event_t *e) {
 
 /* Janela visivel mais ao topo (a "janela ativa"). */
 static lv_obj_t *desktop_active_window(void) {
-    lv_obj_t *wins[] = { win_terminal, win_browser, win_pkgmgr, win_installer, win_sysmon, win_calc, win_about, win_settings };
+    lv_obj_t *wins[] = { win_terminal, win_browser, win_pkgmgr, win_installer, win_sysmon, win_calc, win_about, win_settings, win_player };
     lv_obj_t *top = NULL;
     int32_t top_idx = -1;
     for (size_t i = 0; i < sizeof(wins) / sizeof(wins[0]); i++) {
@@ -5061,7 +5555,7 @@ static void desktop_resize_for_display(void) {
         lv_obj_set_pos(g_start_menu, 0, PANEL_H);
     }
     lv_obj_t *wins[] = { win_terminal, win_browser, win_pkgmgr, win_installer,
-                         win_sysmon, win_calc, win_about, win_settings };
+                         win_sysmon, win_calc, win_about, win_settings, win_player };
     for (size_t i = 0; i < sizeof(wins) / sizeof(wins[0]); i++) {
         lv_obj_t *win = wins[i];
         if (!win) continue;
@@ -5397,6 +5891,7 @@ static void create_start_menu(void) {
     menu_add_entry(list, LV_SYMBOL_PLUS, "Calculadora", "Operacoes basicas", menu_item_cb, (void *)dock_calc_cb);
     menu_add_entry(list, LV_SYMBOL_PLAY, "DOOM", "Shareware (id Software, 1993)", menu_item_cb, (void *)dock_doom_cb);
     menu_add_entry(list, LV_SYMBOL_PLAY, "Emulador de SNES", "Jogar ROMs proprias de Super Nintendo", menu_item_cb, (void *)dock_snes_cb);
+    menu_add_entry(list, LV_SYMBOL_AUDIO, "Player de Midia (MP3/MP4)", "Reproduzir musicas e videos com som HDA", menu_item_cb, (void *)dock_player_cb);
     menu_add_entry(list, LV_SYMBOL_SETTINGS, "Settings", "Teclado, resolucao e status de rede", menu_item_cb, (void *)dock_settings_cb);
     menu_add_entry(list, LV_SYMBOL_FILE, "Sobre o LiwusOS", NULL, menu_item_cb, (void *)dock_about_cb);
 
@@ -5477,6 +5972,7 @@ void desktop_init(void) {
         create_installer_window();
     }
     create_about_window();
+    create_player_window();
 
     create_taskbar();
     create_start_menu();
@@ -5577,6 +6073,7 @@ void desktop_task(void) {
         usb_xhci_poll();
         browser_fetch_poll();
         browser_runtime_poll_update();
+        player_poll_stream();
 
         /* Coleta de entradas do teclado */
         bool browser_visible = win_browser && !lv_obj_has_flag(win_browser, LV_OBJ_FLAG_HIDDEN);

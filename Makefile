@@ -20,7 +20,7 @@ LVGL_LIB = $(LVGL_DIR)/liblvgl.a
 
 KERNEL_INCLUDES = -Iinclude -Iinclude/kernel -Iinclude/drivers -Iinclude/fs \
                   -Iinclude/uapi -Iinclude/net -Iinclude/gui -Isrc/kernel/gui \
-                  -Iinclude/libc \
+                  -Iinclude/libc -Ithird_party/minimp3 \
                   -I$(LVGL_DIR) -DLV_CONF_INCLUDE_SIMPLE \
                   -Isrc/net -Isrc/net/lwip/include -I$(BEARSSL_DIR)/inc \
                   -Isrc/kernel -Isrc/kernel/terminal -Itests
@@ -45,10 +45,10 @@ TEST_ISO_IMAGE = liwusos-test.iso
 # files. User-editable examples opt into UID/GID 1000 on their tar entries.
 export TAR_OPTIONS := --owner=0 --group=0 --numeric-owner
 UPDATE_FEED_DIR ?= build/update-feed
-UPDATE_VERSION ?= 2.2.32
-UPDATE_DATE ?= 2026-11-14
+UPDATE_VERSION ?= 2.2.33
+UPDATE_DATE ?= 2026-11-15
 UPDATE_BASE_URL ?= https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo
-UPDATE_NOTES ?= LiwusOS 2.2.32: player MP3 nativo Ring-3, saida PCM real via HDA e deteccao de containers MP4
+UPDATE_NOTES ?= LiwusOS 2.2.33: Tocador de MP3 e MP4 no desktop, stream HDA sem travamento da interface e codecs MJPEG/PCM/MP3 integrados
 LINUX_STATIC_TEST_DEP =
 LINUX_STATIC_EXPECT ?= Hello from an unmodified static GNU/Linux ELF
 ifneq ($(strip $(LINUX_STATIC_ELF)),)

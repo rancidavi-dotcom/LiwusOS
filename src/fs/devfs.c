@@ -134,8 +134,15 @@ static uint32_t dev_sound_write(fs_node_t *node, uint32_t offset, uint32_t size,
     (void)node; (void)offset;
     /* Formato nativo: PCM assinado little-endian, 16-bit, stereo, 48 kHz. */
     if (!buffer || size == 0 || (size % 4u) != 0u || !hda_is_available()) return 0;
-    hda_play_pcm((const int16_t *)buffer, size / 4u);
+    hda_stream_write((const int16_t *)buffer, size / 4u);
     return size;
+}
+
+static void dev_sound_close(fs_node_t *node) {
+    (void)node;
+    if (hda_is_available()) {
+        hda_stream_drain();
+    }
 }
 
 static fs_node_t dev_nodes[] = {
@@ -194,6 +201,7 @@ static fs_node_t dev_nodes[] = {
         .length = 0,
         .read = dev_null_read,
         .write = dev_sound_write,
+        .close = dev_sound_close,
     }
 };
 
