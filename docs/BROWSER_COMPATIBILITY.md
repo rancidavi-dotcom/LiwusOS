@@ -340,8 +340,9 @@ merging are still unsupported. The loader allows up to 64 imported files and
 4 MiB of imported source, caps one response at 1 MiB, and shares one 20-second
 wait budget across the page's module graph. Other in-flight `fetch()` responses
 are queued while imports load and delivered after the module loader returns.
-Dynamic `import()`, modulepreload, CORS enforcement, and non-HTTP(S) modules
-remain unsupported. Import fetching blocks script execution and delays page
+Persistent browser pages also support bounded dynamic `import()` through the
+same loader. `modulepreload`, CORS enforcement, and non-HTTP(S) modules remain
+unsupported. Import fetching blocks script execution and delays page
 presentation until a response or the shared timeout. A later QEMU run completed
 the same GitHub navigation without a kernel panic, TLS ring overflow,
 partial-body acceptance, or JavaScript exceptions. Its current capture still
@@ -510,8 +511,9 @@ increment alone is not a security sign-off for logins or sensitive sessions.
    SDK's stored DOM representation, so source entity spellings that decode to
    the same character can compare differently. `getRootNode()` has no composed
    tree option because Shadow DOM is not implemented.
-   External scripts are not loaded by `qjs --page`; static/dynamic imports
-   remain unsupported because there is no module loader. The runner caps script
+   External scripts are not loaded by standalone `qjs --page`; its local mode
+   has no network module loader. Persistent graphical pages use the bounded
+   static/dynamic HTTP(S) loader described above. The runner caps script
    input at 1 MiB, HTML at 4 MiB, QuickJS
    runtime allocations at 8 MiB, stack at 256 KiB, and interrupts execution
    after 500 QuickJS interrupt callbacks. Its static ELF64 `.lxe` builds and is

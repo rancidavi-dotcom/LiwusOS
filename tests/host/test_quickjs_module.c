@@ -83,7 +83,11 @@ int main(void) {
                      "import { value as valueAgain } from 'react';\n"
                      "globalThis.imported = value + valueAgain;",
                      JS_EVAL_TYPE_MODULE,
-                     "https://example.test/js/main.js");
+                     "https://example.test/js/main.js") ||
+                 evaluate(context,
+                     "import('react').then(function(mod) { globalThis.dynamic = mod.value; });",
+                     JS_EVAL_TYPE_GLOBAL,
+                     "https://example.test/js/dynamic.js");
     JSContext *job_context = context;
     for (;;) {
         JSContext *context_out = NULL;
@@ -105,18 +109,22 @@ int main(void) {
     }
     JSValue global = JS_GetGlobalObject(context);
     JSValue imported = JS_GetPropertyStr(context, global, "imported");
+    JSValue dynamic = JS_GetPropertyStr(context, global, "dynamic");
     int32_t imported_value = 0;
+    int32_t dynamic_value = 0;
     if (JS_ToInt32(context, &imported_value, imported) < 0 ||
-        imported_value != 84 || loaded_modules != 1) {
-        fprintf(stderr, "QuickJS module import mismatch: value=%d loads=%u\n",
-                imported_value, loaded_modules);
+        JS_ToInt32(context, &dynamic_value, dynamic) < 0 ||
+        imported_value != 84 || dynamic_value != 42 || loaded_modules != 1) {
+        fprintf(stderr, "QuickJS module import mismatch: value=%d dynamic=%d loads=%u\n",
+                imported_value, dynamic_value, loaded_modules);
         failed = 1;
     }
+    JS_FreeValue(context, dynamic);
     JS_FreeValue(context, imported);
     JS_FreeValue(context, global);
     JS_FreeContext(context);
     JS_FreeRuntime(runtime);
     if (failed) return 2;
-    puts("QuickJS module PASS: standalone module and relative import graph evaluated");
+    puts("QuickJS module PASS: static and dynamic import graphs evaluated");
     return 0;
 }
