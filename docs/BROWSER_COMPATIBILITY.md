@@ -95,6 +95,15 @@ execute; their presence does not imply standards-complete browser behavior:
   - Media and fonts: bounded `document.fonts` readiness/load checks plus
     `Image()` and `Audio()` constructors for feature-detection and simple
     resource code paths.
+  - Platform compatibility: bounded `CSS.supports()`/`CSS.escape()`,
+    constructable `CSSStyleSheet` (`replaceSync`, `replace`, rule insertion),
+    `HTMLTemplateElement.content`, and an isolated `attachShadow()`/
+    `ShadowRoot` surface with `adoptedStyleSheets` for component code. Shadow
+    content is not promoted into the native page renderer's layout tree.
+  - Streams: bounded `ReadableStream`, `WritableStream`, `TransformStream`,
+    `TextEncoderStream`, and `TextDecoderStream` surfaces. `Response.body`
+    exposes a one-shot in-memory stream over the already-buffered response;
+    network transport remains non-streaming.
   - Viewport & History: `window.screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `devicePixelRatio`, `scrollX`, `scrollY`, `scrollTo`, `scrollBy`, `history` (`pushState`, `replaceState`, `back`, `forward`, `go`, `state`, `length`).
   - Animation: `requestAnimationFrame`, `cancelAnimationFrame`, and a bounded
     `Element.animate()` object for code that expects the Web Animations surface.
@@ -556,6 +565,15 @@ URL and status and exposes the server's `Content-Type` through the Response
 Headers object. The bridge remains URL-only and GET-like; request headers,
 request bodies, response streaming, cookies, and non-GET transport are not
 implemented by this change.
+
+The runtime fixture also covers CSS feature detection, CSS escaping, template
+content cloning, and bounded shadow-root creation. These surfaces prevent
+modern component code from aborting during feature detection while preserving
+the renderer's explicit light-DOM boundary.
+
+The same fixture checks stream construction, reader locking, and release. The
+stream objects are compatibility surfaces only: they do not add a background
+transport or remove the existing response-size limits.
 
 ## GitHub live-page check and memory findings (2026-11-14)
 
