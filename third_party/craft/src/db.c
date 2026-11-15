@@ -52,7 +52,7 @@ int db_init(char *path) {
         return 0;
     }
     static const char *create_query =
-        "attach database 'auth.db' as auth;"
+        "attach database '/auth.db' as auth;"
         "create table if not exists auth.identity_token ("
         "   username text not null,"
         "   token text not null,"
@@ -158,7 +158,7 @@ int db_init(char *path) {
     if (rc) return rc;
     sqlite3_exec(db, "begin;", NULL, NULL, NULL);
 #ifndef LIWUSOS_SYNC_DB
-    db_worker_start(path);
+    db_worker_start();
 #endif
     return 0;
 }
@@ -526,7 +526,7 @@ void _db_set_key(int p, int q, int key) {
 }
 
 #ifndef LIWUSOS_SYNC_DB
-void db_worker_start(char *path) {
+void db_worker_start(void) {
     if (!db_enabled) {
         return;
     }
@@ -534,7 +534,7 @@ void db_worker_start(char *path) {
     mtx_init(&mtx, mtx_plain);
     mtx_init(&load_mtx, mtx_plain);
     cnd_init(&cnd);
-    thrd_create(&thrd, db_worker_run, path);
+    thrd_create(&thrd, db_worker_run, NULL);
 }
 
 void db_worker_stop() {

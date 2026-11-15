@@ -2,9 +2,8 @@
 #include "auth.h"
 #include "client.h"
 
-/* Online identity/networking and SQLite persistence are isolated from this
- * first offline port. World generation and block editing still use Craft's
- * original code. */
+/* Keep the upstream multiplayer and login entry points inert. Offline world
+ * persistence is provided by the upstream db.c and the LiwusOS SQLite VFS. */
 int get_access_token(char *result, int length, char *username, char *token) {
     (void)username; (void)token;
     if (result && length > 0) result[0] = '\0';
