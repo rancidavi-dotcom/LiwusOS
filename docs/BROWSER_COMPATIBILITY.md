@@ -145,7 +145,9 @@ execute; their presence does not imply standards-complete browser behavior:
   - Media and fonts: bounded `document.fonts` readiness/load checks plus
     `Image()` and `Audio()` constructors. `HTMLScriptElement.supports()` and
     `HTMLLinkElement.supports()` cover common module/preload feature queries;
-    image elements expose a resolving `decode()` shim. `audio`/`video`
+    image elements expose a resolving `decode()` shim plus bounded
+    `currentSrc`, `complete`, `naturalWidth`, and `naturalHeight` metadata
+    derived from the resolved source/declared dimensions. `audio`/`video`
     elements expose
     feature-detection, playback-state, and event shims (`play`, `pause`,
     `load`, `canPlayType`, `currentTime`, `requestVideoFrameCallback`, and
