@@ -357,7 +357,7 @@ int test_ring3_processes(void) {
             "const deferred=Promise.withResolvers();deferred.resolve(7);"
             "deferred.promise.then(function(v){if(v!==7)throw new Error('Promise.withResolvers failed');});"
             "const anim=picked.animate([{opacity:0},{opacity:1}],{duration:1});"
-            "if(!anim||!anim.effect||anim.effect.target!==picked)throw new Error('Element.animate failed');"
+            "if(!anim||!(anim instanceof Animation)||!anim.effect||anim.effect.target!==picked||picked.getAnimations()[0]!==anim||anim.playState!=='finished')throw new Error('Element.animate failed');"
             "if(!first.isSameNode(section.querySelector('i')))"
             "throw new Error('isSameNode failed');"
             "const cloned=first.cloneNode(true);"

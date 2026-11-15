@@ -144,8 +144,10 @@ execute; their presence does not imply standards-complete browser behavior:
     in-memory stream over the already-buffered response; network transport
     remains non-streaming.
   - Viewport & History: `window.screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `devicePixelRatio`, `scrollX`, `scrollY`, `scrollTo`, `scrollBy`, bounded `visualViewport`, and `history` (`pushState`, `replaceState`, `back`, `forward`, `go`, `state`, `length`).
-  - Animation: `requestAnimationFrame`, `cancelAnimationFrame`, and a bounded
-    `Element.animate()` object for code that expects the Web Animations surface.
+  - Animation: `requestAnimationFrame`, `cancelAnimationFrame`, a bounded
+    `Animation`/`DocumentTimeline` surface, and `Element.animate()`/
+    `getAnimations()` objects for code that expects the Web Animations surface;
+    no real compositor timeline is implemented.
 - **Web API shims & networking**:
   - The browser HTTP client and ring-3 `navigator.userAgent` advertise a
     Chromium-compatible UA (`Chrome/120`) so sites do not select legacy or
