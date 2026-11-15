@@ -211,7 +211,9 @@ execute; their presence does not imply standards-complete browser behavior:
     error instead of pretending to be connected.
   - Performance: `performance.now()`, `timeOrigin`, `mark()`, `measure()`.
   - Locale helpers: bounded fallbacks for `Intl.PluralRules`, `Intl.ListFormat`,
-    and `Intl.Collator` when the QuickJS build does not provide them.
+    `Intl.Collator`, and `Intl.Segmenter` when the QuickJS build does not
+    provide them. Segmenter output is limited to word/grapheme boundaries and
+    does not claim full locale-specific dictionary segmentation.
 - Supports inline scripts and bounded external classic/module scripts. External
   module scripts retain their absolute URL and can resolve a bounded static
   import graph over the browser worker bridge. Import maps support the first

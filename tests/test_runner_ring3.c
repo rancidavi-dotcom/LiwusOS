@@ -324,6 +324,7 @@ int test_ring3_processes(void) {
             "const prog=new ProgressEvent('progress',{lengthComputable:true,loaded:4,total:8});if(!prog.lengthComputable||prog.loaded!==4||prog.total!==8)throw new Error('ProgressEvent failed');"
             "const close=new CloseEvent('close',{code:1000,reason:'done',wasClean:true});if(close.code!==1000||close.reason!=='done'||!close.wasClean)throw new Error('CloseEvent failed');"
             "const pop=new PopStateEvent('popstate',{state:{page:1}});if(!pop.state||pop.state.page!==1)throw new Error('PopStateEvent failed');"
+            "const segments=Array.from(new Intl.Segmenter('en',{granularity:'word'}).segment('hello world'));if(segments.length!==3||segments[0].segment!=='hello'||segments[0].index!==0||!segments[0].isWordLike)throw new Error('Intl.Segmenter failed');"
             "if(typeof CSS==='undefined'||typeof CSS.supports!=='function'||typeof CSS.escape!=='function')throw new Error('CSS compatibility missing');"
             "if(!CSS.supports('display','grid')||CSS.supports('display','invalid'))throw new Error('CSS supports values failed');"
             "const tpl=document.createElement('template');tpl.innerHTML='<span>template</span>';"
