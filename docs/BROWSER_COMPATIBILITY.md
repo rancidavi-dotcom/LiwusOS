@@ -290,8 +290,11 @@ execute; their presence does not imply standards-complete browser behavior:
   map's top-level string entries under `imports`, with exact and longest-prefix
   matching (up to 32 entries and 64 KiB of JSON). `scopes`, later-map merging,
   integrity metadata, and browser-complete URL resolution are not implemented.
-  Module fetching is synchronous while page scripts run. `async`, `defer`, and
-  SRI processing do not yet match browser scheduling and integrity semantics.
+  Module fetching is synchronous while page scripts run. Dynamically inserted
+  classic `<script src>` elements use the bounded fetch bridge and dispatch
+  `load`/`error` after global evaluation; dynamically inserted module scripts
+  are rejected explicitly. `async`, `defer`, and SRI processing do not yet
+  match browser scheduling and integrity semantics.
 
 The address bar opens explicit URLs directly. Bare hostnames (including IPv4
 hosts and hosts with paths) default to HTTPS; text that does not
