@@ -1,10 +1,10 @@
-VERSION=2.2.30
+VERSION=2.2.31
 DATE=2026-11-15
 PACKAGES=kilo,c_demo,neofetch,sysbench
-NOTES=Corrige limites do mouse PS/2 e USB para acompanhar a resolucao real da tela (1366x768, 1920x1080, etc.)
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.30
-BOOT_IMAGE_SIZE=5312512
-BOOT_IMAGE_CRC32=fcf48803
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.30
+NOTES=Driver Intel HDA/Realtek P2 completo conforme especificacao Intel Rev 1.0a: DMA Uncacheable (No-Snoop), Amp Capabilities reais (Offset/NumSteps sem ignorar Mute-Only), GPIO/EAPD da placa-mae e selecao multi-controlador (ignora HDMI sem P2)
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.31
+BOOT_IMAGE_SIZE=5316608
+BOOT_IMAGE_CRC32=14f88d66
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.31
 SYSTEM_ARCHIVE_SIZE=14704640
 SYSTEM_ARCHIVE_CRC32=0fb88c6b
