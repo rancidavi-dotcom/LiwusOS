@@ -242,6 +242,7 @@ int test_ring3_processes(void) {
             "if(output.textContent!=='old & text'||"
             "output.getAttribute('data-label')!=='A & B')"
             "throw new Error('HTML entities were not decoded in the DOM');"
+            "const attrs=output.attributes;if(!(attrs instanceof NamedNodeMap)||attrs.getNamedItem('data-label').value!=='A & B'||attrs.item(0)===null)throw new Error('NamedNodeMap failed');"
             "document.title='Script title';"
             "output.textContent='mutated <&';"
             "if(output.textContent!=='mutated <&')"

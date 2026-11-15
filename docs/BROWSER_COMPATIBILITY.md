@@ -94,7 +94,8 @@ execute; their presence does not imply standards-complete browser behavior:
   - `Element.prototype.dataset`: `DOMStringMap` proxy synchronizing camelCase properties with `data-*` attributes.
   - Traversal and mutation helpers: `matches()`, `closest()`, `parentElement`,
     `children`, `childElementCount`, element-sibling accessors, `className`,
-    `getAttributeNames()`, `toggleAttribute()`, `replaceChildren()`,
+    `getAttributeNames()`, `attributes`/`NamedNodeMap` snapshots with
+    `item()`/`getNamedItem()`/bounded mutation helpers, `toggleAttribute()`, `replaceChildren()`,
     `before()`, `after()`, `remove()`, and `innerText`.
   - Collection compatibility: bounded snapshot results from `querySelectorAll()`
     are branded as `NodeList`, while `getElementsByTagName()` and
