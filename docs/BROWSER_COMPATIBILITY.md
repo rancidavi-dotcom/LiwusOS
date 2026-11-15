@@ -76,7 +76,12 @@ execute; their presence does not imply standards-complete browser behavior:
   - `window`, `self`, `top`, `parent`, `globalThis`.
   - Comprehensive `console` (`log`, `info`, `warn`, `error`, `debug`, `trace`, `dir`, `table`).
   - Full `EventTarget` interface on `window` and DOM elements (`addEventListener`, `removeEventListener`, `dispatchEvent`).
-  - Standard event constructors: `Event`, `CustomEvent`, `MouseEvent`, `KeyboardEvent`, `FocusEvent`, `UIEvent`.
+  - Standard event constructors: `Event`, `CustomEvent`, `UIEvent`, `FocusEvent`,
+    `MouseEvent`, `PointerEvent`, `KeyboardEvent`, `InputEvent`, `SubmitEvent`,
+    `MessageEvent`, `ProgressEvent`, `ErrorEvent`, `CloseEvent`, `PopStateEvent`,
+    and `HashChangeEvent`. These constructors provide the commonly consumed
+    fields and inherit from the corresponding event base; native capture/bubble
+    dispatch remains bounded by the LIWUS DOM bridge.
 - **DOM & Element APIs**:
   - Element prototypes: `Node`, `Element`, `HTMLElement`, `HTMLDivElement`, `HTMLSpanElement`, `HTMLInputElement`, `HTMLButtonElement`, `HTMLAnchorElement`, `HTMLImageElement`, `HTMLScriptElement`, `HTMLStyleElement`, `DocumentFragment`.
   - `DOMParser.parseFromString()` (bounded detached HTML document view) and
