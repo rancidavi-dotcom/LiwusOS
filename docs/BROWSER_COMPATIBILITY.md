@@ -146,7 +146,9 @@ execute; their presence does not imply standards-complete browser behavior:
     `MediaMetadata` provide bounded metadata hooks without audio-focus
     transport. `FontFace` and in-memory
     `FontFaceSet` operations (`add`, `delete`, `has`, `clear`, `forEach`) are
-    also available, but no font download or WOFF2 decoding is implemented.
+    also available, with typed `FontFaceSet` iteration, `ready`/`status`,
+    `load()` and `loadingdone` events. This remains an in-memory compatibility
+    surface: no font download or WOFF2 decoding is implemented.
     Codec and media transport are not implemented.
   - Resource-element reflection: common `script`, `link`, `img`, and media
     attributes (`src`, `rel`, `as`, `media`, `integrity`, `nonce`, CORS and
