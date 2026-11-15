@@ -127,7 +127,10 @@ execute; their presence does not imply standards-complete browser behavior:
     no persistent database, payment transport, or native selection editing is
     implied.
   - Media and fonts: bounded `document.fonts` readiness/load checks plus
-    `Image()` and `Audio()` constructors. `audio`/`video` elements expose
+    `Image()` and `Audio()` constructors. `HTMLScriptElement.supports()` and
+    `HTMLLinkElement.supports()` cover common module/preload feature queries;
+    image elements expose a resolving `decode()` shim. `audio`/`video`
+    elements expose
     feature-detection, playback-state, and event shims (`play`, `pause`,
     `load`, `canPlayType`, `currentTime`, `requestVideoFrameCallback`, and
     rejected picture-in-picture requests); `navigator.mediaCapabilities`
