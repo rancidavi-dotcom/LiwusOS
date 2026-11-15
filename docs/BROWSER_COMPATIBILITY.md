@@ -162,8 +162,8 @@ execute; their presence does not imply standards-complete browser behavior:
   - `XMLHttpRequest`: partial multi-state polyfill (`UNSENT`, `OPENED`, `HEADERS_RECEIVED`, `LOADING`, `DONE`) backed by `fetch`, with request/response headers, `responseURL`, typed JSON responses, abort/error/load events, and the standard static `Response.json/error/redirect` helpers.
   - Storage: `window.localStorage` and `window.sessionStorage` with standard Web Storage API and dynamic property access.
   - Web Crypto: `crypto.getRandomValues(typedArray)`, `crypto.randomUUID()`, and
-    bounded real `crypto.subtle.digest('SHA-256', data)`; unsupported digest
-    algorithms reject with `NotSupportedError`.
+    bounded real `crypto.subtle.digest('SHA-1'|'SHA-256', data)`; unsupported
+    digest algorithms reject with `NotSupportedError`.
   - Encoding & Codecs: `btoa()`, `atob()`, `TextEncoder`, `TextDecoder`.
   - URLs: `URL` and `URLSearchParams` parser/query serializer with root,
     directory, parent-directory, query-only, hash-only, and protocol-relative
