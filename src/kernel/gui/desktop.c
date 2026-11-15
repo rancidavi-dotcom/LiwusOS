@@ -700,6 +700,20 @@ static volatile size_t g_browser_fetch_total;
 static bool g_browser_fetch_pending;
 static char g_browser_pending_url[BROWSER_URL_MAX];
 
+/* The JS bridge publishes complete DOM snapshots.  A page with a busy timer,
+ * observer, or hydration loop must not force a full LVGL tree rebuild on every
+ * scheduler tick.  Keep the guard per runtime generation so a new navigation
+ * always gets a clean budget. */
+#define BROWSER_RUNTIME_RENDER_MIN_TICKS 10U   /* 100 ms at 100 Hz */
+#define BROWSER_RUNTIME_RENDER_WINDOW_TICKS 6000U /* 60 seconds */
+#define BROWSER_RUNTIME_RENDER_MAX_PER_WINDOW 300U
+static uint32_t g_browser_runtime_last_render_tick;
+static uint32_t g_browser_runtime_render_window_start;
+static uint32_t g_browser_runtime_render_count;
+static uint32_t g_browser_runtime_last_snapshot_hash;
+static size_t g_browser_runtime_last_snapshot_len;
+static bool g_browser_runtime_snapshot_seen;
+
 #define BROWSER_HIST_MAX 16
 static char g_browser_hist[BROWSER_HIST_MAX][BROWSER_URL_MAX];
 static int g_browser_hist_count = 0;
@@ -720,6 +734,35 @@ static uint32_t g_web_cache_clock = 0;
 static size_t g_web_cache_bytes = 0;
 static size_t g_browser_progress_last = 0;
 static unsigned g_browser_resource_number = 0;
+
+static uint32_t browser_runtime_snapshot_hash(const uint8_t *data, size_t len) {
+    /* FNV-1a is sufficient here: this is only a duplicate-snapshot filter,
+     * not a security primitive. */
+    uint32_t hash = 2166136261U;
+    for (size_t i = 0; data && i < len; ++i) {
+        hash ^= data[i];
+        hash *= 16777619U;
+    }
+    return hash;
+}
+
+static void browser_runtime_reset_guard(void) {
+    g_browser_runtime_last_render_tick = 0;
+    g_browser_runtime_render_window_start = timer_ticks;
+    g_browser_runtime_render_count = 0;
+    g_browser_runtime_last_snapshot_hash = 0;
+    g_browser_runtime_last_snapshot_len = 0;
+    g_browser_runtime_snapshot_seen = false;
+}
+
+static bool browser_runtime_render_budget_exhausted(uint32_t now) {
+    if ((uint32_t)(now - g_browser_runtime_render_window_start) >=
+        BROWSER_RUNTIME_RENDER_WINDOW_TICKS) {
+        g_browser_runtime_render_window_start = now;
+        g_browser_runtime_render_count = 0;
+    }
+    return g_browser_runtime_render_count >= BROWSER_RUNTIME_RENDER_MAX_PER_WINDOW;
+}
 
 static void browser_progress_title(const char *phase, size_t received,
                                   size_t total) {
@@ -2507,6 +2550,7 @@ static uint8_t *browser_run_scripts(const uint8_t *source, size_t length,
     }
     if (!has_script) return NULL;
     browser_stop_runtime();
+    browser_runtime_reset_guard();
     if (!browser_runtime_channels_open()) return NULL;
     (void)vfs_truncate(g_web_runtime_commands);
     (void)vfs_truncate(g_web_runtime_notifications);
@@ -2647,6 +2691,18 @@ static void browser_runtime_poll_update(void) {
         browser_runtime_send("ack\n");
         return;
     }
+
+    uint32_t now = timer_ticks;
+    if (browser_runtime_render_budget_exhausted(now)) {
+        /* A continuously mutating page is more dangerous than a stale final
+         * frame: stop its isolated runtime before it can exhaust the kernel
+         * heap with full-page rebuilds. */
+        browser_runtime_send("ack\n");
+        browser_stop_runtime();
+        browser_http_status("JavaScript limitado para proteger a memoria", NULL);
+        return;
+    }
+
     /* Free the previous widget tree's page_mem BEFORE reading the 2-3 MB
      * runtime DOM snapshot from VFS so KHeap does not peak with two full
      * page trees plus the serialized DOM buffer simultaneously. */
@@ -2655,9 +2711,41 @@ static void browser_runtime_poll_update(void) {
     uint8_t *html = browser_read_runtime_dom(&html_length);
     (void)vfs_unlink(g_web_runtime_output_path);
     if (html) {
+        if (g_browser_runtime_snapshot_seen &&
+            (uint32_t)(now - g_browser_runtime_last_render_tick) <
+                BROWSER_RUNTIME_RENDER_MIN_TICKS) {
+            /* IPC reads consume the notification.  Acknowledge this
+             * intermediate snapshot instead of returning with QuickJS stuck
+             * in awaiting_ack; the next mutation will publish a fresh one. */
+            kfree(html);
+            browser_runtime_send("ack\n");
+            return;
+        }
+        uint32_t hash = browser_runtime_snapshot_hash(html, html_length);
+        if (g_browser_runtime_snapshot_seen &&
+            hash == g_browser_runtime_last_snapshot_hash &&
+            html_length == g_browser_runtime_last_snapshot_len) {
+            /* Repeated observer notifications with identical serialized DOM
+             * do not justify rebuilding the entire LVGL tree. */
+            kfree(html);
+            browser_runtime_send("ack\n");
+            return;
+        }
         browser_render_document(html, html_length);
         kfree(html);
+        g_browser_runtime_last_snapshot_hash = hash;
+        g_browser_runtime_last_snapshot_len = html_length;
+        g_browser_runtime_last_render_tick = now;
+        g_browser_runtime_snapshot_seen = true;
+        g_browser_runtime_render_count++;
         browser_runtime_send("ack\n");
+    } else {
+        /* Never leave QuickJS blocked forever if the VFS snapshot could not
+         * be allocated/read. Stop this generation instead of spinning on an
+         * unsatisfiable notification while the UI says "Executando JS". */
+        browser_runtime_send("ack\n");
+        browser_stop_runtime();
+        browser_http_status("JavaScript interrompido (snapshot indisponivel)", NULL);
     }
 }
 
