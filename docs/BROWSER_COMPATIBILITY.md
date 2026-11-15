@@ -194,6 +194,10 @@ execute; their presence does not imply standards-complete browser behavior:
     metadata, bounded `navigator.connection` network hints, and
     `navigator.mediaDevices` enumeration/permission failures are exposed so
     applications can choose a fallback without assuming hardware capture.
+    Browser identity probes expose bounded `webdriver`, `vendor`,
+    `deviceMemory`, `doNotTrack`, `navigator.credentials`, geolocation
+    permission errors, `navigator.share()`, and `canShare()`; credential,
+    geolocation, and share transports are not implemented.
     `navigator.storage.persist()` and bounded immediate `navigator.locks`
     requests/query results are also available; `scheduler.postTask()` and
     `scheduler.yield()` schedule work through the existing Promise queue and
