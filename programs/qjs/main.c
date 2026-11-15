@@ -1794,7 +1794,6 @@ static const char qjs_web_env_bootstrap[] =
     "  if (!Object.hasOwn) Object.hasOwn = function(obj, key) { return Object.prototype.hasOwnProperty.call(Object(obj), key); };\n"
     "  if (!g.AggregateError) g.AggregateError = class AggregateError extends Error { constructor(errors, message) { super(message); this.name = 'AggregateError'; this.errors = Array.from(errors || []); } };\n"
     "  if (!Promise.any) Promise.any = function(iterable) { return new Promise(function(resolve, reject) { var list = Array.from(iterable || []), errors = [], pending = list.length; if (!pending) { reject(new g.AggregateError([], 'All promises were rejected')); return; } list.forEach(function(item, index) { Promise.resolve(item).then(resolve, function(err) { errors[index] = err; pending--; if (!pending) reject(new g.AggregateError(errors, 'All promises were rejected')); }); }); }); };\n"
-    "  if (!g.structuredClone) g.structuredClone = function(val) { return JSON.parse(JSON.stringify(val)); };\n"
     "  if (!g.CSS) g.CSS = {};\n"
     "  if (!g.CSS.supports) g.CSS.supports = function() { return true; };\n"
     "  if (!g.CSS.escape) g.CSS.escape = function(s) { return String(s).replace(/([^\\w-])/g, '\\\\$1'); };\n"
