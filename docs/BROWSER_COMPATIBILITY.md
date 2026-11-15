@@ -186,6 +186,10 @@ execute; their presence does not imply standards-complete browser behavior:
     observations for layout libraries. `matchMedia()` returns an event-capable
     `MediaQueryList` with legacy listener aliases and bounded composition of
     `not`, `and`, and comma-separated alternatives.
+    `PerformanceObserver`/`PerformanceEntry`, `MessageChannel`/`MessagePort`,
+    `Worker`/`SharedWorker`, and `ClipboardItem` surfaces are available for
+    feature detection and bounded local messaging; they do not create worker
+    threads or provide background script execution.
   - Scheduling and cancellation: `requestIdleCallback()`/
     `cancelIdleCallback()`, `AbortSignal.any()`, `AbortSignal.throwIfAborted()`,
     and `navigator.sendBeacon()` (using the existing fetch bridge) are exposed.
