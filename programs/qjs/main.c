@@ -318,7 +318,8 @@ static int qjs_install_fetch(JSContext *ctx) {
     }
     static const char response_factory[] =
         "globalThis.__liwusMakeResponse=function(status,body,url,headers){"
-        "if(globalThis.Response)return new globalThis.Response(body,{status:status,url:url||'',headers:headers||{}});"
+        "var text=status===200?'OK':status===201?'Created':status===204?'No Content':status===301?'Moved Permanently':status===302?'Found':status===304?'Not Modified':status===400?'Bad Request':status===401?'Unauthorized':status===403?'Forbidden':status===404?'Not Found':status===500?'Internal Server Error':'';"
+        "if(globalThis.Response)return new globalThis.Response(body,{status:status,statusText:text,url:url||'',headers:headers||{}});"
         "return {status:status,ok:status>=200&&status<300,url:url||'',body:body,headers:new Headers(headers||{}),"
         "text:function(){return Promise.resolve(body)},"
         "json:function(){return Promise.resolve(JSON.parse(body))}}};";
