@@ -53,6 +53,7 @@ typedef struct {
     uint32_t hdr_window;
     char location[HTTP_URL_MAX];
     char content_type[128];
+    char headers[1024];
     uint8_t *body_buf;
     size_t body_size;
     size_t body_capacity;
@@ -111,6 +112,49 @@ static bool extract_header_value(const char *headers, const char *name, char *ou
         p = line_end + 1;
     }
     return false;
+}
+
+static void serialize_http_headers(const char *headers, size_t headers_len,
+                                   char *out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    out[0] = '\0';
+    if (!headers || !headers_len) return;
+    size_t used = 0;
+    const char *p = headers;
+    const char *end = headers + headers_len;
+    bool first = true;
+    while (p < end && used + 2U < out_sz) {
+        const char *line_end = p;
+        while (line_end < end && *line_end != '\n') line_end++;
+        if (!line_end) line_end = end;
+        const char *colon = p;
+        while (colon < line_end && *colon != ':') colon++;
+        if (colon && colon > p) {
+            const char *name_end = colon;
+            while (name_end > p && (name_end[-1] == ' ' || name_end[-1] == '\t' || name_end[-1] == '\r')) name_end--;
+            const char *value = colon + 1;
+            while (value < line_end && (*value == ' ' || *value == '\t')) value++;
+            const char *value_end = line_end;
+            while (value_end > value && (value_end[-1] == '\r' || value_end[-1] == ' ' || value_end[-1] == '\t')) value_end--;
+            size_t name_len = (size_t)(name_end - p);
+            size_t value_len = (size_t)(value_end - value);
+            if (name_len && value_len && name_len + value_len + 2U < out_sz - used) {
+                if (!first) out[used++] = '|';
+                first = false;
+                for (size_t i = 0; i < name_len; ++i) {
+                    char c = p[i];
+                    out[used++] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+                }
+                out[used++] = ':';
+                for (size_t i = 0; i < value_len && used + 1U < out_sz; ++i) {
+                    unsigned char c = (unsigned char)value[i];
+                    out[used++] = (c < 0x20U || c == 0x7fU || c == '|') ? ' ' : (char)c;
+                }
+                out[used] = '\0';
+            }
+        }
+        p = line_end < end ? line_end + 1 : end;
+    }
 }
 
 static void parse_http_headers(const char *scratch, size_t scratch_len,
@@ -452,6 +496,7 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
     size_t result_size = 0;
     int status_code = 0;
     char response_content_type[128] = "";
+    char response_headers[1024] = "";
 
     for (int redirect_hop = 0; redirect_hop < 4; redirect_hop++) {
         /* 1. Parse robusto da URL (suporta https://, http://, htts://, htps://, esquemas tolerantes e urls sem esquema) */
@@ -767,6 +812,9 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
                           status_code, (uint32_t)scratch_len, (uint32_t)result_size,
                           is_chunked ? 1 : 0, tls_err);
 
+            serialize_http_headers(scratch, scratch_len, response_headers,
+                                   sizeof(response_headers));
+
             kfree(scratch);
             kfree(chunk);
             tls_close(tls);
@@ -980,6 +1028,8 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
             strncpy(response_content_type, ctx.content_type,
                     sizeof(response_content_type) - 1);
             response_content_type[sizeof(response_content_type) - 1] = '\0';
+            serialize_http_headers(ctx.scratch, ctx.scratch_len,
+                                   response_headers, sizeof(response_headers));
             kfree(ctx.scratch);
 
             if (result_body && result_size > 0 && is_chunked) {
@@ -1024,6 +1074,8 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
         strncpy(meta->content_type, response_content_type,
                 sizeof(meta->content_type) - 1);
         meta->content_type[sizeof(meta->content_type) - 1] = '\0';
+        strncpy(meta->headers, response_headers, sizeof(meta->headers) - 1);
+        meta->headers[sizeof(meta->headers) - 1] = '\0';
     }
 
     if (status_code != 200 && status_code != 0) {

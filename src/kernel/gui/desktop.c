@@ -2861,14 +2861,14 @@ static void browser_run_js_fetch(const char *request) {
     }
     content_type[content_type_len] = '\0';
 
-    char response[320];
+    char response[1536];
     if (generation != g_web_runtime_generation) {
         (void)vfs_unlink(path);
         return;
     }
-    int length = lv_snprintf(response, sizeof(response), "%u %u %d %s %s\n",
+    int length = lv_snprintf(response, sizeof(response), "%u %u %d %s %s\t%s\n",
                              generation, request_id, status, path,
-                             content_type);
+                             content_type, meta.headers);
     if (length > 0 && (size_t)length < sizeof(response))
         (void)write_fs(g_web_runtime_fetch_responses, 0, (uint32_t)length,
                        (uint8_t *)response);

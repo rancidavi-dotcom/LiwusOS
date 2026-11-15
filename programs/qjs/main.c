@@ -29,7 +29,7 @@
 #define QJS_MAX_MODULE_BYTES (4u * 1024u * 1024u)
 #define QJS_MODULE_FETCH_TIMEOUT_TICKS 2000u
 #define QJS_MODULE_FETCH_ID_BASE 0x40000000u
-#define QJS_FETCH_RESPONSE_LINE_BYTES 160u
+#define QJS_FETCH_RESPONSE_LINE_BYTES 1536u
 #define QJS_DEFERRED_FETCH_RESPONSES 64u
 #define QJS_IMPORT_MAP_MAX_ENTRIES 32u
 #define QJS_IMPORT_MAP_SPECIFIER_BYTES 128u
@@ -2654,8 +2654,11 @@ static int qjs_resolve_fetch_response(JSContext *ctx, char *line) {
     if (!third) return 0;
     *third++ = '\0';
     char *content_type = strchr(third, ' ');
+    char *response_headers = NULL;
     if (content_type) {
         *content_type++ = '\0';
+        response_headers = strchr(content_type, '\t');
+        if (response_headers) *response_headers++ = '\0';
     } else {
         content_type = "";
     }
@@ -2666,6 +2669,10 @@ static int qjs_resolve_fetch_response(JSContext *ctx, char *line) {
     if (path_end) *path_end = '\0';
     char *type_end = strpbrk(content_type, "\r\n");
     if (type_end) *type_end = '\0';
+    if (response_headers) {
+        char *headers_end = strpbrk(response_headers, "\r\n");
+        if (headers_end) *headers_end = '\0';
+    }
     if (generation != qjs_fetch_generation) return 0;
     qjs_fetch_t *fetch = NULL;
     for (size_t i = 0; i < QJS_MAX_PENDING_FETCHES; ++i) {
@@ -2702,6 +2709,22 @@ static int qjs_resolve_fetch_response(JSContext *ctx, char *line) {
             if (content_type[0]) {
                 JS_SetPropertyStr(ctx, headers, "content-type",
                                   JS_NewString(ctx, content_type));
+            }
+            if (response_headers && response_headers[0]) {
+                char *cursor = response_headers;
+                while (*cursor) {
+                    char *next = strchr(cursor, '|');
+                    if (next) *next = '\0';
+                    char *colon = strchr(cursor, ':');
+                    if (colon && colon > cursor) {
+                        *colon++ = '\0';
+                        while (*colon == ' ' || *colon == '\t') colon++;
+                        JS_SetPropertyStr(ctx, headers, cursor,
+                                          JS_NewString(ctx, colon));
+                    }
+                    if (!next) break;
+                    cursor = next + 1;
+                }
             }
             JSValue args[4] = {JS_NewInt32(ctx, status), body_value,
                                JS_NewString(ctx, fetch->url), headers};

@@ -146,10 +146,11 @@ execute; their presence does not imply standards-complete browser behavior:
     this enables small form/API requests while retaining an explicit size
     limit. Responses remain fully buffered and the bridge does not implement
     streaming uploads, service workers, or browser CORS policy.
-    The native bridge now propagates the received `Content-Type` into
-    `Response.headers.get('content-type')` (whitespace is normalized for the
-    bounded IPC record). Other response headers are still intentionally not
-    exposed.
+    The native bridge propagates a sanitized, bounded response-header snapshot
+    into `Response.headers` and XHR response-header accessors; values are
+    limited to a 1 KiB IPC record and control delimiters are replaced. This
+    includes `Content-Type`, cache/redirect metadata, and other ordinary HTTP
+    headers without claiming browser cookie/CORS policy.
   - `XMLHttpRequest`: partial multi-state polyfill (`UNSENT`, `OPENED`, `HEADERS_RECEIVED`, `LOADING`, `DONE`) backed by `fetch`, with request/response headers, `responseURL`, typed JSON responses, abort/error/load events, and the standard static `Response.json/error/redirect` helpers.
   - Storage: `window.localStorage` and `window.sessionStorage` with standard Web Storage API and dynamic property access.
   - Web Crypto: `crypto.getRandomValues(typedArray)`, `crypto.randomUUID()`, and `crypto.subtle.digest()`.

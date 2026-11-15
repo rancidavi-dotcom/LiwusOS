@@ -9,9 +9,12 @@ typedef void (*http_output_fn)(const char *msg, void *user_data);
 typedef void (*http_progress_fn)(size_t received, size_t total, void *user_data);
 
 /* Metadados limitados que podem ser expostos ao consumidor de uma resposta.
- * O cliente continua sendo deliberadamente GET-only neste milestone. */
+ * O transporte continua deliberadamente limitado a registros pequenos. */
 typedef struct {
     char content_type[128];
+    /* Bounded `name:value|name:value` response header snapshot for the web
+     * runtime. Values are sanitized to exclude control bytes and '|'. */
+    char headers[1024];
 } http_response_meta_t;
 
 /* Baixa um arquivo via HTTP ou HTTPS (GET) e grava diretamente no disco SDFS.
