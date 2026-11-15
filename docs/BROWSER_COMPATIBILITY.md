@@ -280,7 +280,9 @@ execute; their presence does not imply standards-complete browser behavior:
     create a separate native process or compositor surface.
     Common `on*` DOM handler properties (`onclick`, `oninput`, `onchange`,
     `onsubmit`, focus/keyboard/pointer and clipboard handlers) are wired to the
-    native bounded event dispatcher.
+    native bounded event dispatcher. Window properties for `onload`,
+    `onresize`, `onscroll`, history traversal, page visibility and page-show/
+    hide are wired to the same dispatcher.
     Page lifecycle listeners receive bounded `DOMContentLoaded` and `load`
     dispatch after inline/module scripts complete.
   - `WebSocket`, `EventSource`, and `BroadcastChannel` are exposed so feature
