@@ -200,6 +200,7 @@ int test_ring3_processes(void) {
             "const params=new URLSearchParams([['b','2'],['a','1']]);params.sort();"
             "if(params.size!==2||params.toString()!=='a=1&b=2'||params.entries().next().value[0]!=='a'||params.keys().next().value!=='a'||params.values().next().value!=='1')"
             "throw new Error('URLSearchParams extensions failed');"
+            "const encodedParams=new URLSearchParams([['q','hello world'],['tilde','~']]);if(encodedParams.toString()!=='q=hello+world&tilde=%7E'||new URLSearchParams(encodedParams).get('q')!=='hello world')throw new Error('URLSearchParams form encoding failed');"
             "const rel=new URL('../assets/app.js?x=1#top','https://github.com/org/repo/index.html');"
             "if(rel.href!=='https://github.com/org/assets/app.js?x=1#top'||"
             "new URL('?q=2','https://github.com/a/b').href!=='https://github.com/a/b?q=2'||"
