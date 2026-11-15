@@ -19,7 +19,7 @@ extern int sys_waitpid(int pid, int *status, int options);
 #define LPKG_REPO_FILE   "/etc/lpkg.repo"
 #define LPKG_DB_FILE     "/etc/lpkg.db"
 #define LPKG_OS_RELEASE  "/etc/os-release"
-#define LPKG_BUILD_VERSION "2.2.33"
+#define LPKG_BUILD_VERSION "2.2.34"
 #define LPKG_DEFAULT_REPO "https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo"
 #define LPKG_SYSTEM_MANIFEST "system-v2.txt"
 

@@ -27,6 +27,7 @@
 #include "gui/browser_url.h"
 #include "kernel/users.h"
 #include "kernel/media.h"
+#include "net/liwustube.h"
 
 #define MINIMP3_IMPLEMENTATION
 #define MINIMP3_ONLY_MP3
@@ -1022,6 +1023,7 @@ static void create_player_window(void);
 static void player_open_file(const char *path);
 static void player_poll_stream(void);
 static void dock_player_cb(lv_event_t *e);
+static void set_player_tube_focus(bool focus);
 static void pkgmgr_refresh_list(void);
 static void pkgmgr_refresh_sysupdate_ui(void);
 static void pkgmgr_set_status(const char *msg, uint32_t color_hex);
@@ -1033,6 +1035,7 @@ static void win_min_event_cb(lv_event_t *e) {
     if (win == win_browser) set_browser_url_focus(false);
     if (win == win_pkgmgr) set_pkg_input_focus(false);
     if (win == win_installer) set_inst_host_focus(false);
+    if (win == win_player) set_player_tube_focus(false);
 }
 
 static void win_max_event_cb(lv_event_t *e) {
@@ -1503,6 +1506,7 @@ static void dock_term_cb(lv_event_t *e) {
     set_browser_url_focus(false);
     set_pkg_input_focus(false);
     set_inst_host_focus(false);
+    set_player_tube_focus(false);
 }
 
 static void dock_browser_cb(lv_event_t *e) {
@@ -1532,6 +1536,7 @@ static void dock_pkgmgr_cb(lv_event_t *e) {
     set_browser_url_focus(false);
     set_pkg_input_focus(false);
     set_inst_host_focus(false);
+    set_player_tube_focus(false);
 
     if (!lpkg_is_repo_synced() && net_has_ip()) {
         pkgmgr_set_status("Buscando pacotes e versoes mais recentes no GitHub HTTPS...", BZ_ACCENT);
@@ -1589,6 +1594,7 @@ static void dock_settings_cb(lv_event_t *e) {
     set_browser_url_focus(false);
     set_pkg_input_focus(false);
     set_inst_host_focus(false);
+    set_player_tube_focus(false);
     settings_refresh_users();
     settings_refresh_choices();
     settings_refresh_network();
@@ -1601,6 +1607,7 @@ static void dock_about_cb(lv_event_t *e) {
     set_browser_url_focus(false);
     set_pkg_input_focus(false);
     set_inst_host_focus(false);
+    set_player_tube_focus(false);
 }
 
 static void installer_detect_disk(void);
@@ -1613,6 +1620,7 @@ static void dock_installer_cb(lv_event_t *e) {
     set_browser_url_focus(false);
     set_pkg_input_focus(false);
     set_inst_host_focus(false);
+    set_player_tube_focus(false);
     installer_detect_disk();
 }
 
@@ -5245,6 +5253,123 @@ static void player_vol_cb(lv_event_t *e) {
     hda_set_volume((uint8_t)val);
 }
 
+static lv_obj_t *ta_player_tube = NULL;
+static lv_obj_t *btn_player_tube = NULL;
+static bool g_player_tube_focused = false;
+
+static void set_player_tube_focus(bool focus) {
+    g_player_tube_focused = focus;
+    if (ta_player_tube) {
+        if (focus) lv_obj_add_state(ta_player_tube, LV_STATE_FOCUSED);
+        else lv_obj_clear_state(ta_player_tube, LV_STATE_FOCUSED);
+    }
+}
+
+static void player_tube_click_cb(lv_event_t *e) {
+    (void)e;
+    set_browser_url_focus(false);
+    set_pkg_input_focus(false);
+    set_settings_user_focus(false);
+    set_settings_pass_focus(false);
+    set_player_tube_focus(true);
+}
+
+static void player_tube_search_cb(lv_event_t *e) {
+    (void)e;
+    if (!ta_player_tube) return;
+    const char *txt = lv_textarea_get_text(ta_player_tube);
+    if (!txt || !txt[0]) return;
+
+    if (!net_has_ip()) {
+        if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Sem conexao de rede ativa.");
+        return;
+    }
+
+    char vid[LIWUSTUBE_MAX_ID];
+    if (liwustube_extract_video_id(txt, vid, sizeof(vid)) == 0) {
+        if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Resolvendo stream do video...");
+        vga_flip();
+
+        char stream_info_url[LIWUSTUBE_MAX_URL];
+        liwustube_build_stream_url(NULL, vid, stream_info_url, sizeof(stream_info_url));
+
+        uint8_t *json_data = NULL;
+        size_t json_sz = 0;
+        int status = 0;
+        int res = http_get_mem_progress_limit(stream_info_url, &json_data, &json_sz, &status, NULL, NULL, NULL, NULL, 512 * 1024);
+        if (res > 0 && json_data) {
+            liwustube_stream_info_t sinfo;
+            if (liwustube_parse_stream_json((const char *)json_data, json_sz, &sinfo) == 0) {
+                if (lbl_player_track) {
+                    char msg[128];
+                    lv_snprintf(msg, sizeof(msg), "LiwusTube: Baixando %s...", sinfo.title);
+                    lv_label_set_text(lbl_player_track, msg);
+                }
+                vga_flip();
+                int dl = http_download_file(sinfo.stream_url, "/tmp/youtube.mp4", NULL, NULL);
+                if (dl > 0) {
+                    player_open_file("/tmp/youtube.mp4");
+                } else {
+                    if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Falha no download do stream.");
+                }
+            } else {
+                if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Nenhuma stream 360p disponivel.");
+            }
+            kfree(json_data);
+        } else {
+            if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Erro de conexao com API Piped.");
+        }
+    } else {
+        if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Pesquisando na API...");
+        vga_flip();
+
+        char search_url[LIWUSTUBE_MAX_URL];
+        liwustube_build_search_url(NULL, txt, search_url, sizeof(search_url));
+
+        uint8_t *json_data = NULL;
+        size_t json_sz = 0;
+        int status = 0;
+        int res = http_get_mem_progress_limit(search_url, &json_data, &json_sz, &status, NULL, NULL, NULL, NULL, 512 * 1024);
+        if (res > 0 && json_data) {
+            liwustube_search_result_t sres;
+            if (liwustube_parse_search_json((const char *)json_data, json_sz, &sres) == 0 && sres.count > 0) {
+                char stream_info_url[LIWUSTUBE_MAX_URL];
+                liwustube_build_stream_url(NULL, sres.items[0].id, stream_info_url, sizeof(stream_info_url));
+                kfree(json_data);
+                json_data = NULL;
+
+                if (lbl_player_track) {
+                    char msg[128];
+                    lv_snprintf(msg, sizeof(msg), "LiwusTube: Encontrado \"%s\"...", sres.items[0].title);
+                    lv_label_set_text(lbl_player_track, msg);
+                }
+                vga_flip();
+
+                res = http_get_mem_progress_limit(stream_info_url, &json_data, &json_sz, &status, NULL, NULL, NULL, NULL, 512 * 1024);
+                if (res > 0 && json_data) {
+                    liwustube_stream_info_t sinfo;
+                    if (liwustube_parse_stream_json((const char *)json_data, json_sz, &sinfo) == 0) {
+                        int dl = http_download_file(sinfo.stream_url, "/tmp/youtube.mp4", NULL, NULL);
+                        if (dl > 0) {
+                            player_open_file("/tmp/youtube.mp4");
+                        } else {
+                            if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Erro ao baixar stream.");
+                        }
+                    } else {
+                        if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Stream 360p nao encontrada.");
+                    }
+                    kfree(json_data);
+                }
+            } else {
+                if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Nenhum video encontrado.");
+                kfree(json_data);
+            }
+        } else {
+            if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Falha ao consultar busca na API.");
+        }
+    }
+}
+
 static void player_poll_stream(void) {
     if (!g_player_is_playing || !g_player_file_data || g_player_file_size == 0) return;
 
@@ -5343,8 +5468,8 @@ static void create_player_window(void) {
     player_load_blank_screen();
 
     win_player = lv_win_create(lv_scr_act(), WIN_HEADER_H);
-    setup_window(win_player, 540, 390, 240, 90);
-    add_window_controls(win_player, "  Player de Midia (MP3 / MP4)");
+    setup_window(win_player, 540, 435, 240, 70);
+    add_window_controls(win_player, "  Player de Midia (MP3 / MP4 / LiwusTube)");
 
     lv_obj_t *content = lv_win_get_content(win_player);
     lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
@@ -5449,6 +5574,41 @@ static void create_player_window(void) {
     lv_obj_set_style_bg_color(slider_player_vol, lv_color_hex(BZ_GREEN), LV_PART_INDICATOR);
     lv_obj_add_event_cb(slider_player_vol, player_vol_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
+    /* Barra LiwusTube / YouTube */
+    lv_obj_t *row_tube = lv_obj_create(content);
+    lv_obj_clear_flag(row_tube, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(row_tube, lv_pct(100), 36);
+    lv_obj_set_style_bg_opa(row_tube, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row_tube, 0, 0);
+    lv_obj_set_style_pad_all(row_tube, 0, 0);
+    lv_obj_set_flex_flow(row_tube, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row_tube, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(row_tube, 6, 0);
+
+    ta_player_tube = lv_textarea_create(row_tube);
+    lv_obj_set_height(ta_player_tube, 32);
+    lv_obj_set_flex_grow(ta_player_tube, 1);
+    lv_textarea_set_one_line(ta_player_tube, true);
+    lv_textarea_set_placeholder_text(ta_player_tube, "Pesquisar ou colar link do YouTube...");
+    lv_obj_set_style_text_font(ta_player_tube, &g_html_font_14, 0);
+    lv_obj_set_style_radius(ta_player_tube, 4, 0);
+    lv_obj_set_style_pad_ver(ta_player_tube, 6, 0);
+    lv_obj_set_style_bg_color(ta_player_tube, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_text_color(ta_player_tube, lv_color_hex(BZ_TEXT), 0);
+    lv_obj_set_style_border_width(ta_player_tube, 1, 0);
+    lv_obj_set_style_border_color(ta_player_tube, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_border_color(ta_player_tube, lv_color_hex(BZ_ACCENT), LV_STATE_FOCUSED);
+    lv_obj_add_event_cb(ta_player_tube, player_tube_click_cb, LV_EVENT_CLICKED, NULL);
+
+    btn_player_tube = lv_btn_create(row_tube);
+    lv_obj_set_size(btn_player_tube, 110, 32);
+    bz_style_button(btn_player_tube);
+    lv_obj_set_style_bg_color(btn_player_tube, lv_color_hex(BZ_ACCENT_DARK), 0);
+    lv_obj_t *lbl_tube_btn = lv_label_create(btn_player_tube);
+    lv_label_set_text(lbl_tube_btn, LV_SYMBOL_PLAY " YouTube");
+    lv_obj_center(lbl_tube_btn);
+    lv_obj_add_event_cb(btn_player_tube, player_tube_search_cb, LV_EVENT_CLICKED, NULL);
+
     lv_obj_add_flag(win_player, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -5460,6 +5620,7 @@ static void dock_player_cb(lv_event_t *e) {
     set_browser_url_focus(false);
     set_pkg_input_focus(false);
     set_inst_host_focus(false);
+    set_player_tube_focus(false);
 }
 
 /* =========================================================================
@@ -6080,9 +6241,11 @@ void desktop_task(void) {
         bool pkg_visible = win_pkgmgr && !lv_obj_has_flag(win_pkgmgr, LV_OBJ_FLAG_HIDDEN);
         bool inst_visible = win_installer && !lv_obj_has_flag(win_installer, LV_OBJ_FLAG_HIDDEN);
         bool settings_visible = win_settings && !lv_obj_has_flag(win_settings, LV_OBJ_FLAG_HIDDEN);
+        bool player_visible = win_player && !lv_obj_has_flag(win_player, LV_OBJ_FLAG_HIDDEN);
         lv_obj_t *target_ta = NULL;
         bool target_is_url = false;
         bool target_is_pkg = false;
+        bool target_is_tube = false;
         if (inst_visible && g_inst_host_focused && ta_inst_hostname) {
             target_ta = ta_inst_hostname;
         } else if (pkg_visible && g_pkg_input_focused && ta_pkg_input) {
@@ -6092,6 +6255,9 @@ void desktop_task(void) {
             target_ta = ta_settings_new_user;
         } else if (settings_visible && g_settings_pass_focused && ta_settings_new_pass) {
             target_ta = ta_settings_new_pass;
+        } else if (player_visible && g_player_tube_focused && ta_player_tube) {
+            target_ta = ta_player_tube;
+            target_is_tube = true;
         } else if (browser_visible) {
             if (g_active_web_input) {
                 target_ta = g_active_web_input;
@@ -6126,6 +6292,8 @@ void desktop_task(void) {
                         browser_go_cb(NULL);
                     } else if (target_is_pkg) {
                         pkgmgr_install_input_cb(NULL);
+                    } else if (target_is_tube) {
+                        player_tube_search_cb(NULL);
                     } else if (target_ta == ta_settings_new_user) {
                         set_settings_pass_focus(true);
                     } else if (target_ta == ta_settings_new_pass) {
