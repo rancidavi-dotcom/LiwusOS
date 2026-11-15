@@ -237,6 +237,7 @@ int test_ring3_processes(void) {
             "xhr.open('get','/api');if(xhr.readyState!==XMLHttpRequest.OPENED||xhr._m!=='GET')throw new Error('XHR open failed');"
             "xhr.setRequestHeader('X-Test','ok');xhr.abort();if(xhr.readyState!==XMLHttpRequest.UNSENT)throw new Error('XHR abort failed');"
             "const consumed=new Response('x');consumed.text();if(!consumed.bodyUsed)throw new Error('Response bodyUsed failed');"
+            "let blobDecoded='';new Blob(['abc']).arrayBuffer().then(function(buf){blobDecoded=new TextDecoder().decode(new Uint8Array(buf));});queueMicrotask(function(){if(blobDecoded!=='abc')throw new Error('Blob bytes failed');});"
             "let cloneRejected=false;try{consumed.clone();}catch(e){cloneRejected=true;}if(!cloneRejected)throw new Error('Response clone guard failed');"
             "const requestBody=new Request('/body',{method:'POST',body:'x'});requestBody.text();"
             "if(!requestBody.bodyUsed)throw new Error('Request bodyUsed failed');"

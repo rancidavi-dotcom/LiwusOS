@@ -222,8 +222,10 @@ execute; their presence does not imply standards-complete browser behavior:
     matching and `test()`/`exec()` results for common route guards. The
     `entries()`, `keys()`, and `values()` methods on `URLSearchParams`,
     `Headers`, and `FormData` return standard iterable iterators.
-  - File APIs: `FileReader` supports asynchronous text, ArrayBuffer and data URL
-    reads from the native `Blob`/`File` shims, with bounded load/error events.
+  - File APIs: `Blob`/`File` preserve string and typed-array bytes through
+    `text()`, `arrayBuffer()`, `bytes()`, `stream()` and bounded `slice()`;
+    `FileReader` supports asynchronous text, ArrayBuffer and data URL reads
+    with bounded load/error events.
   - Observers: `MutationObserver` now records bounded `childList`, attribute and
     character-data mutations with subtree/attribute filters and microtask
     delivery; typed `MutationRecord`, `NodeFilter`, `TreeWalker`, and
