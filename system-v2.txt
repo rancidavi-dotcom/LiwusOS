@@ -1,10 +1,10 @@
-VERSION=2.2.21
+VERSION=2.2.22
 DATE=2026-11-14
 PACKAGES=kilo,c_demo,neofetch,sysbench
-NOTES=LiwusOS 2.2.21: modo maximo via EDID sem resolucao fixa; Settings com volume HDA persistente; correcao OTA e shell
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.21
-BOOT_IMAGE_SIZE=5263360
-BOOT_IMAGE_CRC32=a9c4a1c0
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.21
+NOTES=LiwusOS 2.2.22: integracao de mecanismo de pesquisa pronto (Google, DuckDuckGo, Bing, Wikipedia)
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.22
+BOOT_IMAGE_SIZE=5271552
+BOOT_IMAGE_CRC32=71a0f231
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.22
 SYSTEM_ARCHIVE_SIZE=14376960
 SYSTEM_ARCHIVE_CRC32=6dcf7865
