@@ -82,6 +82,9 @@ execute; their presence does not imply standards-complete browser behavior:
     `HashChangeEvent`, `ToggleEvent`, and `CommandEvent`. These constructors provide the commonly consumed
     fields and inherit from the corresponding event base; native capture/bubble
     dispatch remains bounded by the LIWUS DOM bridge.
+    Common `on*` handler properties, including pointer, input, progress,
+    message, animation, transition, toggle, and command events, are installed
+    on element prototypes and route through the same bounded listener table.
 - **DOM & Element APIs**:
   - Element prototypes: `Node`, `Element`, `HTMLElement`, `HTMLDivElement`, `HTMLSpanElement`, `HTMLInputElement`, `HTMLButtonElement`, `HTMLAnchorElement`, `HTMLImageElement`, `HTMLScriptElement`, `HTMLStyleElement`, `DocumentFragment`.
   - `DOMParser.parseFromString()` (bounded detached HTML document view) and

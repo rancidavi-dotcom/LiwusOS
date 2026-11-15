@@ -1291,7 +1291,7 @@ static const char qjs_web_env_bootstrap[] =
     "      var slot = '__liwus_' + property;\n"
     "      Object.defineProperty(obj, property, { configurable: true, get: function() { return this[slot] || null; }, set: function(fn) { var old = this[slot]; if (old && this.removeEventListener) this.removeEventListener(type, old); this[slot] = typeof fn === 'function' ? fn : null; if (this[slot] && this.addEventListener) this.addEventListener(type, this[slot]); } });\n"
     "    }\n"
-    "    var __liwusHandlerNames = ['onclick','oninput','onchange','onsubmit','onload','onerror','onfocus','onblur','onkeydown','onkeyup','onkeypress','onpointerdown','onpointerup','oncopy','onpaste'];\n"
+    "    var __liwusHandlerNames = ['onclick','oninput','onchange','onsubmit','onreset','onload','onerror','onabort','onloadstart','onloadend','onprogress','onreadystatechange','onmessage','onopen','onclose','onfocus','onblur','onkeydown','onkeyup','onkeypress','onbeforeinput','onwheel','oncontextmenu','onpointerdown','onpointerup','onpointermove','onpointercancel','oncopy','oncut','onpaste','onanimationstart','onanimationend','ontransitionend','ontoggle','oncommand'];\n"
     "    for (var __hi = 0; __hi < __liwusHandlerNames.length; __hi++) __liwusInstallHandler(proto, __liwusHandlerNames[__hi], __liwusHandlerNames[__hi].substring(2));\n"
     "    if (!proto.insertAdjacentHTML) {\n"
     "      proto.insertAdjacentHTML = function(pos, html) {\n"
