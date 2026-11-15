@@ -115,6 +115,13 @@ execute; their presence does not imply standards-complete browser behavior:
     Computed-style results expose read-only collection helpers (`length`,
     `item()`, `getPropertyValue()`, and `getPropertyPriority()`) over the
     bounded inline/default style view.
+    `Range` provides bounded boundary selection, cloning, collapse, node
+    selection, and text extraction for editor/feature-detection code. The
+    `PaymentRequest` constructor fails explicitly with `NotSupportedError`,
+    while `indexedDB.open()`/`deleteDatabase()` report the same bounded
+    unsupported result and `indexedDB.databases()` resolves to an empty list;
+    no persistent database, payment transport, or native selection editing is
+    implied.
   - Media and fonts: bounded `document.fonts` readiness/load checks plus
     `Image()` and `Audio()` constructors. `audio`/`video` elements expose
     feature-detection, playback-state, and event shims (`play`, `pause`,
