@@ -188,6 +188,10 @@ execute; their presence does not imply standards-complete browser behavior:
     metadata, bounded `navigator.connection` network hints, and
     `navigator.mediaDevices` enumeration/permission failures are exposed so
     applications can choose a fallback without assuming hardware capture.
+    `navigator.storage.persist()` and bounded immediate `navigator.locks`
+    requests/query results are also available; `scheduler.postTask()` and
+    `scheduler.yield()` schedule work through the existing Promise queue and
+    do not create kernel threads or cross-tab lock arbitration.
   - Clipboard and drag/drop surfaces: `navigator.clipboard.writeText()` /
     `readText()` retain a bounded in-memory value for the page lifetime, while
     `DataTransfer` and `ClipboardEvent` expose string payloads and event fields.
