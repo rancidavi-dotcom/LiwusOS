@@ -191,7 +191,7 @@ execute; their presence does not imply standards-complete browser behavior:
   - Streams: bounded `ReadableStream`, `WritableStream`, `TransformStream`,
     `TextEncoderStream`, and `TextDecoderStream` surfaces. `ReadableStream`
     supports pull-based sources, `from()`, `values()`/`Symbol.asyncIterator`, and a
-    resolving `reader.closed` promise, `pipeTo()`/`pipeThrough()`, and common
+    resolving `reader.closed` promise, `pipeTo()`/`pipeThrough()`/`tee()`, and common
     async-consumer code.
     `WritableStream` writers expose bounded `ready`, `closed`, and
     `desiredSize` state. `Response.body` exposes a one-shot in-memory byte stream (`Uint8Array`)
