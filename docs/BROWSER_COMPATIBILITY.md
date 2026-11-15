@@ -123,6 +123,10 @@ execute; their presence does not imply standards-complete browser behavior:
     identity and receive SVG element brands for feature detection. Shadow
     content and SVG vectors are not promoted into the native page renderer's
     layout/raster tree.
+    `customElements.define/get/whenDefined/upgrade` is available with bounded
+    upgrade, connection, disconnection, and observed-attribute callbacks for
+    component code; custom-element constructors do not create native renderer
+    nodes beyond the existing DOM bridge.
   - Streams: bounded `ReadableStream`, `WritableStream`, `TransformStream`,
     `TextEncoderStream`, and `TextDecoderStream` surfaces. `Response.body`
     exposes a one-shot in-memory stream over the already-buffered response;
