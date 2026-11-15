@@ -225,7 +225,8 @@ execute; their presence does not imply standards-complete browser behavior:
   - Web Crypto: `crypto.getRandomValues(typedArray)`, `crypto.randomUUID()`, and
     bounded real `crypto.subtle.digest('SHA-1'|'SHA-256', data)`; unsupported
     digest algorithms reject with `NotSupportedError`.
-  - Encoding & Codecs: `btoa()`, `atob()`, `TextEncoder`, `TextDecoder`.
+  - Encoding & Codecs: `btoa()`, `atob()`, `TextEncoder` (including bounded
+    `encodeInto()`), and `TextDecoder`.
   - URLs: `URL` (including bounded `URL.parse()`/`URL.canParse()`, mutable
     `search`/`hash`/`pathname` fields, and synchronized `searchParams`) and
     `URLSearchParams` parser/query serializer with root,

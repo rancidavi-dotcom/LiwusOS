@@ -2060,6 +2060,7 @@ static const char qjs_web_env_bootstrap[] =
     "      }\n"
     "      return new Uint8Array(u);\n"
     "    }\n"
+    "    encodeInto(source, destination) { var src = String(source), out = destination instanceof Uint8Array ? destination : new Uint8Array(destination), read = 0, written = 0; while (read < src.length) { var end = read + 1, c = src.charCodeAt(read); if (c >= 0xd800 && c <= 0xdbff && read + 1 < src.length) { var d = src.charCodeAt(read + 1); if (d >= 0xdc00 && d <= 0xdfff) end = read + 2; } var bytes = this.encode(src.slice(read, end)); if (written + bytes.length > out.length) break; out.set(bytes, written); written += bytes.length; read = end; } return { read: read, written: written }; }\n"
     "  };\n"
     "  g.TextDecoder = class TextDecoder {\n"
     "    constructor(l) { this.encoding = l || 'utf-8'; }\n"
