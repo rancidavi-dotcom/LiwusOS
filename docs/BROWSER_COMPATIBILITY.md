@@ -137,6 +137,8 @@ execute; their presence does not imply standards-complete browser behavior:
     `CSS.registerProperty()` for up to 128 validated custom-property
     definitions, and small CSS Typed OM shims (`CSSUnitValue`, `CSS.px()`,
     `CSS.percent()`, `CSS.number()`, `CSS.deg()`, `CSSStyleValue.parse()`),
+    plus bounded `attributeStyleMap`/`computedStyleMap()` accessors backed by
+    inline style text,
     constructable `CSSStyleSheet` (`replaceSync`, `replace`, rule insertion),
     and bounded `CSSRule`/`CSSStyleRule`/`CSSLayerBlockRule` constructors for
     stylesheet feature detection,

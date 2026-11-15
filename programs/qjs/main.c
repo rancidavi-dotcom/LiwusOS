@@ -987,6 +987,8 @@ static const char qjs_web_env_bootstrap[] =
     "        enumerable: true\n"
     "      });\n"
     "    }\n"
+    "    if (!Object.getOwnPropertyDescriptor(proto, 'attributeStyleMap')) Object.defineProperty(proto, 'attributeStyleMap', { get: function() { if (!this._liwusStyleMap) { var el = this; this._liwusStyleMap = { get: function(name) { name = String(name); var value = el.style && el.style.getPropertyValue ? el.style.getPropertyValue(name) : ''; return value ? new g.CSSUnparsedValue([value]) : undefined; }, set: function(name, value) { name = String(name); el.style.setProperty(name, value && value.toString ? value.toString() : String(value)); return this; }, has: function(name) { return !!(el.style && el.style.getPropertyValue && el.style.getPropertyValue(String(name))); }, delete: function(name) { if (el.style && el.style.removeProperty) el.style.removeProperty(String(name)); return true; }, clear: function() { if (el.style && el.style.cssText !== undefined) el.style.cssText = ''; }, entries: function() { return []; }, keys: function() { return []; }, values: function() { return []; } }; } return this._liwusStyleMap; }, configurable: true });\n"
+    "    if (!proto.computedStyleMap) proto.computedStyleMap = function() { return this.attributeStyleMap; };\n"
     "\n"
     "    if (!Object.getOwnPropertyDescriptor(proto, 'dataset')) {\n"
     "      Object.defineProperty(proto, 'dataset', {\n"
