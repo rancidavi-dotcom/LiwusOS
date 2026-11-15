@@ -236,6 +236,7 @@ int test_ring3_processes(void) {
             "const ws=new WebSocket('wss://example.invalid');const es=new EventSource('/events');"
             "if(ws.readyState!==WebSocket.CLOSED||es.readyState!==EventSource.CLOSED)"
             "throw new Error('network event shims failed');ws.close();es.close();"
+            "const channel=new MessageChannel();let channelValue='';channel.port2.onmessage=function(ev){channelValue=ev.data;};channel.port1.postMessage('ok');const worker=new Worker('/worker.js');worker.postMessage('x');worker.terminate();if(typeof PerformanceObserver!=='function'||typeof ClipboardItem!=='function'||typeof worker.terminate!=='function'||typeof channel.port1.postMessage!=='function')throw new Error('worker/channel compatibility failed');"
             "const bc=new BroadcastChannel('qjs-test');bc.close();"
             "const controller=new AbortController();const combined=AbortSignal.any([controller.signal]);"
             "controller.abort('stop');if(!combined.aborted||combined.reason!=='stop')"
