@@ -248,6 +248,7 @@ int test_ring3_processes(void) {
             "const xhr=new XMLHttpRequest();if(!(xhr instanceof EventTarget)||xhr.readyState!==XMLHttpRequest.UNSENT)throw new Error('XHR constructor failed');"
             "xhr.open('get','/api');if(xhr.readyState!==XMLHttpRequest.OPENED||xhr._m!=='GET')throw new Error('XHR open failed');"
             "xhr.setRequestHeader('X-Test','ok');xhr.abort();if(xhr.readyState!==XMLHttpRequest.UNSENT)throw new Error('XHR abort failed');"
+            "const savedFetchForXHR=fetch;let xhrJsonSeen=false;fetch=function(){return Promise.resolve(new Response('{\"ok\":7}',{status:200}));};const xhrJson=new XMLHttpRequest();xhrJson.responseType='json';xhrJson.onload=function(){xhrJsonSeen=xhrJson.response&&xhrJson.response.ok===7;};xhrJson.open('GET','/json');xhrJson.send();setTimeout(function(){fetch=savedFetchForXHR;if(!xhrJsonSeen)throw new Error('XHR responseType json failed');},10);"
             "const consumed=new Response('x');consumed.text();if(!consumed.bodyUsed)throw new Error('Response bodyUsed failed');"
             "let blobDecoded='';new Blob(['abc']).arrayBuffer().then(function(buf){blobDecoded=new TextDecoder().decode(new Uint8Array(buf));});queueMicrotask(function(){if(blobDecoded!=='abc')throw new Error('Blob bytes failed');});"
             "let cloneRejected=false;try{consumed.clone();}catch(e){cloneRejected=true;}if(!cloneRejected)throw new Error('Response clone guard failed');"

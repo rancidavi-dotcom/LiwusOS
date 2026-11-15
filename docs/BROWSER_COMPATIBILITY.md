@@ -228,7 +228,7 @@ execute; their presence does not imply standards-complete browser behavior:
     limited to a 1 KiB IPC record and control delimiters are replaced. This
     includes `Content-Type`, cache/redirect metadata, and other ordinary HTTP
     headers without claiming browser cookie/CORS policy.
-  - `XMLHttpRequest`: partial multi-state polyfill (`UNSENT`, `OPENED`, `HEADERS_RECEIVED`, `LOADING`, `DONE`) backed by `fetch`, with request/response headers, `responseURL`, typed JSON responses, abort/error/load events, and the standard static `Response.json/error/redirect` helpers.
+  - `XMLHttpRequest`: partial multi-state polyfill (`UNSENT`, `OPENED`, `HEADERS_RECEIVED`, `LOADING`, `DONE`) backed by `fetch`, with request/response headers, `responseURL`, `responseType` conversions for text, JSON, `arraybuffer`, `blob`, and bounded detached HTML documents, abort/error/load events, and the standard static `Response.json/error/redirect` helpers.
   - Storage: `window.localStorage` and `window.sessionStorage` with standard Web Storage API, dynamic property access, enumerable keys, `Storage` branding, and bounded same-page `StorageEvent` delivery.
   - Web Crypto: `crypto.getRandomValues(typedArray)`, `crypto.randomUUID()`, and
     bounded real `crypto.subtle.digest('SHA-1'|'SHA-256', data)`; unsupported
