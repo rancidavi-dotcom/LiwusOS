@@ -96,8 +96,10 @@ execute; their presence does not imply standards-complete browser behavior:
     `children`, `childElementCount`, element-sibling accessors, `className`,
     `getAttributeNames()`, `attributes`/`NamedNodeMap` snapshots with
     `item()`/`getNamedItem()`/bounded mutation helpers, `getAttributeNode()`/
-    `setAttributeNode()`, `toggleAttribute()`, `replaceChildren()`, and
-    bounded form-control association through `form`/`elements`/`name`,
+    `setAttributeNode()`, `toggleAttribute()`, `replaceChildren()`, reflected
+    HTML properties such as `id`, `className`, `value`, `href`, and common
+    `aria-*` names, and bounded form-control association through
+    `form`/`elements`/`name` (including `form="id"`),
     `before()`, `after()`, `remove()`, and `innerText`.
   - Collection compatibility: bounded snapshot results from `querySelectorAll()`
     are branded as `NodeList`, while `getElementsByTagName()` and
