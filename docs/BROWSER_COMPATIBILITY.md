@@ -178,6 +178,10 @@ execute; their presence does not imply standards-complete browser behavior:
     `cancelIdleCallback()`, `AbortSignal.any()`, `AbortSignal.throwIfAborted()`,
     and `navigator.sendBeacon()` (using the existing fetch bridge) are exposed.
     These APIs do not add a service-worker process or background network stack.
+  - Platform feature detection: `navigator.userAgentData` high-entropy
+    metadata, bounded `navigator.connection` network hints, and
+    `navigator.mediaDevices` enumeration/permission failures are exposed so
+    applications can choose a fallback without assuming hardware capture.
   - Clipboard and drag/drop surfaces: `navigator.clipboard.writeText()` /
     `readText()` retain a bounded in-memory value for the page lifetime, while
     `DataTransfer` and `ClipboardEvent` expose string payloads and event fields.
