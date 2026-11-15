@@ -1,10 +1,10 @@
-VERSION=2.2.31
+VERSION=2.2.33
 DATE=2026-11-15
-PACKAGES=kilo,c_demo,neofetch,sysbench
-NOTES=Driver Intel HDA/Realtek P2 completo conforme especificacao Intel Rev 1.0a: DMA Uncacheable (No-Snoop), Amp Capabilities reais (Offset/NumSteps sem ignorar Mute-Only), GPIO/EAPD da placa-mae e selecao multi-controlador (ignora HDMI sem P2)
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.31
-BOOT_IMAGE_SIZE=5316608
-BOOT_IMAGE_CRC32=14f88d66
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.31
-SYSTEM_ARCHIVE_SIZE=14704640
-SYSTEM_ARCHIVE_CRC32=0fb88c6b
+PACKAGES=kilo,c_demo,neofetch,sysbench,play
+NOTES=LiwusOS 2.2.33: Tocador de MP3 e MP4 no desktop, stream HDA sem travamento da interface e codecs MJPEG/PCM/MP3 integrados
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.33
+BOOT_IMAGE_SIZE=5365760
+BOOT_IMAGE_CRC32=e9c5c2c2
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.33
+SYSTEM_ARCHIVE_SIZE=15493120
+SYSTEM_ARCHIVE_CRC32=61af4603

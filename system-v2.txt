@@ -1,10 +1,10 @@
-VERSION=2.2.32
+VERSION=2.2.33
 DATE=2026-11-15
 PACKAGES=kilo,c_demo,neofetch,sysbench,play
-NOTES=LiwusOS 2.2.32: player MP3 nativo Ring-3, saida PCM real via HDA e deteccao de containers MP4
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.32
-BOOT_IMAGE_SIZE=5320704
-BOOT_IMAGE_CRC32=0037ccc5
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.32
-SYSTEM_ARCHIVE_SIZE=14786560
-SYSTEM_ARCHIVE_CRC32=f9b36f60
+NOTES=LiwusOS 2.2.33: Tocador de MP3 e MP4 no desktop, stream HDA sem travamento da interface e codecs MJPEG/PCM/MP3 integrados
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.33
+BOOT_IMAGE_SIZE=5365760
+BOOT_IMAGE_CRC32=e9c5c2c2
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.33
+SYSTEM_ARCHIVE_SIZE=15493120
+SYSTEM_ARCHIVE_CRC32=61af4603

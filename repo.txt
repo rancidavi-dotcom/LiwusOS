@@ -4,3 +4,4 @@ matrix|1.1.0|Grafico|Protetor de tela Matrix Digital Rain (320x200)
 sysbench|1.1.0|Benchmark|Benchmark de CPU (primos/hash) e largura de banda RAM
 kilo|0.2.0|Editor|Editor de texto de terminal com realce de sintaxe C
 c_demo|2.1.0|Sistema|Suite de demonstracao e verificacao da LibC em Ring 3
+play|1.0.0|Multimidia|Reprodutor CLI de audio e video MP3/MP4/WAV
