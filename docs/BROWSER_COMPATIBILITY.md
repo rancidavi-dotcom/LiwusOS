@@ -249,6 +249,8 @@ execute; their presence does not imply standards-complete browser behavior:
     mark/measure entries with bounded microtask delivery and `takeRecords()`.
     `MessageChannel`/`MessagePort`, `Worker`/`SharedWorker`, and `ClipboardItem`
     surfaces are available for feature detection and bounded local messaging;
+    message-port payloads are cloned before asynchronous delivery and closed
+    ports drop later messages;
     they do not create worker threads or provide background script execution.
   - Scheduling and cancellation: `requestIdleCallback()`/
     `cancelIdleCallback()`, `AbortSignal.any()`, `AbortSignal.throwIfAborted()`,
