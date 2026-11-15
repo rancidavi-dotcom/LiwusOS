@@ -318,9 +318,10 @@ execute; their presence does not imply standards-complete browser behavior:
     implemented yet and connections close with an explicit error.
   - Performance: relative `performance.now()`, `timeOrigin`, a bounded
     `navigation` timing entry, typed-in-shape `mark()`/`measure()` entries,
-    `getEntries*()` and mark/measure clearing. The timeline is bounded to the
-    page lifetime and does not expose kernel profiling or resource timing beyond
-    entries created by the page.
+    `getEntries*()` and mark/measure clearing. Successful and failed `fetch()`
+    calls now add bounded `resource` entries with fetch/response timestamps,
+    status and byte-size fields. The timeline is bounded to the page lifetime
+    and does not expose kernel profiling or browser-network internals.
   - Locale helpers: bounded fallbacks for `Intl.PluralRules`, `Intl.ListFormat`,
     `Intl.Collator`, and `Intl.Segmenter` when the QuickJS build does not
     provide them. Segmenter output is limited to word/grapheme boundaries and
