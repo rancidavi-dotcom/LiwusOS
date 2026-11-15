@@ -79,6 +79,10 @@ execute; their presence does not imply standards-complete browser behavior:
   - Standard event constructors: `Event`, `CustomEvent`, `MouseEvent`, `KeyboardEvent`, `FocusEvent`, `UIEvent`.
 - **DOM & Element APIs**:
   - Element prototypes: `Node`, `Element`, `HTMLElement`, `HTMLDivElement`, `HTMLSpanElement`, `HTMLInputElement`, `HTMLButtonElement`, `HTMLAnchorElement`, `HTMLImageElement`, `HTMLScriptElement`, `HTMLStyleElement`, `DocumentFragment`.
+  - `DOMParser.parseFromString()` (bounded detached HTML document view) and
+    `XMLSerializer.serializeToString()` are available for framework/template
+    code. `structuredClone()` handles plain objects, arrays, dates, buffers and
+    typed-array views within the runtime memory limit.
   - `Element.prototype.style`: Dynamic `CSSStyleDeclaration` proxy mapping camelCase and kebab-case style properties and `cssText` directly to and from element inline style attributes.
   - `Element.prototype.dataset`: `DOMStringMap` proxy synchronizing camelCase properties with `data-*` attributes.
   - Geometry & Interaction: `getBoundingClientRect()`, `getClientRects()`, `scrollIntoView()`, `focus()`, `blur()`, `click()`.
@@ -93,7 +97,14 @@ execute; their presence does not imply standards-complete browser behavior:
   - Web Crypto: `crypto.getRandomValues(typedArray)`, `crypto.randomUUID()`, and `crypto.subtle.digest()`.
   - Encoding & Codecs: `btoa()`, `atob()`, `TextEncoder`, `TextDecoder`.
   - URLs: Standards-compliant `URL` and `URLSearchParams` parser and query serializer.
-  - Observers: `MutationObserver`, `ResizeObserver`, and `IntersectionObserver` shims for modern library detection.
+  - Observers: `MutationObserver` now records bounded `childList`, attribute and
+    character-data mutations with subtree/attribute filters and microtask
+    delivery; `ResizeObserver` and `IntersectionObserver` provide bounded
+    initial observations for layout libraries.
+  - Scheduling and cancellation: `requestIdleCallback()`/
+    `cancelIdleCallback()`, `AbortSignal.any()`, `AbortSignal.throwIfAborted()`,
+    and `navigator.sendBeacon()` (using the existing fetch bridge) are exposed.
+    These APIs do not add a service-worker process or background network stack.
   - Performance: `performance.now()`, `timeOrigin`, `mark()`, `measure()`.
 - Supports inline scripts and bounded external classic/module scripts. External
   module scripts retain their absolute URL and can resolve a bounded static

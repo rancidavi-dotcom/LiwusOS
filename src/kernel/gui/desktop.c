@@ -25,6 +25,7 @@
 #include "gui/html_view.h"
 #include "gui/html_font.h"
 #include "gui/browser_url.h"
+#include "kernel/users.h"
 
 #include "lvgl.h"
 #include "lvgl_port.h"
@@ -200,10 +201,17 @@ static void win_drag_event_cb(lv_event_t *e) {
         uint32_t sw = desktop_screen_w();
         uint32_t sh = desktop_screen_h();
 
-        if (x < -100) x = -100;
+        lv_coord_t win_w = lv_obj_get_width(win);
+        lv_coord_t win_h = lv_obj_get_height(win);
+        lv_coord_t max_x = (lv_coord_t)sw - win_w;
+        lv_coord_t max_y = (lv_coord_t)sh - PANEL_H - win_h;
+        if (max_x < 0) max_x = 0;
+        if (max_y < 0) max_y = 0;
+
+        if (x < 0) x = 0;
         if (y < 0) y = 0;
-        if (x > (lv_coord_t)sw - 100) x = (lv_coord_t)sw - 100;
-        if (y > (lv_coord_t)sh - PANEL_H - WIN_HEADER_H) y = (lv_coord_t)sh - PANEL_H - WIN_HEADER_H;
+        if (x > max_x) x = max_x;
+        if (y > max_y) y = max_y;
 
         lv_obj_set_pos(win, x, y);
     }
@@ -227,6 +235,21 @@ static void win_focus_event_cb(lv_event_t *e) {
 
 static void setup_window(lv_obj_t *win, int w, int h, int x, int y) {
     if (!win) return;
+    uint32_t sw = desktop_screen_w();
+    uint32_t sh = desktop_screen_h();
+
+    int max_w = (int)sw;
+    int max_h = (int)sh - PANEL_H;
+    if (max_h < 120) max_h = 120;
+
+    if (w > max_w) w = max_w;
+    if (h > max_h) h = max_h;
+
+    if (x + w > max_w) x = max_w - w;
+    if (y + h > max_h) y = max_h - h;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+
     lv_obj_set_size(win, w, h);
     lv_obj_set_align(win, LV_ALIGN_TOP_LEFT);
     lv_obj_set_pos(win, x, y);
@@ -479,10 +502,13 @@ static void terminal_update_view(void) {
     if (vga_putc_capture_hook == NULL) {
         const char *cur_cwd = (current_task && current_task->process && current_task->process->cwd[0]) ?
                               current_task->process->cwd : "/";
+        const char *user = users_get_active_name();
+        char prompt_char = users_is_active_elevated() ? '#' : '$';
         char prompt[160];
-        lv_snprintf(prompt, sizeof(prompt), "root@%s:[%s]# %s_",
+        lv_snprintf(prompt, sizeof(prompt), "%s@%s:[%s]%c %s_",
+                    user,
                     g_system_hostname[0] ? g_system_hostname : "liwus",
-                    cur_cwd, g_konsole_input);
+                    cur_cwd, prompt_char, g_konsole_input);
         size_t plen = strlen(prompt);
         if (cur_len + plen < sizeof(display_buf)) {
             memcpy(display_buf + cur_len, prompt, plen);
@@ -558,10 +584,34 @@ static lv_obj_t *lbl_settings_network = NULL;
 static lv_obj_t *lbl_settings_status = NULL;
 static lv_obj_t *lbl_settings_volume = NULL;
 static lv_obj_t *slider_settings_volume = NULL;
+static lv_obj_t *slider_settings_mouse = NULL;
+static lv_obj_t *lbl_settings_mouse = NULL;
 static bool g_settings_volume_loaded = false;
 static lv_obj_t *btn_settings_layout[3];
 static lv_obj_t *dd_settings_resolution = NULL;
 static lv_obj_t *lbl_settings_display = NULL;
+static lv_obj_t *lbl_taskbar_user = NULL;
+static lv_obj_t *lbl_menu_user = NULL;
+static lv_obj_t *lbl_menu_avatar = NULL;
+static lv_obj_t *lbl_settings_user_info = NULL;
+static lv_obj_t *lbl_settings_user_list = NULL;
+static lv_obj_t *lbl_settings_sys_text = NULL;
+static lv_obj_t *ta_settings_new_user = NULL;
+static lv_obj_t *ta_settings_new_pass = NULL;
+static lv_obj_t *btn_settings_elevate = NULL;
+static lv_obj_t *lbl_settings_elevate_btn = NULL;
+static bool g_settings_user_focused = false;
+static bool g_settings_pass_focused = false;
+static void settings_refresh_users(void);
+static void settings_mouse_cb(lv_event_t *e);
+static void settings_elevate_cb(lv_event_t *e);
+static void settings_switch_user_cb(lv_event_t *e);
+static void settings_add_user_cb(lv_event_t *e);
+static void settings_test_sound_cb(lv_event_t *e);
+static void settings_test_net_cb(lv_event_t *e);
+static void set_settings_user_focus(bool focus);
+static void set_settings_pass_focus(bool focus);
+static void settings_input_click_cb(lv_event_t *e);
 static vga_display_mode_t g_settings_modes[VGA_DISPLAY_MAX_MODES];
 static int g_settings_mode_count = 0;
 static char g_settings_mode_options[1024];
@@ -740,6 +790,8 @@ static void set_pkg_input_focus(bool focus) {
     if (focus) {
         set_browser_url_focus(false);
         set_inst_host_focus(false);
+        set_settings_user_focus(false);
+        set_settings_pass_focus(false);
     }
 }
 
@@ -752,7 +804,49 @@ static void set_inst_host_focus(bool focus) {
     if (focus) {
         set_browser_url_focus(false);
         set_pkg_input_focus(false);
+        set_settings_user_focus(false);
+        set_settings_pass_focus(false);
     }
+}
+
+static void set_settings_user_focus(bool focus) {
+    g_settings_user_focused = focus;
+    if (ta_settings_new_user) {
+        if (focus) lv_obj_add_state(ta_settings_new_user, LV_STATE_FOCUSED);
+        else lv_obj_clear_state(ta_settings_new_user, LV_STATE_FOCUSED);
+    }
+    if (focus) {
+        g_settings_pass_focused = false;
+        if (ta_settings_new_pass) lv_obj_clear_state(ta_settings_new_pass, LV_STATE_FOCUSED);
+        set_browser_url_focus(false);
+        set_pkg_input_focus(false);
+        set_inst_host_focus(false);
+    }
+}
+
+static void set_settings_pass_focus(bool focus) {
+    g_settings_pass_focused = focus;
+    if (ta_settings_new_pass) {
+        if (focus) lv_obj_add_state(ta_settings_new_pass, LV_STATE_FOCUSED);
+        else lv_obj_clear_state(ta_settings_new_pass, LV_STATE_FOCUSED);
+    }
+    if (focus) {
+        g_settings_user_focused = false;
+        if (ta_settings_new_user) lv_obj_clear_state(ta_settings_new_user, LV_STATE_FOCUSED);
+        set_browser_url_focus(false);
+        set_pkg_input_focus(false);
+        set_inst_host_focus(false);
+    }
+}
+
+static void settings_input_click_cb(lv_event_t *e) {
+    lv_obj_t *target = lv_event_get_target(e);
+    if (target == ta_settings_new_user) {
+        set_settings_user_focus(true);
+    } else if (target == ta_settings_new_pass) {
+        set_settings_pass_focus(true);
+    }
+    win_focus_event_cb(e);
 }
 
 static void create_terminal_window(void);
@@ -994,6 +1088,144 @@ static void settings_refresh_cb(lv_event_t *e) {
     settings_refresh_network();
 }
 
+static void settings_refresh_users(void) {
+    const char *uname = users_get_active_name();
+    uint32_t uid = users_get_active_uid();
+    bool elevated = users_is_active_elevated();
+
+    if (lbl_settings_user_info) {
+        lv_label_set_text_fmt(lbl_settings_user_info,
+            "Usuario Ativo: %s (UID %u)\n"
+            "Privilegios: %s\n"
+            "Diretorio: /home/%s\n"
+            "Seguranca: %s",
+            uname, (unsigned)uid,
+            elevated ? "ADMINISTRADOR (ELEVADO / ROOT)" : "USUARIO PADRAO (RESTRITO)",
+            uname,
+            elevated ? "Acesso total ao kernel e sistema" : "Isolamento ring-3 ativo");
+    }
+
+    if (lbl_settings_elevate_btn) {
+        lv_label_set_text(lbl_settings_elevate_btn,
+            elevated ? LV_SYMBOL_TRASH "  Revogar Elevacao" : LV_SYMBOL_SHUFFLE "  Elevar Privilegios");
+    }
+
+    if (lbl_settings_user_list) {
+        char buf[512];
+        buf[0] = '\0';
+        int cnt = users_count();
+        size_t used = 0;
+        int n = lv_snprintf(buf + used, sizeof(buf) - used, "Contas registradas no LiwusOS (%d):\n", cnt);
+        if (n > 0) used += (size_t)n;
+        for (int i = 0; i < cnt && used < sizeof(buf) - 48; i++) {
+            const user_account_t *u = users_get_at(i);
+            if (u) {
+                bool is_active = (strcmp(u->username, uname) == 0);
+                n = lv_snprintf(buf + used, sizeof(buf) - used,
+                    " %s %s (UID %u%s)%s\n",
+                    is_active ? ">" : "-",
+                    u->username, (unsigned)u->uid,
+                    u->is_admin ? ", admin" : "",
+                    is_active ? " [ativo]" : "");
+                if (n > 0) used += (size_t)n;
+            }
+        }
+        lv_label_set_text(lbl_settings_user_list, buf);
+    }
+}
+
+static void settings_mouse_cb(lv_event_t *e) {
+    (void)e;
+    if (!slider_settings_mouse) return;
+    int sens = lv_slider_get_value(slider_settings_mouse);
+    if (sens < 1) sens = 1;
+    if (sens > 10) sens = 10;
+    mouse_set_sensitivity((uint8_t)sens);
+    if (lbl_settings_mouse) lv_label_set_text_fmt(lbl_settings_mouse, "Sensibilidade: %d / 10", sens);
+    if (lbl_settings_status) lv_label_set_text_fmt(lbl_settings_status, "Sensibilidade do mouse configurada para %d.", sens);
+}
+
+static void settings_elevate_cb(lv_event_t *e) {
+    (void)e;
+    if (users_is_active_elevated()) {
+        users_unelevate();
+        if (lbl_settings_status) lv_label_set_text(lbl_settings_status, "Privilegios administrativos revogados.");
+    } else {
+        if (users_elevate(NULL)) {
+            if (lbl_settings_status) lv_label_set_text(lbl_settings_status, "Privilegios administrativos elevados com sucesso!");
+        } else {
+            if (lbl_settings_status) lv_label_set_text(lbl_settings_status, "Falha ao elevar privilegios.");
+        }
+    }
+    settings_refresh_users();
+    desktop_update_topbar_status(true);
+    terminal_update_view();
+}
+
+static void settings_switch_user_cb(lv_event_t *e) {
+    const char *target_user = (const char *)lv_event_get_user_data(e);
+    if (!target_user) return;
+    if (users_set_active(target_user)) {
+        if (lbl_settings_status) lv_label_set_text_fmt(lbl_settings_status, "Sessao alterada para o usuario '%s'.", target_user);
+    }
+    settings_refresh_users();
+    desktop_update_topbar_status(true);
+    terminal_update_view();
+}
+
+static void settings_add_user_cb(lv_event_t *e) {
+    (void)e;
+    if (!ta_settings_new_user || !ta_settings_new_pass) return;
+    const char *uname = lv_textarea_get_text(ta_settings_new_user);
+    const char *upass = lv_textarea_get_text(ta_settings_new_pass);
+    if (!uname || uname[0] == '\0') {
+        if (lbl_settings_status) lv_label_set_text(lbl_settings_status, "Digite um nome de usuario valido.");
+        return;
+    }
+    if (!users_is_active_elevated() && users_get_active_uid() != 0) {
+        if (lbl_settings_status) lv_label_set_text(lbl_settings_status, "Apenas administrador pode criar usuarios! Clique em 'Elevar Privilegios' primeiro.");
+        return;
+    }
+    if (users_add(uname, upass, false)) {
+        if (lbl_settings_status) lv_label_set_text_fmt(lbl_settings_status, "Usuario '%s' adicionado com sucesso!", uname);
+        lv_textarea_set_text(ta_settings_new_user, "");
+        lv_textarea_set_text(ta_settings_new_pass, "");
+        settings_refresh_users();
+    } else {
+        if (lbl_settings_status) lv_label_set_text(lbl_settings_status, "Erro ao criar usuario: nome ja existente ou limite atingido.");
+    }
+}
+
+static void settings_test_sound_cb(lv_event_t *e) {
+    (void)e;
+    hda_startup_sound();
+    if (lbl_settings_status) lv_label_set_text(lbl_settings_status, "Reproduzindo acorde sintetizado HDA...");
+}
+
+static void settings_test_net_cb(lv_event_t *e) {
+    (void)e;
+    settings_refresh_network();
+    if (lbl_settings_status) {
+        if (net_has_ip()) {
+            char ip[16], gw[16];
+            net_get_ip_strings(ip, NULL, gw);
+            lv_label_set_text_fmt(lbl_settings_status, "Rede conectada: IP %s | Gateway %s ativo.", ip, gw);
+        } else {
+            lv_label_set_text(lbl_settings_status, "Rede sem IP (DHCP pendente).");
+        }
+    }
+}
+
+static void settings_reboot_cb(lv_event_t *e) {
+    (void)e;
+    acpi_reboot();
+}
+
+static void settings_poweroff_cb(lv_event_t *e) {
+    (void)e;
+    acpi_poweroff();
+}
+
 static void bz_style_title_button(lv_obj_t *btn, bool is_close) {
     lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_PRESSED);
@@ -1033,21 +1265,25 @@ static lv_obj_t *add_window_controls(lv_obj_t *win, const char *title) {
     return lbl_title;
 }
 
+static void dock_settings_cb(lv_event_t *e);
+static void dock_calc_cb(lv_event_t *e);
+static void dock_sysmon_cb(lv_event_t *e);
+static void dock_browser_cb(lv_event_t *e);
+static void dock_pkgmgr_cb(lv_event_t *e);
+
 static void term_exec_cmd(const char *cmd) {
     while (*cmd == ' ') cmd++;
     if (*cmd == '\0') return;
 
     const char *cur_cwd = (current_task && current_task->process && current_task->process->cwd[0]) ?
                           current_task->process->cwd : "/";
+    const char *user = users_get_active_name();
+    char prompt_char = users_is_active_elevated() ? '#' : '$';
     char prompt_line[160];
-    prompt_line[0] = '\0';
-    strcat(prompt_line, "root@");
-    strncat(prompt_line, g_system_hostname[0] ? g_system_hostname : "liwus", 24);
-    strcat(prompt_line, ":[");
-    strncat(prompt_line, cur_cwd, 24);
-    strcat(prompt_line, "]# ");
-    strcat(prompt_line, cmd);
-    strcat(prompt_line, "\n");
+    lv_snprintf(prompt_line, sizeof(prompt_line), "%s@%s:[%s]%c %s\n",
+                user,
+                g_system_hostname[0] ? g_system_hostname : "liwus",
+                cur_cwd, prompt_char, cmd);
     term_append(prompt_line);
 
     if (strcmp(cmd, "clear") == 0) {
@@ -1055,6 +1291,17 @@ static void term_exec_cmd(const char *cmd) {
         g_konsole_row_count = 0;
         g_term_cur_row = 0;
         g_term_cur_col = 0;
+    } else if (strcmp(cmd, "settings") == 0 || strcmp(cmd, "control") == 0 || strcmp(cmd, "config") == 0) {
+        dock_settings_cb(NULL);
+        term_append("Central de Controle & Configuracoes aberta.\n");
+    } else if (strcmp(cmd, "calc") == 0) {
+        dock_calc_cb(NULL);
+    } else if (strcmp(cmd, "sysmon") == 0 || strcmp(cmd, "monitor") == 0) {
+        dock_sysmon_cb(NULL);
+    } else if (strcmp(cmd, "browser") == 0 || strcmp(cmd, "web") == 0) {
+        dock_browser_cb(NULL);
+    } else if (strcmp(cmd, "store") == 0 || strcmp(cmd, "packages") == 0) {
+        dock_pkgmgr_cb(NULL);
     } else {
         char cmd_copy[128];
         strncpy(cmd_copy, cmd, sizeof(cmd_copy) - 1);
@@ -1174,6 +1421,7 @@ static void dock_settings_cb(lv_event_t *e) {
     set_browser_url_focus(false);
     set_pkg_input_focus(false);
     set_inst_host_focus(false);
+    settings_refresh_users();
     settings_refresh_choices();
     settings_refresh_network();
 }
@@ -1279,43 +1527,233 @@ static void create_settings_window(void) {
     if (win_settings) return;
     uint32_t sw = desktop_screen_w();
     uint32_t sh = desktop_screen_h();
-    lv_coord_t ww = sw >= 1100 ? 700 : 660;
-    lv_coord_t wh = sh >= 800 ? 600 : 450;
+    lv_coord_t ww = sw >= 1100 ? 760 : (sw >= 800 ? 720 : (lv_coord_t)sw - 20);
+    lv_coord_t wh = sh >= 800 ? 560 : ((lv_coord_t)sh - PANEL_H - 24);
+    if (wh < 380) wh = 380;
     lv_coord_t x = ((lv_coord_t)sw - ww) / 2;
     lv_coord_t y = ((lv_coord_t)sh - PANEL_H - wh) / 2;
     if (x < 0) x = 8;
     if (y < 0) y = 8;
     win_settings = lv_win_create(lv_scr_act(), WIN_HEADER_H);
     setup_window(win_settings, ww, wh, x, y);
-    add_window_controls(win_settings, "Settings - Configuracoes do Sistema");
+    add_window_controls(win_settings, "  Central de Controle & Configuracoes");
 
     lv_obj_t *content = lv_win_get_content(win_settings);
-    lv_obj_add_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_layout(content, 0);
-    lv_obj_set_style_pad_all(content, 14, 0);
+    lv_obj_set_style_pad_all(content, 6, 0);
 
-    lv_obj_t *intro = lv_label_create(content);
-    lv_label_set_text(intro, "Personalize o LiwusOS. O layout do teclado muda imediatamente.");
-    lv_obj_align(intro, LV_ALIGN_TOP_LEFT, 0, 0);
+    /* Tabview com as abas de configuracao */
+    lv_obj_t *tv = lv_tabview_create(content, LV_DIR_TOP, 36);
+    lv_obj_set_size(tv, lv_pct(100), wh - WIN_HEADER_H - 42);
+    lv_obj_align(tv, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(tv, lv_color_hex(BZ_WIN_BG), 0);
+    lv_obj_t *tab_btns = lv_tabview_get_tab_btns(tv);
+    lv_obj_set_style_bg_color(tab_btns, lv_color_hex(BZ_TITLE), 0);
+    lv_obj_set_style_text_color(tab_btns, lv_color_hex(BZ_TEXT), 0);
+    lv_obj_set_style_pad_hor(tab_btns, 6, 0);
+    lv_obj_set_style_border_side(tab_btns, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(tab_btns, lv_color_hex(BZ_TITLE_LINE), 0);
+    lv_obj_set_style_border_width(tab_btns, 1, 0);
 
-    lv_obj_t *keyboard_card = lv_obj_create(content);
-    lv_obj_set_size(keyboard_card, 300, 160);
-    lv_obj_set_pos(keyboard_card, 0, 32);
+    lv_obj_t *tab_users = lv_tabview_add_tab(tv, "Usuarios");
+    lv_obj_t *tab_display = lv_tabview_add_tab(tv, "Tela & Video");
+    lv_obj_t *tab_input = lv_tabview_add_tab(tv, "Teclado & Entrada");
+    lv_obj_t *tab_sound = lv_tabview_add_tab(tv, "Audio & Sons");
+    lv_obj_t *tab_net = lv_tabview_add_tab(tv, "Rede & Internet");
+    lv_obj_t *tab_sys = lv_tabview_add_tab(tv, "Sistema");
+
+    /* ================= TAB 0: USUARIOS ================= */
+    lv_obj_set_style_pad_all(tab_users, 12, 0);
+    lv_obj_add_flag(tab_users, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Cartao do Usuario Ativo */
+    lv_obj_t *card_user = lv_obj_create(tab_users);
+    lv_obj_set_size(card_user, 340, 150);
+    lv_obj_set_pos(card_user, 0, 0);
+    lv_obj_clear_flag(card_user, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(card_user, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_border_color(card_user, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_radius(card_user, 4, 0);
+    lv_obj_set_style_pad_all(card_user, 10, 0);
+
+    lbl_settings_user_info = lv_label_create(card_user);
+    lv_obj_set_size(lbl_settings_user_info, 320, 80);
+    lv_obj_align(lbl_settings_user_info, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    btn_settings_elevate = lv_btn_create(card_user);
+    lv_obj_set_size(btn_settings_elevate, 200, 30);
+    lv_obj_align(btn_settings_elevate, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    bz_style_button(btn_settings_elevate);
+    lv_obj_set_style_bg_color(btn_settings_elevate, lv_color_hex(0x215d80), 0);
+    lbl_settings_elevate_btn = lv_label_create(btn_settings_elevate);
+    lv_label_set_text(lbl_settings_elevate_btn, LV_SYMBOL_SHUFFLE "  Elevar Privilegios");
+    lv_obj_center(lbl_settings_elevate_btn);
+    lv_obj_add_event_cb(btn_settings_elevate, settings_elevate_cb, LV_EVENT_CLICKED, NULL);
+
+    /* Cartao de Troca Rapida de Sessao */
+    lv_obj_t *card_switch = lv_obj_create(tab_users);
+    lv_obj_set_size(card_switch, 340, 150);
+    lv_obj_set_pos(card_switch, 354, 0);
+    lv_obj_clear_flag(card_switch, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(card_switch, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_border_color(card_switch, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_radius(card_switch, 4, 0);
+    lv_obj_set_style_pad_all(card_switch, 10, 0);
+
+    lv_obj_t *lbl_switch_title = lv_label_create(card_switch);
+    lv_label_set_text(lbl_switch_title, "ALTERAR USUARIO DA SESSAO");
+    lv_obj_set_style_text_color(lbl_switch_title, lv_color_hex(BZ_ACCENT), 0);
+    lv_obj_align(lbl_switch_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    static const char *quick_users[3] = { "davi", "root", "guest" };
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t *b = lv_btn_create(card_switch);
+        lv_obj_set_size(b, 100, 28);
+        lv_obj_set_pos(b, i * 106, 28);
+        bz_style_button(b);
+        lv_obj_t *blbl = lv_label_create(b);
+        lv_label_set_text(blbl, quick_users[i]);
+        lv_obj_center(blbl);
+        lv_obj_add_event_cb(b, settings_switch_user_cb, LV_EVENT_CLICKED, (void *)quick_users[i]);
+    }
+
+    lv_obj_t *lbl_quick_hint = lv_label_create(card_switch);
+    lv_label_set_text(lbl_quick_hint, "Troca o usuario ativo no kernel.\nComandos no Konsole usam as credenciais deste usuario.");
+    lv_obj_set_style_text_color(lbl_quick_hint, lv_color_hex(BZ_TEXT_DIM), 0);
+    lv_obj_align(lbl_quick_hint, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+    /* Cartao de Lista de Usuarios Registrados */
+    lv_obj_t *card_list = lv_obj_create(tab_users);
+    lv_obj_set_size(card_list, 340, 160);
+    lv_obj_set_pos(card_list, 0, 160);
+    lv_obj_clear_flag(card_list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(card_list, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_border_color(card_list, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_radius(card_list, 4, 0);
+    lv_obj_set_style_pad_all(card_list, 10, 0);
+
+    lbl_settings_user_list = lv_label_create(card_list);
+    lv_obj_set_size(lbl_settings_user_list, 320, 140);
+    lv_obj_align(lbl_settings_user_list, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    /* Cartao de Criar Novo Usuario */
+    lv_obj_t *card_new = lv_obj_create(tab_users);
+    lv_obj_set_size(card_new, 340, 160);
+    lv_obj_set_pos(card_new, 354, 160);
+    lv_obj_clear_flag(card_new, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(card_new, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_border_color(card_new, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_radius(card_new, 4, 0);
+    lv_obj_set_style_pad_all(card_new, 10, 0);
+
+    lv_obj_t *lbl_new_title = lv_label_create(card_new);
+    lv_label_set_text(lbl_new_title, "CRIAR NOVO USUARIO");
+    lv_obj_set_style_text_color(lbl_new_title, lv_color_hex(BZ_ACCENT), 0);
+    lv_obj_align(lbl_new_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    ta_settings_new_user = lv_textarea_create(card_new);
+    lv_textarea_set_one_line(ta_settings_new_user, true);
+    lv_textarea_set_placeholder_text(ta_settings_new_user, "Nome do usuario...");
+    lv_obj_set_size(ta_settings_new_user, 150, 30);
+    lv_obj_set_pos(ta_settings_new_user, 0, 26);
+    lv_obj_set_style_bg_color(ta_settings_new_user, lv_color_hex(BZ_PANEL), 0);
+    lv_obj_set_style_text_color(ta_settings_new_user, lv_color_hex(BZ_TEXT), 0);
+    lv_obj_add_event_cb(ta_settings_new_user, settings_input_click_cb, LV_EVENT_PRESSED, win_settings);
+    lv_obj_add_event_cb(ta_settings_new_user, settings_input_click_cb, LV_EVENT_CLICKED, win_settings);
+
+    ta_settings_new_pass = lv_textarea_create(card_new);
+    lv_textarea_set_one_line(ta_settings_new_pass, true);
+    lv_textarea_set_password_mode(ta_settings_new_pass, true);
+    lv_textarea_set_placeholder_text(ta_settings_new_pass, "Senha...");
+    lv_obj_set_size(ta_settings_new_pass, 150, 30);
+    lv_obj_set_pos(ta_settings_new_pass, 160, 26);
+    lv_obj_set_style_bg_color(ta_settings_new_pass, lv_color_hex(BZ_PANEL), 0);
+    lv_obj_set_style_text_color(ta_settings_new_pass, lv_color_hex(BZ_TEXT), 0);
+    lv_obj_add_event_cb(ta_settings_new_pass, settings_input_click_cb, LV_EVENT_PRESSED, win_settings);
+    lv_obj_add_event_cb(ta_settings_new_pass, settings_input_click_cb, LV_EVENT_CLICKED, win_settings);
+
+    lv_obj_t *btn_add_user = lv_btn_create(card_new);
+    lv_obj_set_size(btn_add_user, 160, 30);
+    lv_obj_set_pos(btn_add_user, 0, 64);
+    bz_style_button(btn_add_user);
+    lv_obj_set_style_bg_color(btn_add_user, lv_color_hex(0x27ae60), 0);
+    lv_obj_t *lbl_add_btn = lv_label_create(btn_add_user);
+    lv_label_set_text(lbl_add_btn, LV_SYMBOL_PLUS "  Adicionar Conta");
+    lv_obj_center(lbl_add_btn);
+    lv_obj_add_event_cb(btn_add_user, settings_add_user_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *lbl_add_hint = lv_label_create(card_new);
+    lv_label_set_text(lbl_add_hint, "Salvo automaticamente em /etc/passwd.");
+    lv_obj_set_style_text_color(lbl_add_hint, lv_color_hex(BZ_TEXT_DIM), 0);
+    lv_obj_align(lbl_add_hint, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+    /* ================= TAB 1: TELA & VIDEO ================= */
+    lv_obj_set_style_pad_all(tab_display, 12, 0);
+    lv_obj_add_flag(tab_display, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *display_card = lv_obj_create(tab_display);
+    lv_obj_set_size(display_card, 690, 200);
+    lv_obj_set_pos(display_card, 0, 0);
+    lv_obj_clear_flag(display_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(display_card, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_border_color(display_card, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_radius(display_card, 4, 0);
+    lv_obj_set_style_pad_all(display_card, 12, 0);
+
+    lv_obj_t *display_title = lv_label_create(display_card);
+    lv_label_set_text(display_title, "RESOLUCAO E MONITOR");
+    lv_obj_set_style_text_color(display_title, lv_color_hex(BZ_ACCENT), 0);
+    lv_obj_align(display_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    lbl_settings_display = lv_label_create(display_card);
+    lv_obj_set_width(lbl_settings_display, 660);
+    lv_obj_align(lbl_settings_display, LV_ALIGN_TOP_LEFT, 0, 24);
+
+    dd_settings_resolution = lv_dropdown_create(display_card);
+    lv_obj_set_size(dd_settings_resolution, 320, 34);
+    lv_obj_set_pos(dd_settings_resolution, 0, 60);
+    bz_style_button(dd_settings_resolution);
+    lv_dropdown_set_options_static(dd_settings_resolution, "Lendo EDID do monitor...");
+
+    lv_obj_t *apply_mode = lv_btn_create(display_card);
+    lv_obj_set_size(apply_mode, 160, 34);
+    lv_obj_set_pos(apply_mode, 336, 60);
+    bz_style_button(apply_mode);
+    lv_obj_set_style_bg_color(apply_mode, lv_color_hex(0x215d80), 0);
+    lv_obj_t *apply_label = lv_label_create(apply_mode);
+    lv_label_set_text(apply_label, "Aplicar agora");
+    lv_obj_center(apply_label);
+    lv_obj_add_event_cb(apply_mode, settings_resolution_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *display_note = lv_label_create(display_card);
+    lv_label_set_text(display_note, "Modos de video lidos diretamente do barramento PCI e firmware EDID.\nAlteracao ao vivo com reajuste automatico das janelas e barra.");
+    lv_obj_set_style_text_color(display_note, lv_color_hex(BZ_TEXT_DIM), 0);
+    lv_obj_align(display_note, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+    /* ================= TAB 2: TECLADO & MOUSE ================= */
+    lv_obj_set_style_pad_all(tab_input, 12, 0);
+    lv_obj_add_flag(tab_input, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *keyboard_card = lv_obj_create(tab_input);
+    lv_obj_set_size(keyboard_card, 340, 200);
+    lv_obj_set_pos(keyboard_card, 0, 0);
     lv_obj_clear_flag(keyboard_card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(keyboard_card, lv_color_hex(BZ_VIEW), 0);
-    lv_obj_set_style_bg_opa(keyboard_card, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(keyboard_card, lv_color_hex(BZ_BUTTON_LINE), 0);
     lv_obj_set_style_radius(keyboard_card, 4, 0);
     lv_obj_set_style_pad_all(keyboard_card, 12, 0);
+
     lv_obj_t *kb_title = lv_label_create(keyboard_card);
-    lv_label_set_text(kb_title, "TECLADO");
+    lv_label_set_text(kb_title, "LAYOUT DO TECLADO");
     lv_obj_set_style_text_color(kb_title, lv_color_hex(BZ_ACCENT), 0);
     lv_obj_align(kb_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
     static const char *layout_names[] = { "ABNT2 - Brasil", "US - QWERTY", "US Internacional" };
     for (int i = 0; i < 3; i++) {
         btn_settings_layout[i] = lv_btn_create(keyboard_card);
-        lv_obj_set_size(btn_settings_layout[i], 260, 30);
-        lv_obj_set_pos(btn_settings_layout[i], 0, 27 + i * 36);
+        lv_obj_set_size(btn_settings_layout[i], 300, 32);
+        lv_obj_set_pos(btn_settings_layout[i], 0, 28 + i * 38);
         bz_style_button(btn_settings_layout[i]);
         lv_obj_t *label = lv_label_create(btn_settings_layout[i]);
         lv_label_set_text(label, layout_names[i]);
@@ -1323,102 +1761,192 @@ static void create_settings_window(void) {
         lv_obj_add_event_cb(btn_settings_layout[i], settings_layout_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
     }
 
-    lv_obj_t *network_card = lv_obj_create(content);
-    lv_obj_set_size(network_card, 300, 160);
-    lv_obj_set_pos(network_card, 316, 32);
-    lv_obj_clear_flag(network_card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(network_card, lv_color_hex(BZ_VIEW), 0);
-    lv_obj_set_style_bg_opa(network_card, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(network_card, lv_color_hex(BZ_BUTTON_LINE), 0);
-    lv_obj_set_style_radius(network_card, 4, 0);
-    lv_obj_set_style_pad_all(network_card, 12, 0);
-    lv_obj_t *network_title = lv_label_create(network_card);
-    lv_label_set_text(network_title, "REDE");
-    lv_obj_set_style_text_color(network_title, lv_color_hex(BZ_ACCENT), 0);
-    lv_obj_align(network_title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lbl_settings_network = lv_label_create(network_card);
-    lv_obj_set_width(lbl_settings_network, 270);
-    lv_label_set_long_mode(lbl_settings_network, LV_LABEL_LONG_WRAP);
-    lv_obj_align(lbl_settings_network, LV_ALIGN_TOP_LEFT, 0, 27);
-    lv_obj_t *refresh = lv_btn_create(network_card);
-    lv_obj_set_size(refresh, 100, 26);
-    lv_obj_align(refresh, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    bz_style_button(refresh);
-    lv_obj_t *refresh_label = lv_label_create(refresh);
-    lv_label_set_text(refresh_label, "Atualizar");
-    lv_obj_center(refresh_label);
-    lv_obj_add_event_cb(refresh, settings_refresh_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *card_mouse = lv_obj_create(tab_input);
+    lv_obj_set_size(card_mouse, 340, 200);
+    lv_obj_set_pos(card_mouse, 354, 0);
+    lv_obj_clear_flag(card_mouse, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(card_mouse, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_border_color(card_mouse, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_radius(card_mouse, 4, 0);
+    lv_obj_set_style_pad_all(card_mouse, 12, 0);
 
-    lv_obj_t *display_card = lv_obj_create(content);
-    lv_obj_set_size(display_card, 616, 144);
-    lv_obj_set_pos(display_card, 0, 202);
-    lv_obj_clear_flag(display_card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(display_card, lv_color_hex(BZ_VIEW), 0);
-    lv_obj_set_style_bg_opa(display_card, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(display_card, lv_color_hex(BZ_BUTTON_LINE), 0);
-    lv_obj_set_style_radius(display_card, 4, 0);
-    lv_obj_set_style_pad_all(display_card, 12, 0);
-    lv_obj_t *display_title = lv_label_create(display_card);
-    lv_label_set_text(display_title, "RESOLUCAO DO MONITOR");
-    lv_obj_set_style_text_color(display_title, lv_color_hex(BZ_ACCENT), 0);
-    lv_obj_align(display_title, LV_ALIGN_TOP_LEFT, 0, 0);
-    lbl_settings_display = lv_label_create(display_card);
-    lv_obj_set_width(lbl_settings_display, 590);
-    lv_obj_align(lbl_settings_display, LV_ALIGN_TOP_LEFT, 0, 24);
-    dd_settings_resolution = lv_dropdown_create(display_card);
-    lv_obj_set_size(dd_settings_resolution, 300, 34);
-    lv_obj_set_pos(dd_settings_resolution, 0, 49);
-    bz_style_button(dd_settings_resolution);
-    lv_dropdown_set_options_static(dd_settings_resolution, "Lendo EDID do monitor...");
-    lv_obj_t *apply_mode = lv_btn_create(display_card);
-    lv_obj_set_size(apply_mode, 150, 34);
-    lv_obj_set_pos(apply_mode, 320, 49);
-    bz_style_button(apply_mode);
-    lv_obj_t *apply_label = lv_label_create(apply_mode);
-    lv_label_set_text(apply_label, "Aplicar agora");
-    lv_obj_center(apply_label);
-    lv_obj_add_event_cb(apply_mode, settings_resolution_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *display_note = lv_label_create(display_card);
-    lv_label_set_text(display_note, "Modos lidos do EDID; a alteracao e feita ao vivo.");
-    lv_obj_set_style_text_color(display_note, lv_color_hex(BZ_TEXT_DIM), 0);
-    lv_obj_align(display_note, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_t *mouse_title = lv_label_create(card_mouse);
+    lv_label_set_text(mouse_title, "SENSIBILIDADE DO MOUSE");
+    lv_obj_set_style_text_color(mouse_title, lv_color_hex(BZ_ACCENT), 0);
+    lv_obj_align(mouse_title, LV_ALIGN_TOP_LEFT, 0, 0);
 
-    lv_obj_t *sound_card = lv_obj_create(content);
-    lv_obj_set_size(sound_card, 616, 100);
-    lv_obj_set_pos(sound_card, 0, 362);
+    slider_settings_mouse = lv_slider_create(card_mouse);
+    lv_obj_set_size(slider_settings_mouse, 280, 18);
+    lv_obj_set_pos(slider_settings_mouse, 0, 40);
+    lv_slider_set_range(slider_settings_mouse, 1, 10);
+    lv_slider_set_value(slider_settings_mouse, mouse_get_sensitivity(), LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(slider_settings_mouse, lv_color_hex(BZ_BUTTON), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(slider_settings_mouse, lv_color_hex(BZ_ACCENT), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider_settings_mouse, lv_color_hex(BZ_TEXT), LV_PART_KNOB);
+    lv_obj_add_event_cb(slider_settings_mouse, settings_mouse_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lbl_settings_mouse = lv_label_create(card_mouse);
+    lv_label_set_text_fmt(lbl_settings_mouse, "Sensibilidade: %d / 10", mouse_get_sensitivity());
+    lv_obj_set_pos(lbl_settings_mouse, 0, 70);
+
+    lv_obj_t *mouse_hint = lv_label_create(card_mouse);
+    lv_label_set_text(mouse_hint, "Afeta a velocidade do cursor na interface grafica e em emuladores.");
+    lv_obj_set_style_text_color(mouse_hint, lv_color_hex(BZ_TEXT_DIM), 0);
+    lv_obj_align(mouse_hint, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+    /* ================= TAB 3: AUDIO & SONS ================= */
+    lv_obj_set_style_pad_all(tab_sound, 12, 0);
+    lv_obj_add_flag(tab_sound, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *sound_card = lv_obj_create(tab_sound);
+    lv_obj_set_size(sound_card, 690, 200);
+    lv_obj_set_pos(sound_card, 0, 0);
     lv_obj_clear_flag(sound_card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(sound_card, lv_color_hex(BZ_VIEW), 0);
-    lv_obj_set_style_bg_opa(sound_card, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(sound_card, lv_color_hex(BZ_BUTTON_LINE), 0);
     lv_obj_set_style_radius(sound_card, 4, 0);
     lv_obj_set_style_pad_all(sound_card, 12, 0);
+
     lv_obj_t *sound_title = lv_label_create(sound_card);
-    lv_label_set_text(sound_title, "AUDIO");
+    lv_label_set_text(sound_title, "DISPOSITIVO DE AUDIO INTEL HDA");
     lv_obj_set_style_text_color(sound_title, lv_color_hex(BZ_ACCENT), 0);
     lv_obj_align(sound_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
     lv_obj_t *sound_note = lv_label_create(sound_card);
-    lv_label_set_text(sound_note, hda_is_available() ?
-        "Volume dos novos sons; alteracao imediata." :
-        "HDA indisponivel; preferencia salva para o proximo boot.");
+    lv_label_set_text_fmt(sound_note, "Codec: %s | Status: %s",
+        hda_is_available() ? (hda_get_codec_name() ? hda_get_codec_name() : "Intel HDA Padrao") : "Indisponivel",
+        hda_is_available() ? "Pronto para reproducao" : "Sem hardware HDA detectado");
     lv_obj_set_style_text_color(sound_note, lv_color_hex(BZ_TEXT_DIM), 0);
-    lv_obj_align(sound_note, LV_ALIGN_TOP_LEFT, 0, 23);
+    lv_obj_align(sound_note, LV_ALIGN_TOP_LEFT, 0, 24);
+
     slider_settings_volume = lv_slider_create(sound_card);
-    lv_obj_set_size(slider_settings_volume, 500, 18);
-    lv_obj_set_pos(slider_settings_volume, 0, 54);
+    lv_obj_set_size(slider_settings_volume, 520, 18);
+    lv_obj_set_pos(slider_settings_volume, 0, 60);
     lv_slider_set_range(slider_settings_volume, 0, 100);
     lv_obj_set_style_bg_color(slider_settings_volume, lv_color_hex(BZ_BUTTON), LV_PART_MAIN);
     lv_obj_set_style_bg_color(slider_settings_volume, lv_color_hex(BZ_ACCENT), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(slider_settings_volume, lv_color_hex(BZ_TEXT), LV_PART_KNOB);
-    lbl_settings_volume = lv_label_create(sound_card);
-    lv_obj_set_width(lbl_settings_volume, 54);
-    lv_obj_align(lbl_settings_volume, LV_ALIGN_TOP_RIGHT, 0, 52);
 
+    lbl_settings_volume = lv_label_create(sound_card);
+    lv_obj_set_width(lbl_settings_volume, 60);
+    lv_obj_set_pos(lbl_settings_volume, 540, 58);
+
+    lv_obj_t *btn_test_sound = lv_btn_create(sound_card);
+    lv_obj_set_size(btn_test_sound, 180, 32);
+    lv_obj_set_pos(btn_test_sound, 0, 100);
+    bz_style_button(btn_test_sound);
+    lv_obj_set_style_bg_color(btn_test_sound, lv_color_hex(0x215d80), 0);
+    lv_obj_t *lbl_test_snd = lv_label_create(btn_test_sound);
+    lv_label_set_text(lbl_test_snd, LV_SYMBOL_AUDIO "  Testar Som / Chime");
+    lv_obj_center(lbl_test_snd);
+    lv_obj_add_event_cb(btn_test_sound, settings_test_sound_cb, LV_EVENT_CLICKED, NULL);
+
+    /* ================= TAB 4: REDE ================= */
+    lv_obj_set_style_pad_all(tab_net, 12, 0);
+    lv_obj_add_flag(tab_net, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *network_card = lv_obj_create(tab_net);
+    lv_obj_set_size(network_card, 690, 200);
+    lv_obj_set_pos(network_card, 0, 0);
+    lv_obj_clear_flag(network_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(network_card, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_border_color(network_card, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_radius(network_card, 4, 0);
+    lv_obj_set_style_pad_all(network_card, 12, 0);
+
+    lv_obj_t *network_title = lv_label_create(network_card);
+    lv_label_set_text(network_title, "INTERFACE DE REDE E INTERNET");
+    lv_obj_set_style_text_color(network_title, lv_color_hex(BZ_ACCENT), 0);
+    lv_obj_align(network_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    lbl_settings_network = lv_label_create(network_card);
+    lv_obj_set_width(lbl_settings_network, 660);
+    lv_label_set_long_mode(lbl_settings_network, LV_LABEL_LONG_WRAP);
+    lv_obj_align(lbl_settings_network, LV_ALIGN_TOP_LEFT, 0, 26);
+
+    lv_obj_t *refresh = lv_btn_create(network_card);
+    lv_obj_set_size(refresh, 140, 30);
+    lv_obj_set_pos(refresh, 0, 120);
+    bz_style_button(refresh);
+    lv_obj_t *refresh_label = lv_label_create(refresh);
+    lv_label_set_text(refresh_label, LV_SYMBOL_REFRESH "  Atualizar");
+    lv_obj_center(refresh_label);
+    lv_obj_add_event_cb(refresh, settings_refresh_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *btn_ping = lv_btn_create(network_card);
+    lv_obj_set_size(btn_ping, 160, 30);
+    lv_obj_set_pos(btn_ping, 150, 120);
+    bz_style_button(btn_ping);
+    lv_obj_set_style_bg_color(btn_ping, lv_color_hex(0x215d80), 0);
+    lv_obj_t *lbl_ping = lv_label_create(btn_ping);
+    lv_label_set_text(lbl_ping, LV_SYMBOL_WIFI "  Testar Gateway");
+    lv_obj_center(lbl_ping);
+    lv_obj_add_event_cb(btn_ping, settings_test_net_cb, LV_EVENT_CLICKED, NULL);
+
+    /* ================= TAB 5: SISTEMA ================= */
+    lv_obj_set_style_pad_all(tab_sys, 12, 0);
+    lv_obj_add_flag(tab_sys, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *sys_card = lv_obj_create(tab_sys);
+    lv_obj_set_size(sys_card, 690, 220);
+    lv_obj_set_pos(sys_card, 0, 0);
+    lv_obj_clear_flag(sys_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(sys_card, lv_color_hex(BZ_VIEW), 0);
+    lv_obj_set_style_border_color(sys_card, lv_color_hex(BZ_BUTTON_LINE), 0);
+    lv_obj_set_style_radius(sys_card, 4, 0);
+    lv_obj_set_style_pad_all(sys_card, 12, 0);
+
+    lv_obj_t *sys_title = lv_label_create(sys_card);
+    lv_label_set_text(sys_title, "INFORMACOES DO SISTEMA");
+    lv_obj_set_style_text_color(sys_title, lv_color_hex(BZ_ACCENT), 0);
+    lv_obj_align(sys_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    uint64_t free_mb = pmm_get_free_memory() / (1024ULL * 1024ULL);
+    uint64_t total_mb = pmm_get_total_memory() / (1024ULL * 1024ULL);
+
+    lbl_settings_sys_text = lv_label_create(sys_card);
+    lv_obj_set_width(lbl_settings_sys_text, 660);
+    lv_label_set_text_fmt(lbl_settings_sys_text,
+        "Sistema Operacional: LiwusOS v2.2.24 (x86_64)\n"
+        "Hostname: %s\n"
+        "Modo de Operacao: %s\n"
+        "Memoria Fisica: %u MB total / %u MB livre\n"
+        "Seguranca: Suporte nativo a usuarios, grupos e anel de protecao ring-3",
+        g_system_hostname[0] ? g_system_hostname : "liwus",
+        is_live_mode ? "Modo Live USB" : "Instalado no Disco Rigido",
+        (unsigned)total_mb, (unsigned)free_mb);
+    lv_obj_align(lbl_settings_sys_text, LV_ALIGN_TOP_LEFT, 0, 26);
+
+    lv_obj_t *btn_reboot = lv_btn_create(sys_card);
+    lv_obj_set_size(btn_reboot, 150, 32);
+    lv_obj_set_pos(btn_reboot, 0, 140);
+    bz_style_button(btn_reboot);
+    lv_obj_set_style_bg_color(btn_reboot, lv_color_hex(0x2980b9), 0);
+    lv_obj_t *lbl_reb = lv_label_create(btn_reboot);
+    lv_label_set_text(lbl_reb, LV_SYMBOL_REFRESH "  Reiniciar");
+    lv_obj_center(lbl_reb);
+    lv_obj_add_event_cb(btn_reboot, settings_reboot_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *btn_power = lv_btn_create(sys_card);
+    lv_obj_set_size(btn_power, 150, 32);
+    lv_obj_set_pos(btn_power, 160, 140);
+    bz_style_button(btn_power);
+    lv_obj_set_style_bg_color(btn_power, lv_color_hex(BZ_RED), 0);
+    lv_obj_t *lbl_pow = lv_label_create(btn_power);
+    lv_label_set_text(lbl_pow, LV_SYMBOL_POWER "  Desligar");
+    lv_obj_center(lbl_pow);
+    lv_obj_add_event_cb(btn_power, settings_poweroff_cb, LV_EVENT_CLICKED, NULL);
+
+    /* ================= BARRA DE STATUS INFERIOR ================= */
     lbl_settings_status = lv_label_create(content);
     lv_obj_set_width(lbl_settings_status, lv_pct(100));
     lv_label_set_long_mode(lbl_settings_status, LV_LABEL_LONG_DOT);
-    lv_label_set_text(lbl_settings_status, "Escolha uma resolucao anunciada pelo monitor e aplique.");
-    lv_obj_align(lbl_settings_status, LV_ALIGN_TOP_LEFT, 0, 474);
+    lv_label_set_text(lbl_settings_status, "Central de Controle do LiwusOS pronta.");
+    lv_obj_align(lbl_settings_status, LV_ALIGN_BOTTOM_LEFT, 10, -4);
     lv_obj_set_style_text_color(lbl_settings_status, lv_color_hex(BZ_TEXT_DIM), 0);
+
+    /* Inicializacao dos valores */
+    settings_refresh_users();
     settings_refresh_choices();
     settings_load_display_modes();
     settings_refresh_network();
@@ -4450,6 +4978,13 @@ static void create_taskbar(void) {
     lv_obj_set_style_text_color(lbl_net, lv_color_hex(BZ_TEXT_DIM), 0);
     lv_label_set_text(lbl_net, LV_SYMBOL_WIFI "  Conectando");
     lv_obj_align(lbl_net, LV_ALIGN_RIGHT_MID, -210, 0);
+
+    lbl_taskbar_user = lv_label_create(g_taskbar);
+    lv_obj_add_flag(lbl_taskbar_user, LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_text_color(lbl_taskbar_user, lv_color_hex(BZ_TEXT), 0);
+    lv_label_set_text(lbl_taskbar_user, "davi");
+    lv_obj_align(lbl_taskbar_user, LV_ALIGN_RIGHT_MID, -350, 0);
+    lv_obj_add_event_cb(lbl_taskbar_user, dock_settings_cb, LV_EVENT_CLICKED, NULL);
 }
 
 /* ----------------------------- Menu Iniciar ----------------------------- */
@@ -4546,11 +5081,13 @@ static void create_start_menu(void) {
     lv_obj_set_style_text_font(av_lbl, &lv_font_montserrat_18, 0);
     lv_label_set_text(av_lbl, "R");
     lv_obj_center(av_lbl);
+    lbl_menu_avatar = av_lbl;
 
     lv_obj_t *user = lv_label_create(head);
     lv_obj_set_style_text_font(user, &lv_font_montserrat_16, 0);
     lv_label_set_text(user, "root");
     lv_obj_align(user, LV_ALIGN_LEFT_MID, 64, -9);
+    lbl_menu_user = user;
     lv_obj_t *host = lv_label_create(head);
     lv_obj_set_style_text_font(host, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(host, lv_color_hex(BZ_TEXT_DIM), 0);
@@ -4725,6 +5262,27 @@ static void desktop_update_topbar_status(bool force) {
         }
     }
 
+    /* Atualiza usuario ativo na barra de tarefas e no menu Iniciar */
+    const char *active_user = users_get_active_name();
+    bool is_elev = users_is_active_elevated();
+    if (lbl_taskbar_user) {
+        char user_str[64];
+        lv_snprintf(user_str, sizeof(user_str), "%s  %s%s",
+                    is_elev ? LV_SYMBOL_SHUFFLE : "",
+                    active_user,
+                    is_elev ? " [ROOT]" : "");
+        lv_label_set_text(lbl_taskbar_user, user_str);
+        lv_obj_set_style_text_color(lbl_taskbar_user,
+            is_elev ? lv_color_hex(BZ_GREEN) : lv_color_hex(BZ_TEXT), 0);
+    }
+    if (lbl_menu_user) {
+        lv_label_set_text(lbl_menu_user, active_user);
+    }
+    if (lbl_menu_avatar && active_user && active_user[0]) {
+        char av[2] = { (char)(active_user[0] >= 'a' && active_user[0] <= 'z' ? active_user[0] - 32 : active_user[0]), '\0' };
+        lv_label_set_text(lbl_menu_avatar, av);
+    }
+
     if (lbl_sys_info && win_sysmon && !lv_obj_has_flag(win_sysmon, LV_OBJ_FLAG_HIDDEN)) {
         task_info_t tasks[16];
         int ntasks = task_snapshot(tasks, 16);
@@ -4756,6 +5314,7 @@ void desktop_task(void) {
         bool browser_visible = win_browser && !lv_obj_has_flag(win_browser, LV_OBJ_FLAG_HIDDEN);
         bool pkg_visible = win_pkgmgr && !lv_obj_has_flag(win_pkgmgr, LV_OBJ_FLAG_HIDDEN);
         bool inst_visible = win_installer && !lv_obj_has_flag(win_installer, LV_OBJ_FLAG_HIDDEN);
+        bool settings_visible = win_settings && !lv_obj_has_flag(win_settings, LV_OBJ_FLAG_HIDDEN);
         lv_obj_t *target_ta = NULL;
         bool target_is_url = false;
         bool target_is_pkg = false;
@@ -4764,6 +5323,10 @@ void desktop_task(void) {
         } else if (pkg_visible && g_pkg_input_focused && ta_pkg_input) {
             target_ta = ta_pkg_input;
             target_is_pkg = true;
+        } else if (settings_visible && g_settings_user_focused && ta_settings_new_user) {
+            target_ta = ta_settings_new_user;
+        } else if (settings_visible && g_settings_pass_focused && ta_settings_new_pass) {
+            target_ta = ta_settings_new_pass;
         } else if (browser_visible) {
             if (g_active_web_input) {
                 target_ta = g_active_web_input;
@@ -4798,6 +5361,10 @@ void desktop_task(void) {
                         browser_go_cb(NULL);
                     } else if (target_is_pkg) {
                         pkgmgr_install_input_cb(NULL);
+                    } else if (target_ta == ta_settings_new_user) {
+                        set_settings_pass_focus(true);
+                    } else if (target_ta == ta_settings_new_pass) {
+                        settings_add_user_cb(NULL);
                     } else {
                         lv_event_send(target_ta, LV_EVENT_READY, NULL);
                     }

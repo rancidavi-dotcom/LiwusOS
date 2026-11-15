@@ -30,6 +30,7 @@
 #include "net_manager.h"
 #include "desktop.h"
 #include "hda.h"
+#include "kernel/users.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -853,6 +854,10 @@ void kernel_main_continue(void) {
   load_audio_volume_config();
 
   init_tasking();
+  /* The users subsystem updates the active process credentials.  The
+   * scheduler must have installed the per-CPU current-task pointer first;
+   * calling it before init_tasking() dereferences an uninitialized GS slot. */
+  users_init();
   init_timer(100);
   init_syscalls();
   boot_stage("sched ok");

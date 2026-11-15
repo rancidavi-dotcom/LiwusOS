@@ -19,6 +19,7 @@
 #include "http_client.h"
 #include "screenshot.h"
 #include "gui/browser_url.h"
+#include "kernel/users.h"
 
 extern char *itoa(int value, char *str, int base);
 extern int atoi(const char *nptr);
@@ -1410,5 +1411,196 @@ void cmd_bing(int argc, char **argv) {
         new_argv[i + 1] = argv[i];
     }
     cmd_search(argc + 1, new_argv);
+}
+
+void cmd_whoami(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    const char *name = users_get_active_name();
+    uint32_t uid = users_get_active_uid();
+    const user_account_t *u = users_get_by_name(name);
+
+    vga_puts("Usuario ativo: ");
+    vga_puts(name);
+    vga_puts(" (UID: ");
+    char num[16];
+    itoa(uid, num, 10);
+    vga_puts(num);
+    vga_puts(", GID: ");
+    itoa(u ? u->gid : uid, num, 10);
+    vga_puts(num);
+    vga_puts(")\n");
+
+    vga_puts("Privilegio: ");
+    if (users_is_active_elevated()) {
+        vga_puts("[SUPERUSUARIO / ROOT] - Permissao total no sistema.\n");
+    } else if (u && u->is_admin) {
+        vga_puts("[ADMINISTRADOR] - Padrao (use 'elevate' para executar como root).\n");
+    } else {
+        vga_puts("[PADRAO] - Acesso restrito a diretorios de usuario.\n");
+    }
+
+    if (u) {
+        vga_puts("Diretorio home: ");
+        vga_puts(u->home);
+        vga_puts("\nShell: ");
+        vga_puts(u->shell);
+        vga_puts("\n");
+    }
+}
+
+void cmd_users(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    vga_puts("------------------------------------------------------------\n");
+    vga_puts("UID   USUARIO     ADMIN   HOME            SHELL\n");
+    vga_puts("------------------------------------------------------------\n");
+    int count = users_count();
+    for (int i = 0; i < count; i++) {
+        const user_account_t *u = users_get_at(i);
+        if (!u) continue;
+        char num[16];
+        itoa(u->uid, num, 10);
+        vga_puts(num);
+        for (int s = strlen(num); s < 6; s++) vga_putc(' ');
+
+        vga_puts(u->username);
+        for (int s = strlen(u->username); s < 12; s++) vga_putc(' ');
+
+        vga_puts(u->is_admin ? "Sim    " : "Nao    ");
+
+        vga_puts(u->home);
+        for (int s = strlen(u->home); s < 16; s++) vga_putc(' ');
+
+        vga_puts(u->shell);
+        vga_putc('\n');
+    }
+    vga_puts("------------------------------------------------------------\n");
+}
+
+void cmd_elevate(int argc, char **argv) {
+    if (!users_is_active_elevated()) {
+        const user_account_t *u = users_get_by_name(users_get_active_name());
+        if (!u || !u->is_admin) {
+            vga_puts("elevate: Permissao negada. O usuario atual nao e administrador.\n");
+            return;
+        }
+    }
+
+    if (argc < 2 || strcmp(argv[1], "-s") == 0) {
+        if (users_is_active_elevated()) {
+            vga_puts("A sessao ja esta com privilegios elevados (root).\n");
+            return;
+        }
+        if (users_elevate(NULL)) {
+            vga_puts("[ELEVATE] Sessao elevada com sucesso para superusuario (root - UID 0)!\n");
+            vga_puts("Para retornar ao usuario normal, digite 'unelevate'.\n");
+        } else {
+            vga_puts("elevate: Falha ao elevar privilegios.\n");
+        }
+        return;
+    }
+
+    if (strcmp(argv[1], "status") == 0) {
+        vga_puts("Nivel de privilegio: ");
+        vga_puts(users_is_active_elevated() ? "SUPERUSUARIO ELEVADO (UID 0)\n" : "PADRAO\n");
+        return;
+    }
+
+    /* Executa comando sob elevacao temporaria */
+    bool was_elevated = users_is_active_elevated();
+    if (!was_elevated) users_elevate(NULL);
+
+    extern void terminal_execute(int argc, char **argv);
+    terminal_execute(argc - 1, argv + 1);
+
+    if (!was_elevated) users_unelevate();
+}
+
+void cmd_unelevate(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    if (!users_is_active_elevated()) {
+        vga_puts("A sessao ja esta em modo normal de usuario.\n");
+        return;
+    }
+    users_unelevate();
+    vga_puts("[ELEVATE] Privilegios devolvidos. Retornado para usuario padrao: ");
+    vga_puts(users_get_active_name());
+    vga_puts("\n");
+}
+
+void cmd_useradd(int argc, char **argv) {
+    if (!users_is_active_elevated()) {
+        vga_puts("useradd: Permissao negada. Requer privilegios elevados (use 'elevate useradd').\n");
+        return;
+    }
+    if (argc < 2) {
+        vga_puts("Uso: useradd <nome_usuario> [senha] [admin|user]\n");
+        return;
+    }
+    const char *name = argv[1];
+    const char *pass = (argc >= 3) ? argv[2] : "liwus";
+    bool admin = (argc >= 4 && strcmp(argv[3], "admin") == 0);
+
+    if (users_add(name, pass, admin)) {
+        vga_puts("Usuario '");
+        vga_puts(name);
+        vga_puts("' criado com sucesso.\n");
+    } else {
+        vga_puts("useradd: Erro ao criar usuario (ja existe ou limite atingido).\n");
+    }
+}
+
+void cmd_userdel(int argc, char **argv) {
+    if (!users_is_active_elevated()) {
+        vga_puts("userdel: Permissao negada. Requer privilegios elevados (use 'elevate userdel').\n");
+        return;
+    }
+    if (argc < 2) {
+        vga_puts("Uso: userdel <nome_usuario>\n");
+        return;
+    }
+    if (users_del(argv[1])) {
+        vga_puts("Usuario '");
+        vga_puts(argv[1]);
+        vga_puts("' removido com sucesso.\n");
+    } else {
+        vga_puts("userdel: Nao foi possivel remover usuario (inexistente ou protegido).\n");
+    }
+}
+
+void cmd_passwd(int argc, char **argv) {
+    const char *target = (argc >= 2) ? argv[1] : users_get_active_name();
+    if (argc >= 2 && strcmp(target, users_get_active_name()) != 0 && !users_is_active_elevated()) {
+        vga_puts("passwd: Voce so pode alterar sua propria senha (ou use elevate).\n");
+        return;
+    }
+    const char *new_pass = (argc >= 3) ? argv[2] : "liwus";
+    if (users_set_password(target, new_pass)) {
+        vga_puts("Senha de '");
+        vga_puts(target);
+        vga_puts("' atualizada com sucesso.\n");
+    } else {
+        vga_puts("passwd: Falha ao alterar senha.\n");
+    }
+}
+
+void cmd_su(int argc, char **argv) {
+    if (argc < 2) {
+        if (users_elevate(NULL)) {
+            vga_puts("Sessao alterada para root.\n");
+        } else {
+            vga_puts("su: Falha na autenticacao de root.\n");
+        }
+        return;
+    }
+    if (users_set_active(argv[1])) {
+        vga_puts("Usuario ativo alterado para '");
+        vga_puts(argv[1]);
+        vga_puts("'.\n");
+    } else {
+        vga_puts("su: Usuario nao encontrado.\n");
+    }
 }
 

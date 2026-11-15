@@ -53,6 +53,14 @@ void cmd_curl(int argc, char **argv);
 void cmd_search(int argc, char **argv);
 void cmd_google(int argc, char **argv);
 void cmd_bing(int argc, char **argv);
+void cmd_whoami(int argc, char **argv);
+void cmd_users(int argc, char **argv);
+void cmd_elevate(int argc, char **argv);
+void cmd_unelevate(int argc, char **argv);
+void cmd_useradd(int argc, char **argv);
+void cmd_userdel(int argc, char **argv);
+void cmd_passwd(int argc, char **argv);
+void cmd_su(int argc, char **argv);
 void cmd_lpkg(int argc, char **argv);
 
 // Command structure

@@ -157,9 +157,11 @@ NEOFETCH_LXE = build/liwus-sdk/bin/neofetch.lxe
 SNAKE_LXE = build/liwus-sdk/bin/snake.lxe
 MATRIX_LXE = build/liwus-sdk/bin/matrix.lxe
 SYSBENCH_LXE = build/liwus-sdk/bin/sysbench.lxe
+WHOAMI_LXE = build/liwus-sdk/bin/whoami.lxe
+ELEVATE_LXE = build/liwus-sdk/bin/elevate.lxe
 PKG_REPO_LXES = $(NEOFETCH_LXE) $(SNAKE_LXE) $(MATRIX_LXE) $(SYSBENCH_LXE)
 NATIVE_UTIL_LXES = $(MKDIR_LXE) $(RM_LXE) $(MV_LXE) $(CP_LXE) \
-	$(TOUCH_LXE) $(ECHO_LXE) $(RMDIR_LXE) $(STAT_LXE) $(HEAD_LXE) $(WEBTEXT_LXE) $(QJS_LXE) $(C_DEMO_LXE) $(TCC_LXE) $(KILO_LXE) $(DOOM_LXE)
+	$(TOUCH_LXE) $(ECHO_LXE) $(RMDIR_LXE) $(STAT_LXE) $(HEAD_LXE) $(WEBTEXT_LXE) $(QJS_LXE) $(C_DEMO_LXE) $(TCC_LXE) $(KILO_LXE) $(DOOM_LXE) $(WHOAMI_LXE) $(ELEVATE_LXE)
 EXTERNAL_SDK_TEST_LXE = build/external-test.lxe
 SDK_LIBRARY = build/liwus-sdk/lib/libliwus.a
 SDK_OPENLIBM = build/liwus-sdk/lib/libopenlibm.a
@@ -254,6 +256,12 @@ $(KILO_LXE): $(wildcard programs/kilo/*.c) programs/kilo/Makefile $(SDK_LIBRARY)
 
 $(DOOM_LXE): $(wildcard programs/doom/*.c) $(wildcard programs/doom/*.h) programs/doom/Makefile $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
 	$(MAKE) -j$(shell nproc) -C programs/doom all
+
+$(WHOAMI_LXE): programs/whoami/main.c programs/whoami/Makefile programs/native-app.mk $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
+	$(MAKE) -C programs/whoami all
+
+$(ELEVATE_LXE): programs/elevate/main.c programs/elevate/Makefile programs/native-app.mk $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
+	$(MAKE) -C programs/elevate all
 
 $(SNES_LXE): $(wildcard programs/snes/*.c) programs/snes/Makefile \
 		$(wildcard third_party/lakesnes/snes/*.c) \
@@ -613,6 +621,10 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 	tar -rf initrd.tar --format=ustar --transform='s|echo.lxe|bin/echo.lxe|' -C build/liwus-sdk/bin echo.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|rmdir.lxe|bin/rmdir.lxe|' -C build/liwus-sdk/bin rmdir.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|stat.lxe|bin/stat.lxe|' -C build/liwus-sdk/bin stat.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|whoami.lxe|bin/whoami|' -C build/liwus-sdk/bin whoami.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|whoami.lxe|bin/whoami.lxe|' -C build/liwus-sdk/bin whoami.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|elevate.lxe|bin/elevate|' -C build/liwus-sdk/bin elevate.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|elevate.lxe|bin/elevate.lxe|' -C build/liwus-sdk/bin elevate.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|head.lxe|bin/head.lxe|' -C build/liwus-sdk/bin head.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|webtext.lxe|bin/webtext.lxe|' -C build/liwus-sdk/bin webtext.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|qjs.lxe|bin/qjs.lxe|' -C build/liwus-sdk/bin qjs.lxe

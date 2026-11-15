@@ -56,10 +56,12 @@ int main(void) {
         overflow) return 12;
     output[used] = '\0';
     if (!contains(output, used, "<title>Script title</title>") ||
-        !contains(output, used, "id=\"out\" data-label=\"A &amp; B\">"
-                                "mutated &lt;&amp;</p>") ||
+        !contains(output, used, "data-label=\"A &amp; B\"") ||
+        !contains(output, used, "data-extra=\"dataset-ok\"") ||
+        !contains(output, used, "style=\"background-color: rgb(1, 2, 3)\"") ||
+        !contains(output, used, "mutated &lt;&amp;</p>") ||
         !contains(output, used,
-                  "id=\"advanced\">DOM_ADVANCED_PASS|MODULE_PASS</p>") ||
+                  "id=\"advanced\">DOM_ADVANCED_PASS|WEB_API_PASS|MODULE_PASS</p>") ||
         !contains(output, used, "old &amp; text")) return 13;
 
     static const char pass[] = "QJS_PIPE_DOM_PASS\n";
