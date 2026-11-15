@@ -6430,6 +6430,17 @@ static int qjs_run_inline_script_pass(JSContext *ctx, int modules,
                         filename = module_filename;
                     }
                 }
+                JSValue global = JS_GetGlobalObject(ctx);
+                JSValue document_value = JS_GetPropertyStr(ctx, global, "document");
+                if (!modules && !JS_IsException(document_value) &&
+                    JS_IsObject(document_value)) {
+                    JSValue current_script = qjs_dom_wrap_node(ctx, id);
+                    if (!JS_IsException(current_script))
+                        (void)JS_SetPropertyStr(ctx, document_value,
+                                                "currentScript", current_script);
+                    else
+                        JS_FreeValue(ctx, current_script);
+                }
                 JSValue result = JS_Eval(ctx, source.data, source.length,
                     filename,
                     modules ? JS_EVAL_TYPE_MODULE : JS_EVAL_TYPE_GLOBAL);
@@ -6441,6 +6452,12 @@ static int qjs_run_inline_script_pass(JSContext *ctx, int modules,
                     print_exception(ctx);
                 }
                 JS_FreeValue(ctx, result);
+                if (!modules && !JS_IsException(document_value) &&
+                    JS_IsObject(document_value))
+                    (void)JS_SetPropertyStr(ctx, document_value,
+                                            "currentScript", JS_NULL);
+                JS_FreeValue(ctx, document_value);
+                JS_FreeValue(ctx, global);
                 /* A browser performs a microtask checkpoint after a script
                  * task. Run Promise reactions and queueMicrotask callbacks
                  * before moving to the next script in document order. */

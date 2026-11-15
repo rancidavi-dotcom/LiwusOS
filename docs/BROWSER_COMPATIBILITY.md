@@ -122,7 +122,7 @@ execute; their presence does not imply standards-complete browser behavior:
     `releasePointerCapture`, `hasPointerCapture`, `showPicker`) are exposed as
     bounded element state shims; pointer lock remains explicitly unavailable.
   - DOM Tree Mutation: `insertAdjacentHTML()`, `insertAdjacentElement()`, `append()`, `prepend()`.
-  - Document & View: `window.getComputedStyle()`, `window.matchMedia()`, `document.cookie`, `document.defaultView`, `document.readyState`, `document.compatMode`, `document.doctype`, `document.scripts`, `document.getElementsByName()`, `document.createRange()`, `document.createElementNS()`. `HTMLFormElement.elements` is branded as a bounded `HTMLFormControlsCollection` with `item()` and `namedItem()`.
+  - Document & View: `window.getComputedStyle()`, `window.matchMedia()`, `document.cookie`, `document.defaultView`, `document.readyState`, `document.compatMode`, `document.doctype`, `document.scripts`, `document.currentScript` during classic inline-script evaluation, `document.getElementsByName()`, `document.createRange()`, `document.createElementNS()`. `HTMLFormElement.elements` is branded as a bounded `HTMLFormControlsCollection` with `item()` and `namedItem()`.
     Computed-style results expose read-only collection helpers (`length`,
     `item()`, `getPropertyValue()`, and `getPropertyPriority()`) over the
     bounded inline/default style view.

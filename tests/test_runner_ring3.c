@@ -165,6 +165,7 @@ int test_ring3_processes(void) {
         static char page[] =
             "<!doctype html><html><head><title>Old title</title><script>"
             "const output=document.getElementById('out');"
+            "if(!document.currentScript||document.currentScript.tagName!=='SCRIPT')throw new Error('currentScript failed');"
             "document.addEventListener('DOMContentLoaded',function(){output.setAttribute('data-dom-ready','yes');});"
             "addEventListener('load',function(){output.setAttribute('data-window-load','yes');});"
             "if(window!==globalThis||self!==globalThis||navigator.userAgent.indexOf('Chrome/120')<0||"
