@@ -236,10 +236,11 @@ execute; their presence does not imply standards-complete browser behavior:
     `MediaQueryListEvent` when the bounded viewport changes through
     `resizeTo()`/`resizeBy()`; those helpers also emit `resize` on `window` and
     `visualViewport` and update the orientation hint.
-    `PerformanceObserver`/`PerformanceEntry`, `MessageChannel`/`MessagePort`,
-    `Worker`/`SharedWorker`, and `ClipboardItem` surfaces are available for
-    feature detection and bounded local messaging; they do not create worker
-    threads or provide background script execution.
+    `PerformanceObserver`/`PerformanceEntry` receive page-created
+    mark/measure entries with bounded microtask delivery and `takeRecords()`.
+    `MessageChannel`/`MessagePort`, `Worker`/`SharedWorker`, and `ClipboardItem`
+    surfaces are available for feature detection and bounded local messaging;
+    they do not create worker threads or provide background script execution.
   - Scheduling and cancellation: `requestIdleCallback()`/
     `cancelIdleCallback()`, `AbortSignal.any()`, `AbortSignal.throwIfAborted()`,
     and `navigator.sendBeacon()` (using the existing fetch bridge) are exposed.
