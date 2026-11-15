@@ -125,7 +125,9 @@ execute; their presence does not imply standards-complete browser behavior:
   - Media and fonts: bounded `document.fonts` readiness/load checks plus
     `Image()` and `Audio()` constructors. `audio`/`video` elements expose
     feature-detection, playback-state, and event shims (`play`, `pause`,
-    `load`, `canPlayType`, `currentTime`); `FontFace` and in-memory
+    `load`, `canPlayType`, `currentTime`, `requestVideoFrameCallback`, and
+    rejected picture-in-picture requests); `navigator.mediaCapabilities`
+    returns explicit unsupported results. `FontFace` and in-memory
     `FontFaceSet` operations (`add`, `delete`, `has`, `clear`, `forEach`) are
     also available, but no font download or WOFF2 decoding is implemented.
     Codec and media transport are not implemented.
