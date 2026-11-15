@@ -172,8 +172,9 @@ execute; their presence does not imply standards-complete browser behavior:
     `attachInternals()` returns a bounded `ElementInternals`-like object with
     custom states and validity/form hooks for component feature detection; it
     does not connect custom elements to a native form submission pipeline.
-    Dialog and popover methods (`showModal`, `close`, `showPopover`,
-    `hidePopover`, and `togglePopover`) are bounded state/event shims; they do
+    Dialog and popover methods (`showModal`, `show`, `close`, `requestClose`,
+    `showPopover`, `hidePopover`, and `togglePopover`) are bounded
+    state/event shims, including `returnValue` and cancel/close events; they do
     not create a separate top-layer compositor surface.
   - Streams: bounded `ReadableStream`, `WritableStream`, `TransformStream`,
     `TextEncoderStream`, and `TextDecoderStream` surfaces. `ReadableStream`
