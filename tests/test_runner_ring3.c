@@ -300,7 +300,7 @@ int test_ring3_processes(void) {
             "const replaceTarget=document.createElement('div');replaceTarget.append('a','b');"
             "replaceTarget.replaceChildren('done');if(replaceTarget.textContent!=='done')"
             "throw new Error('replaceChildren failed');"
-            "const form=document.createElement('form');let submitted=false;form.addEventListener('submit',function(e){submitted=true;e.preventDefault();});"
+            "const form=document.createElement('form');const formInput=document.createElement('input');formInput.name='query';formInput.id='query-id';form.appendChild(formInput);if(!(form.elements instanceof HTMLFormControlsCollection)||form.elements.namedItem('query')!==formInput||form.elements.namedItem('query-id')!==formInput)throw new Error('form controls collection failed');let submitted=false;form.addEventListener('submit',function(e){submitted=true;e.preventDefault();});"
             "form.requestSubmit();if(!submitted||!form.checkValidity()||!form.reportValidity())throw new Error('form APIs failed');"
             "const ce=new CustomEvent('custom',{detail:7,bubbles:true});if(ce.detail!==7||ce.type!=='custom'||!(ce instanceof Event))throw new Error('CustomEvent failed');"
             "const me=new MouseEvent('click',{clientX:3,clientY:4,ctrlKey:true,button:1});if(me.clientX!==3||me.clientY!==4||!me.ctrlKey||me.button!==1)throw new Error('MouseEvent failed '+me.clientX+','+me.clientY+','+me.ctrlKey+','+me.button);"
