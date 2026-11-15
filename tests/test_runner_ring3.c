@@ -385,6 +385,7 @@ int test_ring3_processes(void) {
             "CSS.registerProperty({name:'--liwus-probe',syntax:'<number>',inherits:false,initialValue:'0'});if(CSS.px(4).toString()!=='4px'||CSS.percent(50).unit!=='percent'||CSSStyleValue.parse('color','red')[0]!=='red')throw new Error('CSS typed values failed');"
             "const tpl=document.createElement('template');tpl.innerHTML='<span>template</span>';"
             "if(!tpl.content||!tpl.content.firstChild||tpl.content.firstChild.textContent!=='template')throw new Error('template content failed');"
+            "const htmlMethods=document.createElement('div');htmlMethods.setHTMLUnsafe('<span data-x=one>hello</span>');if(typeof htmlMethods.getHTML!=='function'||htmlMethods.getHTML().indexOf('data-x')<0||htmlMethods.firstChild.textContent!=='hello')throw new Error('Element HTML serialization failed');htmlMethods.setHTML('<b>safe</b>');if(htmlMethods.innerHTML.indexOf('<b>')<0||htmlMethods.getHTML().indexOf('safe')<0)throw new Error('Element HTML replacement failed');"
             "const shadowHost=document.createElement('div');const shadow=shadowHost.attachShadow({mode:'open'});"
             "const shadowChild=document.createElement('b');shadowChild.textContent='shadow';shadow.appendChild(shadowChild);"
             "if(!shadowHost.shadowRoot||shadowHost.shadowRoot.host!==shadowHost||shadow.querySelector('b')!==shadowChild)throw new Error('shadow root failed');"

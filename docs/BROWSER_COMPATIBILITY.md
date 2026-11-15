@@ -93,7 +93,10 @@ execute; their presence does not imply standards-complete browser behavior:
     to token mutation.
   - `DOMParser.parseFromString()` (bounded detached HTML document view) and
     `XMLSerializer.serializeToString()` are available for framework/template
-    code. `structuredClone()` handles plain objects, arrays, dates, buffers and
+    code. Element HTML fragment methods `getHTML()`, `setHTML()` and
+    `setHTMLUnsafe()` are available and delegate to the bounded native
+    `innerHTML` bridge; they preserve framework compatibility but do not
+    provide a sanitizer or Trusted Types enforcement. `structuredClone()` handles plain objects, arrays, dates, buffers and
     typed-array views within the runtime memory limit.
   - `Element.prototype.style`: Dynamic `CSSStyleDeclaration` proxy mapping camelCase and kebab-case style properties and `cssText` directly to and from element inline style attributes.
     It also exposes bounded `length`/`item()`, `getPropertyPriority()`,
