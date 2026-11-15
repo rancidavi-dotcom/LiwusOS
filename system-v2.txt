@@ -1,10 +1,10 @@
-VERSION=2.2.35
+VERSION=2.2.36
 DATE=2026-11-15
-PACKAGES=kilo,c_demo,neofetch,sysbench,play
-NOTES=LiwusOS 2.2.35: LiwusTube Bridge de alta performance, UI cooperativa sem travamentos, suporte a streaming progressivo MP4 360p com feedback em tempo real no Desktop e CLI tube.lxe
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.35
-BOOT_IMAGE_SIZE=5384192
-BOOT_IMAGE_CRC32=bd5eed72
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.35
-SYSTEM_ARCHIVE_SIZE=16087040
-SYSTEM_ARCHIVE_CRC32=ba0ac364
+PACKAGES=kilo,c_demo,neofetch,sysbench,play,tube
+NOTES=LiwusOS 2.2.36: Resolucao padrao 1366x768 nativa, barra de tarefas com largura responsiva sem ocultar apps (Midia/Settings), menu iniciar com rolagem completa, suporte ampliado a streams LiwusTube
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.36
+BOOT_IMAGE_SIZE=5388288
+BOOT_IMAGE_CRC32=94777efa
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.36
+SYSTEM_ARCHIVE_SIZE=16896000
+SYSTEM_ARCHIVE_CRC32=21a65b75

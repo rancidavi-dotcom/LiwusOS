@@ -1,10 +1,10 @@
-VERSION=2.2.34
+VERSION=2.2.36
 DATE=2026-11-15
-PACKAGES=kilo,c_demo,neofetch,sysbench,play
-NOTES=LiwusOS 2.2.34: LiwusTube integrado (pesquisa e resolucao de streams do YouTube via Invidious/Piped no Desktop e CLI)
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.34
-BOOT_IMAGE_SIZE=5378048
-BOOT_IMAGE_CRC32=89c700b7
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.34
-SYSTEM_ARCHIVE_SIZE=15575040
-SYSTEM_ARCHIVE_CRC32=52ab1f0b
+PACKAGES=kilo,c_demo,neofetch,sysbench,play,tube
+NOTES=LiwusOS 2.2.36: Resolucao padrao 1366x768 nativa, barra de tarefas com largura responsiva sem ocultar apps (Midia/Settings), menu iniciar com rolagem completa, suporte ampliado a streams LiwusTube
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.36
+BOOT_IMAGE_SIZE=5388288
+BOOT_IMAGE_CRC32=94777efa
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.36
+SYSTEM_ARCHIVE_SIZE=16896000
+SYSTEM_ARCHIVE_CRC32=21a65b75
