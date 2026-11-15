@@ -485,23 +485,33 @@ pci_device_t *pci_get_audio() {
   return (void *)0;
 }
 
+static bool pci_is_hda_device(pci_device_t *d) {
+  if (!d || d->class_id != 0x04) return false;
+  if (d->subclass_id == 0x03) return true;
+  /* Intel 10th-14th Gen Smart Sound / cAVS e AMD ACP/Audio podem anunciar 04:01 */
+  if (d->subclass_id == 0x01 &&
+      (d->vendor_id == 0x8086 || d->vendor_id == 0x1022 || d->vendor_id == 0x1002)) {
+    return true;
+  }
+  return false;
+}
+
+static bool pci_is_onboard_hda_priority(pci_device_t *d) {
+  if (!pci_is_hda_device(d)) return false;
+  /* GPU HDMI Audio (NVIDIA 0x10DE, ou funcao .1 de placa de video em barramento secundario)
+   * deve ter prioridade menor que o audio analogico da placa-mae (Intel PCH / AMD FCH). */
+  if (d->vendor_id == 0x10DE) return false;
+  if (d->bus == 0 && (d->device == 27 || d->device == 31 || d->device == 20)) return true;
+  if (d->vendor_id == 0x1022) return true; /* AMD Ryzen / FCH HD Audio */
+  if (d->vendor_id == 0x8086 && d->bus == 0) return true;
+  return false;
+}
+
 pci_device_t *pci_get_hda() {
   pci_device_t *fallback = (void *)0;
   for (int i = 0; i < pci_count; i++) {
-    // Class 0x04 (Multimedia), Subclass 0x03 (HD Audio)
-    if (devices[i]->class_id == 0x04 && devices[i]->subclass_id == 0x03) {
-      // Prioridade máxima: Áudio PCH Onboard da placa-mãe (Bus 0, Device 27 [0x1B] ou Device 31)
-      if (devices[i]->bus == 0 && (devices[i]->device == 27 || devices[i]->device == 31)) {
-        return devices[i];
-      }
-      // Prioridade: IDs de PCH Intel conhecidos (Cougar Point 0x1C20 / Panther Point 0x1E20 / etc.)
-      if (devices[i]->vendor_id == 0x8086 &&
-          (devices[i]->device_id == 0x1c20 || devices[i]->device_id == 0x1e20 ||
-           devices[i]->device_id == 0x8c20 || devices[i]->device_id == 0x9c20 ||
-           devices[i]->device_id == 0xa170 || devices[i]->device_id == 0x2668 ||
-           devices[i]->device_id == 0x27d8 || devices[i]->device_id == 0x284b ||
-           devices[i]->device_id == 0x293e || devices[i]->device_id == 0x3a3e ||
-           devices[i]->device_id == 0x3b56)) {
+    if (pci_is_hda_device(devices[i])) {
+      if (pci_is_onboard_hda_priority(devices[i])) {
         return devices[i];
       }
       if (!fallback) fallback = devices[i];
@@ -513,7 +523,7 @@ pci_device_t *pci_get_hda() {
 int pci_get_hda_count(void) {
   int count = 0;
   for (int i = 0; i < pci_count; i++) {
-    if (devices[i]->class_id == 0x04 && devices[i]->subclass_id == 0x03) {
+    if (pci_is_hda_device(devices[i])) {
       count++;
     }
   }
@@ -522,22 +532,18 @@ int pci_get_hda_count(void) {
 
 pci_device_t *pci_get_hda_by_index(int index) {
   int cur = 0;
-  // Primeiro retorna dispositivos que sejam PCH onboard
+  // Primeiro retorna dispositivos que sejam PCH/FCH onboard (analogico)
   for (int i = 0; i < pci_count; i++) {
-    if (devices[i]->class_id == 0x04 && devices[i]->subclass_id == 0x03) {
-      if (devices[i]->bus == 0 && (devices[i]->device == 27 || devices[i]->device == 31)) {
-        if (cur == index) return devices[i];
-        cur++;
-      }
+    if (pci_is_hda_device(devices[i]) && pci_is_onboard_hda_priority(devices[i])) {
+      if (cur == index) return devices[i];
+      cur++;
     }
   }
   // Depois retorna os demais dispositivos HDA (HDMI, placas adicionais, etc.)
   for (int i = 0; i < pci_count; i++) {
-    if (devices[i]->class_id == 0x04 && devices[i]->subclass_id == 0x03) {
-      if (!(devices[i]->bus == 0 && (devices[i]->device == 27 || devices[i]->device == 31))) {
-        if (cur == index) return devices[i];
-        cur++;
-      }
+    if (pci_is_hda_device(devices[i]) && !pci_is_onboard_hda_priority(devices[i])) {
+      if (cur == index) return devices[i];
+      cur++;
     }
   }
   return (void *)0;
