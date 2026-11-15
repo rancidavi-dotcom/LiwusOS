@@ -190,7 +190,7 @@ execute; their presence does not imply standards-complete browser behavior:
     not create a separate top-layer compositor surface.
   - Streams: bounded `ReadableStream`, `WritableStream`, `TransformStream`,
     `TextEncoderStream`, and `TextDecoderStream` surfaces. `ReadableStream`
-    supports pull-based sources, `values()`/`Symbol.asyncIterator`, and a
+    supports pull-based sources, `from()`, `values()`/`Symbol.asyncIterator`, and a
     resolving `reader.closed` promise for common async-consumer code.
     `Response.body` exposes a one-shot in-memory byte stream (`Uint8Array`)
     over the already-buffered response and updates `bodyUsed` when read; network transport

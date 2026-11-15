@@ -2434,6 +2434,7 @@ static const char qjs_web_env_bootstrap[] =
     "      pipeTo(dest) { var reader = this.getReader(); var loop = function() { return reader.read().then(function(r) { if (r.done) { if (dest.close) dest.close(); return; } if (dest.write) dest.write(r.value); return loop(); }); }; return loop(); }\n"
     "      pipeThrough(pair) { this.pipeTo(pair.writable); return pair.readable; }\n"
     "    }\n"
+    "    if (!ReadableStream.from) ReadableStream.from = function(source) { var iterator = source && source[Symbol.asyncIterator] ? source[Symbol.asyncIterator]() : (source && source[Symbol.iterator] ? source[Symbol.iterator]() : null); if (!iterator) throw new TypeError('ReadableStream.from requires an iterable'); return new ReadableStream({ pull: function(c) { return Promise.resolve(iterator.next()).then(function(item) { if (item.done) c.close(); else c.enqueue(item.value); }); }, cancel: function(reason) { return iterator.return ? iterator.return(reason) : undefined; } }); };\n"
     "    g.ReadableStream = ReadableStream;\n"
     "  }\n"
     "  if (!g.WritableStream) {\n"
