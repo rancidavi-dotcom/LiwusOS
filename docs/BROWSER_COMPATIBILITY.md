@@ -129,11 +129,12 @@ execute; their presence does not imply standards-complete browser behavior:
     `Range`/`Selection` surfaces provide bounded boundary selection, cloning,
     contextual fragments, collapse, node selection, and range management for
     editor/feature-detection code. The
-    `PaymentRequest` constructor fails explicitly with `NotSupportedError`,
-    while `indexedDB.open()`/`deleteDatabase()` report the same bounded
-    unsupported result and `indexedDB.databases()` resolves to an empty list;
-    no persistent database, payment transport, or native selection editing is
-    implied.
+    `PaymentRequest` constructor fails explicitly with `NotSupportedError`.
+    IndexedDB is a bounded page-lifetime in-memory implementation covering
+    `open()`, version upgrades, object stores, key ranges, indexes, basic
+    transactions, `deleteDatabase()`, and `databases()`; it is not persistent
+    across navigations or reboots, and no payment transport or native selection
+    editing is implied.
   - Media and fonts: bounded `document.fonts` readiness/load checks plus
     `Image()` and `Audio()` constructors. `HTMLScriptElement.supports()` and
     `HTMLLinkElement.supports()` cover common module/preload feature queries;
