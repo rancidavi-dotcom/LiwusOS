@@ -201,6 +201,9 @@ execute; their presence does not imply standards-complete browser behavior:
     `cancelIdleCallback()`, `AbortSignal.any()`, `AbortSignal.throwIfAborted()`,
     and `navigator.sendBeacon()` (using the existing fetch bridge) are exposed.
     These APIs do not add a service-worker process or background network stack.
+    `WeakRef` and `FinalizationRegistry` are bounded compatibility objects for
+    libraries that probe modern ECMAScript; LIWUS does not expose a GC
+    finalization callback or weak reachability guarantee to applications.
   - Platform feature detection: `navigator.userAgentData` high-entropy
     metadata, bounded `navigator.connection` network hints, and
     `navigator.mediaDevices` enumeration/permission failures are exposed so
@@ -209,6 +212,9 @@ execute; their presence does not imply standards-complete browser behavior:
     `deviceMemory`, `doNotTrack`, `navigator.credentials`, geolocation
     permission errors, `navigator.share()`, and `canShare()`; credential,
     geolocation, and share transports are not implemented.
+    `navigator.userActivation`, `pdfViewerEnabled`, `keyboard`, and
+    `virtualKeyboard` are exposed as feature-detection surfaces; keyboard
+    layout locking and virtual-keyboard control are intentionally unsupported.
     `navigator.storage.persist()` and bounded immediate `navigator.locks`
     requests/query results are also available; `scheduler.postTask()` and
     `scheduler.yield()` schedule work through the existing Promise queue and
