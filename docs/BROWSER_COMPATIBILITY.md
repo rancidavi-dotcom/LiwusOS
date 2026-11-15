@@ -220,6 +220,8 @@ execute; their presence does not imply standards-complete browser behavior:
     These APIs do not add a service-worker process or background network stack.
     The Cache API (`Cache` and `caches`) is an in-memory, page-lifetime shim;
     it does not persist entries or replace the missing service-worker process.
+    `Notification` is exposed for feature detection with permission fixed to
+    `denied`; no desktop notification transport is connected.
     `WeakRef` and `FinalizationRegistry` are bounded compatibility objects for
     libraries that probe modern ECMAScript; LIWUS does not expose a GC
     finalization callback or weak reachability guarantee to applications.
