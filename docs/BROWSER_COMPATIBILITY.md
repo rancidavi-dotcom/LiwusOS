@@ -151,7 +151,9 @@ execute; their presence does not imply standards-complete browser behavior:
   - URLs: `URL` and `URLSearchParams` parser/query serializer with root,
     directory, parent-directory, query-only, hash-only, and protocol-relative
     resolution for bounded page code. `URLPattern` provides bounded wildcard
-    matching and `test()`/`exec()` results for common route guards.
+    matching and `test()`/`exec()` results for common route guards. The
+    `entries()`, `keys()`, and `values()` methods on `URLSearchParams`,
+    `Headers`, and `FormData` return standard iterable iterators.
   - File APIs: `FileReader` supports asynchronous text, ArrayBuffer and data URL
     reads from the native `Blob`/`File` shims, with bounded load/error events.
   - Observers: `MutationObserver` now records bounded `childList`, attribute and
