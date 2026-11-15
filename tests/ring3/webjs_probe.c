@@ -5,7 +5,7 @@
 #include <liwus/string.h>
 #include <liwus/syscall.h>
 
-#define OUTPUT_LIMIT 16384U
+#define OUTPUT_LIMIT 32768U
 
 static int contains(const char *text, size_t length, const char *needle) {
     size_t needle_length = strlen(needle);

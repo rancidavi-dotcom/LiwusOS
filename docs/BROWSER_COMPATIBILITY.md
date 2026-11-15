@@ -94,6 +94,11 @@ execute; their presence does not imply standards-complete browser behavior:
     `children`, `childElementCount`, element-sibling accessors, `className`,
     `getAttributeNames()`, `toggleAttribute()`, `replaceChildren()`,
     `before()`, `after()`, `remove()`, and `innerText`.
+  - Collection compatibility: bounded snapshot results from `querySelectorAll()`
+    are branded as `NodeList`, while `getElementsByTagName()` and
+    `getElementsByClassName()` use `HTMLCollection`; both expose `item()`,
+    iteration, and `forEach()`, and `HTMLCollection.namedItem()` resolves
+    matching `id`/`name` values. They are intentionally not live collections.
   - Geometry & Interaction: `getBoundingClientRect()`, `getClientRects()`, `scrollIntoView()`, `focus()`, `blur()`, `click()`, plus bounded `DOMRect`, `DOMRectReadOnly`, `DOMPoint`, and 2D `DOMMatrix` operations (`translate`, `scale`, `rotate`, `multiply`, `inverse`, typed-array export) with `visualViewport` primitives for layout/observer feature detection.
   - DOM Tree Mutation: `insertAdjacentHTML()`, `insertAdjacentElement()`, `append()`, `prepend()`.
   - Document & View: `window.getComputedStyle()`, `window.matchMedia()`, `document.cookie`, `document.defaultView`, `document.readyState`, `document.compatMode`, `document.doctype`, `document.scripts`, `document.getElementsByName()`, `document.createRange()`, `document.createElementNS()`.
