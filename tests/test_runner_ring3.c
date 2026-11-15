@@ -194,6 +194,7 @@ int test_ring3_processes(void) {
             "throw new Error('relative URL resolution failed');"
             "const image=new Image(32,16);if(image.width!==32||image.height!==16||"
             "!document.fonts.check('14px sans-serif'))throw new Error('media/font globals failed');"
+            "const video=document.createElement('video');if(typeof video.play!=='function'||video.canPlayType('video/mp4')!=='maybe'||video.paused!==true)throw new Error('media element surface failed');video.currentTime=2;video.play();if(video.paused!==false||video.currentTime!==2)throw new Error('media element state failed');video.pause();"
             "if(new Intl.PluralRules().select(2)!=='other'||new Intl.ListFormat().format(['a','b'])!=='a and b'||"
             "new Intl.Collator().compare('a','b')>=0)throw new Error('Intl globals failed');"
             "const response=new Response('body',{status:201,url:'https://example.test/api',headers:{'x-test':'ok'}});"
