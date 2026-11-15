@@ -2103,6 +2103,8 @@ static const char qjs_web_env_bootstrap[] =
     "    [Symbol.iterator]() { return this._entries.slice()[Symbol.iterator](); }\n"
     "  }\n"
     "  g.FormData = FormData;\n"
+    "  if (!g.Cache) g.Cache = class Cache { constructor() { this._items = Object.create(null); } _key(req) { return String(req && req.url || req || ''); } match(req) { var v = this._items[this._key(req)]; return Promise.resolve(v || undefined); } matchAll(req) { var v = this._items[this._key(req)]; return Promise.resolve(v ? [v] : []); } put(req, response) { this._items[this._key(req)] = response; return Promise.resolve(); } delete(req) { var k = this._key(req), had = Object.prototype.hasOwnProperty.call(this._items, k); delete this._items[k]; return Promise.resolve(had); } keys() { return Promise.resolve(Object.keys(this._items).map(function(k) { return new Request(k); })); } };\n"
+    "  if (!g.caches) { var __liwusCaches = Object.create(null); g.caches = { open: function(name) { name = String(name || 'default'); if (!__liwusCaches[name]) __liwusCaches[name] = new g.Cache(); return Promise.resolve(__liwusCaches[name]); }, has: function(name) { return Promise.resolve(Object.prototype.hasOwnProperty.call(__liwusCaches, String(name))); }, delete: function(name) { var k = String(name); var had = Object.prototype.hasOwnProperty.call(__liwusCaches, k); delete __liwusCaches[k]; return Promise.resolve(had); }, keys: function() { return Promise.resolve(Object.keys(__liwusCaches)); } }; }\n"
     "\n"
     "  class Blob {\n"
     "    constructor(parts, options) {\n"
