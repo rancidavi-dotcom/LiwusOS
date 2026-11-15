@@ -1956,6 +1956,7 @@ static const char qjs_web_env_bootstrap[] =
     "    static canParse(u, b) { try { new URL(u, b); return true; } catch(e) { return false; } }\n"
     "  }\n"
     "  g.URL = URL;\n"
+    "  if (!g.URL.parse) g.URL.parse = function(input, base) { try { return new g.URL(String(input), base === undefined ? undefined : String(base)); } catch (e) { return null; } };\n"
     "\n"
     "  if (!g.URLPattern) {\n"
     "    class URLPattern {\n"

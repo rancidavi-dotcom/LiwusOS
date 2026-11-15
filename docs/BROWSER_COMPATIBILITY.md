@@ -194,7 +194,7 @@ execute; their presence does not imply standards-complete browser behavior:
     bounded real `crypto.subtle.digest('SHA-1'|'SHA-256', data)`; unsupported
     digest algorithms reject with `NotSupportedError`.
   - Encoding & Codecs: `btoa()`, `atob()`, `TextEncoder`, `TextDecoder`.
-  - URLs: `URL` and `URLSearchParams` parser/query serializer with root,
+  - URLs: `URL` (including bounded `URL.parse()`/`URL.canParse()`) and `URLSearchParams` parser/query serializer with root,
     directory, parent-directory, query-only, hash-only, and protocol-relative
     resolution for bounded page code. `URLPattern` provides bounded wildcard
     matching and `test()`/`exec()` results for common route guards. The
