@@ -271,8 +271,9 @@ execute; their presence does not imply standards-complete browser behavior:
     complete without rejecting. This is page-lifetime metadata only: LIWUS
     does not start a worker thread, execute the worker script, intercept
     fetches, or add a background network stack.
-    The Cache API (`Cache` and `caches`) is an in-memory, page-lifetime shim;
-    it does not persist entries or replace the missing service-worker process.
+    The Cache API (`Cache`/`caches`, including `match`, `add`, `addAll`,
+    `put`, `delete`, and `keys`) is an in-memory, page-lifetime shim; it does
+    not persist entries or replace the missing service-worker process.
     `Notification` is exposed for feature detection with permission fixed to
     `denied`; no desktop notification transport is connected.
     `WeakRef` and `FinalizationRegistry` are bounded compatibility objects for
