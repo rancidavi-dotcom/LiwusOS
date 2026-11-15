@@ -6,3 +6,4 @@ kilo|0.2.0|Editor|Editor de texto de terminal com realce de sintaxe C
 c_demo|2.1.0|Sistema|Suite de demonstracao e verificacao da LibC em Ring 3
 play|1.0.0|Multimidia|Reprodutor CLI de audio e video MP3/MP4/WAV
 tube|1.0.0|Internet|Cliente e reprodutor de YouTube e Invidious
+craft|1.0.0|Jogo|Mundo voxel 3D para um jogador com mouse lock
