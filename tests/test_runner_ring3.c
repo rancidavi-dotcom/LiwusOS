@@ -327,6 +327,7 @@ int test_ring3_processes(void) {
             "const close=new CloseEvent('close',{code:1000,reason:'done',wasClean:true});if(close.code!==1000||close.reason!=='done'||!close.wasClean)throw new Error('CloseEvent failed');"
             "const pop=new PopStateEvent('popstate',{state:{page:1}});if(!pop.state||pop.state.page!==1)throw new Error('PopStateEvent failed');"
             "const toggle=new ToggleEvent('toggle',{oldState:'closed',newState:'open'});if(toggle.oldState!=='closed'||toggle.newState!=='open')throw new Error('ToggleEvent failed');"
+            "const commandEvent=new CommandEvent('command',{command:'copy'});if(commandEvent.command!=='copy')throw new Error('CommandEvent failed');"
             "const rangeProbe=new Range();rangeProbe.setStart(output,0);rangeProbe.setEnd(output,0);if(!rangeProbe.collapsed||typeof rangeProbe.cloneRange!=='function'||typeof PaymentRequest!=='function'||!indexedDB||typeof indexedDB.open!=='function')throw new Error('Range/payment/indexedDB probes failed');"
             "if(typeof WeakRef!=='function'||typeof FinalizationRegistry!=='function'||!navigator.userActivation||navigator.pdfViewerEnabled!==false||!navigator.keyboard||!navigator.virtualKeyboard)throw new Error('memory/input feature probes failed');"
             "if(navigator.globalPrivacyControl!==false||!navigation||typeof navigation.navigate!=='function'||!navigation.currentEntry)throw new Error('navigation/privacy probes failed');"

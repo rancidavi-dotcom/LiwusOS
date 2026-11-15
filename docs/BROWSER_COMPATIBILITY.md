@@ -79,7 +79,7 @@ execute; their presence does not imply standards-complete browser behavior:
   - Standard event constructors: `Event`, `CustomEvent`, `UIEvent`, `FocusEvent`,
     `MouseEvent`, `PointerEvent`, `KeyboardEvent`, `InputEvent`, `SubmitEvent`,
     `MessageEvent`, `ProgressEvent`, `ErrorEvent`, `CloseEvent`, `PopStateEvent`,
-    and `HashChangeEvent`. These constructors provide the commonly consumed
+    `HashChangeEvent`, `ToggleEvent`, and `CommandEvent`. These constructors provide the commonly consumed
     fields and inherit from the corresponding event base; native capture/bubble
     dispatch remains bounded by the LIWUS DOM bridge.
 - **DOM & Element APIs**:
