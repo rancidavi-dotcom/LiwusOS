@@ -207,7 +207,7 @@ execute; their presence does not imply standards-complete browser behavior:
     Chromium-compatible UA (`Chrome/120`) so sites do not select legacy or
     text-only fallbacks solely because LiwusWeb is unknown. This is an
     interoperability choice, not a claim of Chromium engine parity.
-  - `fetch(input, init)` returning real Promises, with support for `Headers`, `Request`, and `Response`; `Request` exposes the commonly probed Fetch metadata (`destination`, `integrity`, `keepalive`, `referrerPolicy`, `duplex`, `priority`, and `isHistoryNavigation`) and preserves it through `clone()`. Pre-aborted and in-flight `AbortSignal` cancellation rejects the JavaScript promise (the bounded native request may still finish in the worker).
+  - `fetch(input, init)` returning real Promises, with support for `Headers`, `Request`, and `Response`; `Request`/`Response` expose the bounded `text()`, `json()`, `arrayBuffer()`, `bytes()`, `blob()`, and `formData()` body readers. `Request` exposes the commonly probed Fetch metadata (`destination`, `integrity`, `keepalive`, `referrerPolicy`, `duplex`, `priority`, and `isHistoryNavigation`) and preserves it through `clone()`. Pre-aborted and in-flight `AbortSignal` cancellation rejects the JavaScript promise (the bounded native request may still finish in the worker).
     The browser bridge forwards the bounded request method, sanitized custom
     headers, and up to 2 KiB of an in-memory body to the native HTTP client;
     this enables small form/API requests while retaining an explicit size
