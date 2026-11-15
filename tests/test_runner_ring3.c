@@ -206,6 +206,7 @@ int test_ring3_processes(void) {
             "new URL('?q=2','https://github.com/a/b').href!=='https://github.com/a/b?q=2'||"
             "new URL('//cdn.example/x','https://github.com/a').origin!=='https://cdn.example')"
             "throw new Error('relative URL resolution failed');"
+            "const mutableUrl=new URL('https://example.test/path?a=1#old');mutableUrl.search='?q=hello world';mutableUrl.hash='new';mutableUrl.pathname='next';if(mutableUrl.search!=='?q=hello+world'||mutableUrl.searchParams.get('q')!=='hello world'||mutableUrl.href!=='https://example.test/next?q=hello+world#new')throw new Error('mutable URL synchronization failed');mutableUrl.searchParams.set('page','2');if(mutableUrl.href.indexOf('page=2')<0)throw new Error('URL searchParams href sync failed');"
             "const image=new Image(32,16);const face=new FontFace('Probe','url(probe.woff2)');face.load();document.fonts.add(face);"
             "if(image.width!==32||image.height!==16||face.status!=='loaded'||!document.fonts.has(face)||"
             "!document.fonts.check('14px sans-serif')||!(document.fonts instanceof FontFaceSet)||typeof document.fonts.values!=='function')throw new Error('media/font globals failed');"
