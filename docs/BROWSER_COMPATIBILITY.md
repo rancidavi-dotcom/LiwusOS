@@ -117,7 +117,7 @@ execute; their presence does not imply standards-complete browser behavior:
     use the corresponding collection brands as well. All expose `item()`,
     iteration, and `forEach()`, and `HTMLCollection.namedItem()` resolves
     matching `id`/`name` values. They are intentionally not live collections.
-  - Geometry & Interaction: `getBoundingClientRect()`, `getClientRects()`, `scrollIntoView()`, `focus()`, `blur()`, `click()`, plus bounded `DOMRect`, `DOMRectReadOnly`, `DOMPoint`, and 2D `DOMMatrix` operations (`translate`, `scale`, `rotate`, `multiply`, `inverse`, typed-array export) with `visualViewport` primitives for layout/observer feature detection.
+  - Geometry & Interaction: `getBoundingClientRect()`, `getClientRects()`, bounded `offsetWidth`/`offsetHeight`, `clientWidth`/`clientHeight`, `scrollWidth`/`scrollHeight`, `offsetTop`/`offsetLeft`/`offsetParent`, `scrollIntoView()`, `focus()`, `blur()`, `click()`, plus bounded `DOMRect`, `DOMRectReadOnly`, `DOMPoint`, and 2D `DOMMatrix` operations (`translate`, `scale`, `rotate`, `multiply`, `inverse`, typed-array export) with `visualViewport` primitives for layout/observer feature detection. Geometry accessors are consistent with the bounded rectangle bridge; they do not claim full CSS layout measurement.
     Pointer capture and picker methods (`setPointerCapture`,
     `releasePointerCapture`, `hasPointerCapture`, `showPicker`) are exposed as
     bounded element state shims; pointer lock remains explicitly unavailable.
