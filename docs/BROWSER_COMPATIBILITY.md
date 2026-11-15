@@ -115,8 +115,9 @@ execute; their presence does not imply standards-complete browser behavior:
     Computed-style results expose read-only collection helpers (`length`,
     `item()`, `getPropertyValue()`, and `getPropertyPriority()`) over the
     bounded inline/default style view.
-    `Range` provides bounded boundary selection, cloning, collapse, node
-    selection, and text extraction for editor/feature-detection code. The
+    `Range`/`Selection` surfaces provide bounded boundary selection, cloning,
+    contextual fragments, collapse, node selection, and range management for
+    editor/feature-detection code. The
     `PaymentRequest` constructor fails explicitly with `NotSupportedError`,
     while `indexedDB.open()`/`deleteDatabase()` report the same bounded
     unsupported result and `indexedDB.databases()` resolves to an empty list;
