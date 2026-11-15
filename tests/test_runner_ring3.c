@@ -248,6 +248,7 @@ int test_ring3_processes(void) {
             "if(!(sections instanceof HTMLCollection)||sections.item(0)!==section||"
             "sections.namedItem('siblings')!==section||sections.item(1)!==null||"
             "typeof sections.forEach!=='function')throw new Error('HTMLCollection surface failed');"
+            "picked.focus();if(document.activeElement!==picked)throw new Error('activeElement focus failed');picked.blur();if(document.activeElement===picked)throw new Error('activeElement blur failed');"
             "if(section.querySelector('[data-kind~=beta]')!==first)"
             "throw new Error('attribute word selector failed');"
             "if(section.querySelector('[data-kind^=alpha]')!==first)"
