@@ -1,10 +1,10 @@
-VERSION=2.2.25
+VERSION=2.2.26
 DATE=2026-11-15
 PACKAGES=kilo,c_demo,neofetch,sysbench
-NOTES=LiwusWeb: JavaScript e DOM ampliados, fetch binario, streams, observers e mutacoes innerHTML
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.25
+NOTES=LiwusOS: boot grafico prioriza a maior resolucao comum do monitor via GRUB, com fallback automatico
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.26
 BOOT_IMAGE_SIZE=5306368
-BOOT_IMAGE_CRC32=349019f9
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.25
+BOOT_IMAGE_CRC32=0780db0f
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.26
 SYSTEM_ARCHIVE_SIZE=14704640
 SYSTEM_ARCHIVE_CRC32=0fb88c6b
