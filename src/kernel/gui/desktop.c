@@ -2738,13 +2738,68 @@ static void browser_run_js_fetch(const char *request) {
     if (!second) return;
     request_id = (uint32_t)atoi(id_start);
     const char *url_start = second + 1;
-    size_t url_len = strlen(url_start);
+    const char *url_end = strchr(url_start, '\t');
+    size_t url_len = url_end ? (size_t)(url_end - url_start) : strlen(url_start);
     while (url_len && (url_start[url_len - 1] == '\n' ||
                        url_start[url_len - 1] == '\r')) url_len--;
     if (!request_id || !generation || generation != g_web_runtime_generation ||
         url_len == 0 || url_len >= sizeof(raw_url)) return;
     memcpy(raw_url, url_start, url_len);
     raw_url[url_len] = '\0';
+
+    char method[16] = "GET";
+    char extra_headers[2304];
+    extra_headers[0] = '\0';
+    uint8_t request_body[2048];
+    size_t request_body_size = 0;
+    if (url_end) {
+        const char *method_start = url_end + 1;
+        const char *method_end = strchr(method_start, '\t');
+        if (method_end && method_end > method_start) {
+            size_t n = (size_t)(method_end - method_start);
+            if (n >= sizeof(method)) n = sizeof(method) - 1U;
+            memcpy(method, method_start, n);
+            method[n] = '\0';
+        }
+        const char *headers_start = method_end ? method_end + 1 : NULL;
+        const char *headers_end = headers_start ? strchr(headers_start, '\t') : NULL;
+        if (headers_start) {
+            size_t n = headers_end ? (size_t)(headers_end - headers_start)
+                                   : strlen(headers_start);
+            if (n >= 2300U) n = 2299U;
+            size_t out = 0;
+            for (size_t i = 0; i < n && out + 4U < sizeof(extra_headers); ++i) {
+                char c = headers_start[i];
+                if (c == '|') {
+                    extra_headers[out++] = '\r';
+                    extra_headers[out++] = '\n';
+                } else if (c != '\r' && c != '\n' && c != '\t') {
+                    extra_headers[out++] = c;
+                }
+            }
+            extra_headers[out] = '\0';
+        }
+        const char *body_hex = headers_end ? headers_end + 1 : NULL;
+        if (body_hex) {
+            size_t hex_len = strlen(body_hex);
+            while (hex_len && (body_hex[hex_len - 1] == '\n' ||
+                               body_hex[hex_len - 1] == '\r')) hex_len--;
+            if ((hex_len & 1U) == 0 && hex_len <= sizeof(request_body) * 2U) {
+                size_t out = 0;
+                for (size_t i = 0; i < hex_len; i += 2U) {
+                    unsigned hi = (unsigned)(body_hex[i] <= '9' ? body_hex[i] - '0' :
+                                             body_hex[i] >= 'a' && body_hex[i] <= 'f' ? body_hex[i] - 'a' + 10 :
+                                             body_hex[i] >= 'A' && body_hex[i] <= 'F' ? body_hex[i] - 'A' + 10 : 99);
+                    unsigned lo = (unsigned)(body_hex[i + 1] <= '9' ? body_hex[i + 1] - '0' :
+                                             body_hex[i + 1] >= 'a' && body_hex[i + 1] <= 'f' ? body_hex[i + 1] - 'a' + 10 :
+                                             body_hex[i + 1] >= 'A' && body_hex[i + 1] <= 'F' ? body_hex[i + 1] - 'A' + 10 : 99);
+                    if (hi > 15U || lo > 15U) { out = 0; break; }
+                    request_body[out++] = (uint8_t)((hi << 4) | lo);
+                }
+                request_body_size = out;
+            }
+        }
+    }
 
     char url[BROWSER_URL_MAX];
     char path[96];
@@ -2769,9 +2824,11 @@ static void browser_run_js_fetch(const char *request) {
         status = 0;
         memset(&meta, 0, sizeof(meta));
         result = url_valid
-            ? http_get_mem_progress_limit_meta(url, &body, &body_size, &status,
-                                               NULL, NULL, NULL, NULL, &meta,
-                                               1024U * 1024U)
+            ? http_request_mem_progress_limit_meta(url, method, extra_headers,
+                                                   request_body, request_body_size,
+                                                   &body, &body_size, &status,
+                                                   NULL, NULL, &meta,
+                                                   1024U * 1024U)
             : -1;
         /* A failed DNS/TLS connection has no HTTP status. Give imported
          * modules one bounded retry so a transient lookup failure does not

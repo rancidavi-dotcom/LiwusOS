@@ -22,6 +22,9 @@
 #define QJS_MAX_PENDING_FETCHES 32u
 #define QJS_MAX_FETCH_BYTES (4u * 1024u * 1024u)
 #define QJS_FETCH_URL_BYTES 2048u
+#define QJS_FETCH_METHOD_BYTES 16u
+#define QJS_FETCH_HEADERS_BYTES 2048u
+#define QJS_FETCH_BODY_BYTES 2048u
 #define QJS_MAX_MODULES 64u
 #define QJS_MAX_MODULE_BYTES (4u * 1024u * 1024u)
 #define QJS_MODULE_FETCH_TIMEOUT_TICKS 2000u
@@ -65,6 +68,10 @@ typedef struct {
     int active;
     int sent;
     char url[QJS_FETCH_URL_BYTES];
+    char method[QJS_FETCH_METHOD_BYTES];
+    char headers[QJS_FETCH_HEADERS_BYTES];
+    char body[QJS_FETCH_BODY_BYTES];
+    size_t body_length;
 } qjs_fetch_t;
 
 typedef struct {
@@ -196,6 +203,102 @@ static JSValue qjs_fetch(JSContext *ctx, JSValueConst this_value, int argc,
     fetch->active = 1;
     fetch->sent = 0;
     memcpy(fetch->url, url, url_length + 1);
+    strcpy(fetch->method, "GET");
+    fetch->headers[0] = '\0';
+    fetch->body_length = 0;
+    fetch->body[0] = '\0';
+    if (argc >= 2 && !JS_IsUndefined(argv[1]) && !JS_IsNull(argv[1])) {
+        const char *method = JS_ToCString(ctx, argv[1]);
+        if (!method) {
+            JS_FreeCString(ctx, url);
+            fetch->active = 0;
+            JS_FreeValue(ctx, resolving[0]);
+            JS_FreeValue(ctx, resolving[1]);
+            JS_FreeValue(ctx, promise);
+            return JS_EXCEPTION;
+        }
+        size_t mlen = strlen(method);
+        if (mlen == 0 || mlen >= sizeof(fetch->method)) {
+            JS_FreeCString(ctx, method);
+            JS_FreeCString(ctx, url);
+            fetch->active = 0;
+            JS_FreeValue(ctx, resolving[0]);
+            JS_FreeValue(ctx, resolving[1]);
+            JS_FreeValue(ctx, promise);
+            return JS_ThrowRangeError(ctx, "fetch method is invalid or too long");
+        }
+        for (size_t i = 0; i < mlen; ++i) {
+            char c = method[i];
+            if (c >= 'a' && c <= 'z') c = (char)(c - ('a' - 'A'));
+            if (c <= ' ' || c == '\t' || c == '\r' || c == '\n') {
+                JS_FreeCString(ctx, method);
+                JS_FreeCString(ctx, url);
+                fetch->active = 0;
+                JS_FreeValue(ctx, resolving[0]);
+                JS_FreeValue(ctx, resolving[1]);
+                JS_FreeValue(ctx, promise);
+                return JS_ThrowRangeError(ctx, "fetch method contains control characters");
+            }
+            fetch->method[i] = c;
+        }
+        fetch->method[mlen] = '\0';
+        JS_FreeCString(ctx, method);
+    }
+    if (argc >= 3 && !JS_IsUndefined(argv[2]) && !JS_IsNull(argv[2])) {
+        const char *headers = JS_ToCString(ctx, argv[2]);
+        if (!headers) {
+            JS_FreeCString(ctx, url);
+            fetch->active = 0;
+            JS_FreeValue(ctx, resolving[0]);
+            JS_FreeValue(ctx, resolving[1]);
+            JS_FreeValue(ctx, promise);
+            return JS_EXCEPTION;
+        }
+        size_t hlen = strlen(headers);
+        if (hlen >= sizeof(fetch->headers)) {
+            JS_FreeCString(ctx, headers);
+            JS_FreeCString(ctx, url);
+            fetch->active = 0;
+            JS_FreeValue(ctx, resolving[0]);
+            JS_FreeValue(ctx, resolving[1]);
+            JS_FreeValue(ctx, promise);
+            return JS_ThrowRangeError(ctx, "fetch headers are too long");
+        }
+        for (size_t i = 0; i < hlen; ++i) {
+            unsigned char c = (unsigned char)headers[i];
+            if (c == '\r' || c == '\n' || c == '\t') c = ' ';
+            if (c == '|') c = ' ';
+            if (c < 0x20U || c == 0x7fU) c = ' ';
+            fetch->headers[i] = (char)c;
+        }
+        fetch->headers[hlen] = '\0';
+        JS_FreeCString(ctx, headers);
+    }
+    if (argc >= 4 && !JS_IsUndefined(argv[3]) && !JS_IsNull(argv[3])) {
+        size_t blen = 0;
+        const char *body = JS_ToCStringLen(ctx, &blen, argv[3]);
+        if (!body) {
+            JS_FreeCString(ctx, url);
+            fetch->active = 0;
+            JS_FreeValue(ctx, resolving[0]);
+            JS_FreeValue(ctx, resolving[1]);
+            JS_FreeValue(ctx, promise);
+            return JS_EXCEPTION;
+        }
+        if (blen > sizeof(fetch->body)) {
+            JS_FreeCString(ctx, body);
+            JS_FreeCString(ctx, url);
+            fetch->active = 0;
+            JS_FreeValue(ctx, resolving[0]);
+            JS_FreeValue(ctx, resolving[1]);
+            JS_FreeValue(ctx, promise);
+            return JS_ThrowRangeError(ctx, "fetch body exceeds bounded request limit");
+        }
+        memcpy(fetch->body, body, blen);
+        fetch->body[blen] = '\0';
+        fetch->body_length = blen;
+        JS_FreeCString(ctx, body);
+    }
     JS_FreeCString(ctx, url);
     return promise;
 }
@@ -1707,7 +1810,9 @@ static const char qjs_web_env_bootstrap[] =
     "    g.fetch = function(input, init) {\n"
     "      var request = input instanceof Request ? input : new Request(input, init || {});\n"
     "      if (request.signal && request.signal.aborted) return Promise.reject(request.signal.reason || new Error('The operation was aborted'));\n"
-    "      return __liwusNativeFetch(request.url);\n"
+    "      var headerText = '';\n"
+    "      if (request.headers && request.headers.forEach) request.headers.forEach(function(v, k) { if (headerText) headerText += '|'; headerText += String(k) + ':' + String(v); });\n"
+    "      return __liwusNativeFetch(request.url, request.method, headerText, request.body == null ? '' : String(request.body));\n"
     "    };\n"
     "    g.__liwusNativeFetchWrapped = true;\n"
     "  }\n"
@@ -2486,9 +2591,19 @@ static void qjs_send_fetch_requests(void) {
     for (size_t i = 0; i < QJS_MAX_PENDING_FETCHES; ++i) {
         qjs_fetch_t *fetch = &qjs_fetches[i];
         if (!fetch->active || fetch->sent) continue;
-        char request[QJS_FETCH_URL_BYTES + 24];
-        int length = snprintf(request, sizeof(request), "%u %u %s\n",
-                              qjs_fetch_generation, fetch->id, fetch->url);
+        char body_hex[QJS_FETCH_BODY_BYTES * 2U + 1U];
+        static const char digits[] = "0123456789abcdef";
+        for (size_t bi = 0; bi < fetch->body_length; ++bi) {
+            unsigned char c = (unsigned char)fetch->body[bi];
+            body_hex[bi * 2U] = digits[c >> 4];
+            body_hex[bi * 2U + 1U] = digits[c & 15U];
+        }
+        body_hex[fetch->body_length * 2U] = '\0';
+        char request[QJS_FETCH_URL_BYTES + QJS_FETCH_HEADERS_BYTES +
+                     QJS_FETCH_BODY_BYTES * 2U + 96U];
+        int length = snprintf(request, sizeof(request), "%u %u %s\t%s\t%s\t%s\n",
+                              qjs_fetch_generation, fetch->id, fetch->url,
+                              fetch->method, fetch->headers, body_hex);
         if (length <= 0 || (size_t)length >= sizeof(request)) continue;
         long written = liw_write_all(qjs_fetch_request_fd, request,
                                      (size_t)length);

@@ -140,6 +140,11 @@ execute; their presence does not imply standards-complete browser behavior:
     text-only fallbacks solely because LiwusWeb is unknown. This is an
     interoperability choice, not a claim of Chromium engine parity.
   - `fetch(input, init)` returning real Promises, with support for `Headers`, `Request`, and `Response`.
+    The browser bridge forwards the bounded request method, sanitized custom
+    headers, and up to 2 KiB of an in-memory body to the native HTTP client;
+    this enables small form/API requests while retaining an explicit size
+    limit. Responses remain fully buffered and the bridge does not implement
+    streaming uploads, service workers, or browser CORS policy.
     The native bridge now propagates the received `Content-Type` into
     `Response.headers.get('content-type')` (whitespace is normalized for the
     bounded IPC record). Other response headers are still intentionally not

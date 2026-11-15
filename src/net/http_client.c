@@ -11,6 +11,23 @@
 
 extern void int_to_str(uint32_t n, char *s);
 
+static bool http_req_append(char *buffer, size_t capacity, size_t *length,
+                            const char *text) {
+    if (!buffer || !length || !text) return false;
+    size_t n = strlen(text);
+    if (*length > capacity || n > capacity - *length) return false;
+    memcpy(buffer + *length, text, n);
+    *length += n;
+    return true;
+}
+
+static bool http_req_append_u32(char *buffer, size_t capacity, size_t *length,
+                                uint32_t value) {
+    char number[16];
+    int_to_str(value, number);
+    return http_req_append(buffer, capacity, length, number);
+}
+
 /* lwIP Headers */
 #include "lwip/tcp.h"
 #include "lwip/ip_addr.h"
@@ -409,7 +426,10 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
                                 http_output_fn output_cb, void *user_data,
                                 http_progress_fn progress_cb, void *progress_data,
                                 http_response_meta_t *meta,
-                                size_t body_limit) {
+                                size_t body_limit, const char *request_method,
+                                const char *extra_headers,
+                                const uint8_t *request_body,
+                                size_t request_body_size) {
     if (!url || !net_is_active()) {
         http_log(output_cb, user_data, "Rede inativa ou URL vazia");
         return -1;
@@ -574,22 +594,62 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
             }
 
             http_log(output_cb, user_data, "Conexao TLS ativa! Enviando requisicao HTTP...");
-            serial_printf("[HTTP] Iniciando tls_write da requisicao GET %s...\n", path);
+            const char *method = (request_method && request_method[0])
+                               ? request_method : "GET";
+            serial_printf("[HTTP] Iniciando tls_write da requisicao %s %s...\n",
+                          method, path);
 
-            char req[HTTP_PATH_MAX + 256U];
-            if (strlen(path) + strlen(host) + 128 >= sizeof(req)) {
+            char req[HTTP_PATH_MAX + 4096U];
+            size_t req_len = 0;
+            if (!http_req_append(req, sizeof(req), &req_len, method) ||
+                !http_req_append(req, sizeof(req), &req_len, " ") ||
+                !http_req_append(req, sizeof(req), &req_len, path) ||
+                !http_req_append(req, sizeof(req), &req_len, " HTTP/1.1\r\nHost: ") ||
+                !http_req_append(req, sizeof(req), &req_len, host) ||
+                !http_req_append(req, sizeof(req), &req_len,
+                    "\r\nUser-Agent: Mozilla/5.0 (X11; Linux x86_64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 "
+                    "Safari/537.36\r\nAccept: */*\r\nAccept-Encoding: identity\r\n"
+                    "Connection: close\r\n")) {
                 tls_close(tls);
                 http_log(output_cb, user_data, "URL muito longa para requisicao HTTP");
                 return -1;
             }
-            req[0] = '\0';
-            strcat(req, "GET ");
-            strcat(req, path);
-            strcat(req, " HTTP/1.1\r\nHost: ");
-            strcat(req, host);
-            strcat(req, "\r\nUser-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n");
+            if (extra_headers && extra_headers[0]) {
+                size_t n = strlen(extra_headers);
+                if (req_len + n + 2U > sizeof(req)) {
+                    tls_close(tls);
+                    http_log(output_cb, user_data, "Cabecalhos HTTP muito longos");
+                    return -1;
+                }
+                memcpy(req + req_len, extra_headers, n);
+                req_len += n;
+                req[req_len++] = '\r';
+                req[req_len++] = '\n';
+            }
+            if (request_body && request_body_size) {
+                if (!http_req_append(req, sizeof(req), &req_len,
+                                     "Content-Length: ") ||
+                    !http_req_append_u32(req, sizeof(req), &req_len,
+                                         (uint32_t)request_body_size) ||
+                    !http_req_append(req, sizeof(req), &req_len, "\r\n")) {
+                    tls_close(tls);
+                    return -1;
+                }
+            }
+            if (req_len + 2U + request_body_size > sizeof(req)) {
+                tls_close(tls);
+                http_log(output_cb, user_data, "Corpo HTTP muito longo");
+                return -1;
+            }
+            req[req_len++] = '\r';
+            req[req_len++] = '\n';
+            if (request_body && request_body_size) {
+                memcpy(req + req_len, request_body, request_body_size);
+                req_len += request_body_size;
+            }
 
-            if (tls_write(tls, req, strlen(req)) < 0) {
+            if (tls_write(tls, req, req_len) < 0) {
                 int err = tls_last_error(tls);
                 const char *err_str = tls_strerror(err);
                 char emsg[160];
@@ -815,10 +875,23 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
                 return -7;
             }
 
-            http_log(output_cb, user_data, "Conectado! Enviando requisicao HTTP GET...");
-
-            char req[HTTP_PATH_MAX + 256U];
-            if (strlen(path) + strlen(host) + 128 >= sizeof(req)) {
+            const char *method = (request_method && request_method[0])
+                               ? request_method : "GET";
+            char request_log[96];
+            strcpy(request_log, "Conectado! Enviando requisicao HTTP ");
+            strcat(request_log, method);
+            strcat(request_log, "...");
+            http_log(output_cb, user_data, request_log);
+            char req[HTTP_PATH_MAX + 4096U];
+            size_t req_len = 0;
+            if (!http_req_append(req, sizeof(req), &req_len, method) ||
+                !http_req_append(req, sizeof(req), &req_len, " ") ||
+                !http_req_append(req, sizeof(req), &req_len, path) ||
+                !http_req_append(req, sizeof(req), &req_len, " HTTP/1.0\r\nHost: ") ||
+                !http_req_append(req, sizeof(req), &req_len, host) ||
+                !http_req_append(req, sizeof(req), &req_len,
+                    "\r\nUser-Agent: LiwusOS-wget/0.2\r\nAccept: */*\r\n"
+                    "Accept-Encoding: identity\r\nConnection: close\r\n")) {
                 uint64_t cflags = net_lock_acquire();
                 http_close_pcb_locked(&ctx);
                 net_lock_release(cflags);
@@ -827,16 +900,59 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
                 http_log(output_cb, user_data, "URL muito longa para requisicao HTTP");
                 return -1;
             }
-            req[0] = '\0';
-            strcat(req, "GET ");
-            strcat(req, path);
-            strcat(req, " HTTP/1.0\r\nHost: ");
-            strcat(req, host);
-            strcat(req, "\r\nUser-Agent: LiwusOS-wget/0.2\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n");
+            if (extra_headers && extra_headers[0]) {
+                size_t n = strlen(extra_headers);
+                if (req_len + n + 2U > sizeof(req)) {
+                    uint64_t cflags = net_lock_acquire();
+                    http_close_pcb_locked(&ctx);
+                    net_lock_release(cflags);
+                    kfree(ctx.scratch);
+                    kfree(ctx.body_buf);
+                    http_log(output_cb, user_data, "Cabecalhos HTTP muito longos");
+                    return -1;
+                }
+                memcpy(req + req_len, extra_headers, n);
+                req_len += n;
+                req[req_len++] = '\r';
+                req[req_len++] = '\n';
+            }
+            if (request_body && request_body_size) {
+                if (!http_req_append(req, sizeof(req), &req_len,
+                                     "Content-Length: ") ||
+                    !http_req_append_u32(req, sizeof(req), &req_len,
+                                         (uint32_t)request_body_size) ||
+                    !http_req_append(req, sizeof(req), &req_len, "\r\n")) {
+                    uint64_t cflags = net_lock_acquire();
+                    http_close_pcb_locked(&ctx);
+                    net_lock_release(cflags);
+                    kfree(ctx.scratch);
+                    kfree(ctx.body_buf);
+                    return -1;
+                }
+            }
+            if (req_len + 2U + request_body_size > sizeof(req)) {
+                uint64_t cflags = net_lock_acquire();
+                http_close_pcb_locked(&ctx);
+                net_lock_release(cflags);
+                kfree(ctx.scratch);
+                kfree(ctx.body_buf);
+                http_log(output_cb, user_data, "Corpo HTTP muito longo");
+                return -1;
+            }
+            req[req_len++] = '\r';
+            req[req_len++] = '\n';
+            if (request_body && request_body_size) {
+                memcpy(req + req_len, request_body, request_body_size);
+                req_len += request_body_size;
+            }
 
             uint64_t wflags = net_lock_acquire();
             if (ctx.pcb && !ctx.failed) {
-                tcp_write(ctx.pcb, req, strlen(req), TCP_WRITE_FLAG_COPY);
+                tcp_write(ctx.pcb, req, req_len, TCP_WRITE_FLAG_COPY);
+                if (request_body && request_body_size) {
+                    /* The request buffer above is bounded; all bytes are
+                     * submitted in one segment to preserve ordering. */
+                }
                 tcp_output(ctx.pcb);
             }
             net_lock_release(wflags);
@@ -982,13 +1098,15 @@ int http_download_file(const char *url, const char *dest_path,
                        http_output_fn output_cb, void *user_data) {
     return http_perform_request(url, NULL, NULL, NULL,
                                 dest_path ? dest_path : "", output_cb,
-                                user_data, NULL, NULL, NULL, 0);
+                                user_data, NULL, NULL, NULL, 0,
+                                "GET", NULL, NULL, 0);
 }
 
 int http_get_mem(const char *url, uint8_t **out_body, size_t *out_size, int *out_status,
                  http_output_fn output_cb, void *user_data) {
     return http_perform_request(url, out_body, out_size, out_status, NULL,
-                                output_cb, user_data, NULL, NULL, NULL, 0);
+                                output_cb, user_data, NULL, NULL, NULL, 0,
+                                "GET", NULL, NULL, 0);
 }
 
 int http_get_mem_progress(const char *url, uint8_t **out_body, size_t *out_size,
@@ -997,7 +1115,7 @@ int http_get_mem_progress(const char *url, uint8_t **out_body, size_t *out_size,
                           void *progress_data) {
     return http_perform_request(url, out_body, out_size, out_status, NULL,
                                 output_cb, user_data, progress_cb, progress_data,
-                                NULL, 0);
+                                NULL, 0, "GET", NULL, NULL, 0);
 }
 
 int http_get_mem_progress_limit(const char *url, uint8_t **out_body,
@@ -1008,7 +1126,7 @@ int http_get_mem_progress_limit(const char *url, uint8_t **out_body,
     if (!max_body_size) return -1;
     return http_perform_request(url, out_body, out_size, out_status, NULL,
                                 output_cb, user_data, progress_cb, progress_data,
-                                NULL, max_body_size);
+                                NULL, max_body_size, "GET", NULL, NULL, 0);
 }
 
 int http_get_mem_progress_limit_meta(const char *url, uint8_t **out_body,
@@ -1021,5 +1139,25 @@ int http_get_mem_progress_limit_meta(const char *url, uint8_t **out_body,
     if (!max_body_size) return -1;
     return http_perform_request(url, out_body, out_size, out_status, NULL,
                                 output_cb, user_data, progress_cb, progress_data,
-                                meta, max_body_size);
+                                meta, max_body_size, "GET", NULL, NULL, 0);
+}
+
+int http_request_mem_progress_limit_meta(const char *url, const char *method,
+                                         const char *extra_headers,
+                                         const uint8_t *request_body,
+                                         size_t request_body_size,
+                                         uint8_t **out_body, size_t *out_size,
+                                         int *out_status,
+                                         http_progress_fn progress_cb,
+                                         void *progress_data,
+                                         http_response_meta_t *meta,
+                                         size_t max_body_size) {
+    if (!max_body_size || !url) return -1;
+    if (!method || !method[0]) method = "GET";
+    if (strlen(method) > 15U || (extra_headers && strlen(extra_headers) > 2048U) ||
+        request_body_size > 2048U) return -1;
+    return http_perform_request(url, out_body, out_size, out_status, NULL,
+                                NULL, NULL, progress_cb, progress_data, meta,
+                                max_body_size, method, extra_headers,
+                                request_body, request_body_size);
 }

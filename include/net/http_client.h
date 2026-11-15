@@ -57,4 +57,18 @@ int http_get_mem_progress_limit_meta(const char *url, uint8_t **out_body,
                                      http_response_meta_t *meta,
                                      size_t max_body_size);
 
+/* Bounded request variant used by the browser fetch bridge.  The transport
+ * remains deliberately small, but can carry a method, sanitized extra
+ * headers and an in-memory body for form/API requests. */
+int http_request_mem_progress_limit_meta(const char *url, const char *method,
+                                         const char *extra_headers,
+                                         const uint8_t *request_body,
+                                         size_t request_body_size,
+                                         uint8_t **out_body, size_t *out_size,
+                                         int *out_status,
+                                         http_progress_fn progress_cb,
+                                         void *progress_data,
+                                         http_response_meta_t *meta,
+                                         size_t max_body_size);
+
 #endif /* NET_HTTP_CLIENT_H */
