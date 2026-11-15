@@ -236,6 +236,7 @@ int test_ring3_processes(void) {
             "const controller=new AbortController();const combined=AbortSignal.any([controller.signal]);"
             "controller.abort('stop');if(!combined.aborted||combined.reason!=='stop')"
             "throw new Error('AbortSignal.any failed');"
+            "const abortedRequest=new Request('/abort',{signal:AbortSignal.abort('stop')});if(!abortedRequest.signal.aborted||abortedRequest.signal.reason!=='stop')throw new Error('Request abort signal failed');"
             "if(structuredClone({a:[1,2]}).a[1]!==2)throw new Error('structuredClone failed');"
             "history.pushState({page:2},'', '?page=2');"
             "if(history.state.page!==2||location.search!=='?page=2')throw new Error('history pushState failed');"
