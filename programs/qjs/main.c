@@ -2296,6 +2296,7 @@ static const char qjs_web_env_bootstrap[] =
     "      init = init || {};\n"
     "      var source = input && typeof input === 'object' ? input : null;\n"
     "      this.url = typeof input === 'string' ? input : (source && source.url) || '';\n"
+    "      try { if (this.url && typeof URL === 'function' && typeof location !== 'undefined' && location.href && String(location.protocol || '') !== 'about:') this.url = new URL(this.url, location.href).href; } catch (e) {}\n"
     "      this.method = (init.method || (source && source.method) || 'GET').toUpperCase();\n"
     "      this.headers = new Headers(init.headers || (source && source.headers));\n"
     "      this.body = init.body !== undefined ? init.body : (source && source.body !== undefined ? source.body : null);\n"
