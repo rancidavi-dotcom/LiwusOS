@@ -87,6 +87,9 @@ execute; their presence does not imply standards-complete browser behavior:
     on element prototypes and route through the same bounded listener table.
 - **DOM & Element APIs**:
   - Element prototypes: `Node`, `Element`, `HTMLElement`, `HTMLDivElement`, `HTMLSpanElement`, `HTMLInputElement`, `HTMLButtonElement`, `HTMLAnchorElement`, `HTMLImageElement`, `HTMLScriptElement`, `HTMLStyleElement`, `DocumentFragment`.
+    `classList` is branded as a `DOMTokenList` and exposes bounded
+    `item()`/`forEach()`/`entries()`/`keys()`/`values()` iteration in addition
+    to token mutation.
   - `DOMParser.parseFromString()` (bounded detached HTML document view) and
     `XMLSerializer.serializeToString()` are available for framework/template
     code. `structuredClone()` handles plain objects, arrays, dates, buffers and
@@ -248,7 +251,13 @@ execute; their presence does not imply standards-complete browser behavior:
   - Scheduling and cancellation: `requestIdleCallback()`/
     `cancelIdleCallback()`, `AbortSignal.any()`, `AbortSignal.throwIfAborted()`,
     and `navigator.sendBeacon()` (using the existing fetch bridge) are exposed.
-    These APIs do not add a service-worker process or background network stack.
+    `navigator.serviceWorker` now exposes bounded typed
+    `ServiceWorkerRegistration`/`ServiceWorker` objects, `register()`,
+    `getRegistration()`, `getRegistrations()`, `ready`, `update()`, and
+    `unregister()` so feature-detection and registration bookkeeping can
+    complete without rejecting. This is page-lifetime metadata only: LIWUS
+    does not start a worker thread, execute the worker script, intercept
+    fetches, or add a background network stack.
     The Cache API (`Cache` and `caches`) is an in-memory, page-lifetime shim;
     it does not persist entries or replace the missing service-worker process.
     `Notification` is exposed for feature detection with permission fixed to
