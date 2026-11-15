@@ -2651,7 +2651,7 @@ void syscall_handler(registers_t *regs) {
       const uint32_t *user_pixels = (const uint32_t *)regs->rdi;
       uint32_t width = (uint32_t)regs->rsi;
       uint32_t height = (uint32_t)regs->rdx;
-      if (!user_pixels || width == 0 || height == 0 || width > 1280U || height > 1024U) {
+      if (!user_pixels || width == 0 || height == 0 || width > 1920U || height > 1080U) {
         regs->rax = (uint64_t)-EINVAL;
         break;
       }
@@ -2660,7 +2660,7 @@ void syscall_handler(registers_t *regs) {
         break;
       }
       uint64_t bytes64 = (uint64_t)width * (uint64_t)height * 4ULL;
-      if (bytes64 > 1280ULL * 1024ULL * 4ULL) {
+      if (bytes64 > 1920ULL * 1080ULL * 4ULL) {
         regs->rax = (uint64_t)-EINVAL;
         break;
       }

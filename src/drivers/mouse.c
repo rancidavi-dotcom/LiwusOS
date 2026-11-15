@@ -1,11 +1,12 @@
 #include "mouse.h"
 #include "io.h"
+#include "vga.h"
 
 extern uint32_t screen_width;
 extern uint32_t screen_height;
 
-static int32_t mouse_x = 640;
-static int32_t mouse_y = 360;
+static int32_t mouse_x = 683;
+static int32_t mouse_y = 384;
 static uint8_t mouse_cycle = 0;
 static uint8_t mouse_byte[3];
 static bool left_clicked = false;
@@ -15,6 +16,17 @@ static bool right_clicked = false;
 
 static uint8_t mouse_sensitivity = 3;
 static bool mouse_acceleration = true;
+
+static void clamp_mouse_coords(void) {
+    int32_t max_w = (int32_t)vga_get_fb_width();
+    int32_t max_h = (int32_t)vga_get_fb_height();
+    if (max_w <= 0) max_w = 1366;
+    if (max_h <= 0) max_h = 768;
+    if (mouse_x < 0) mouse_x = 0;
+    if (mouse_y < 0) mouse_y = 0;
+    if (mouse_x >= max_w) mouse_x = max_w - 1;
+    if (mouse_y >= max_h) mouse_y = max_h - 1;
+}
 
 void mouse_set_fake_click(bool clicked) {
     fake_left_clicked = clicked;
@@ -50,7 +62,10 @@ void init_mouse(void) {
     mouse_write(0xF3); mouse_read(); mouse_write(200); mouse_read();
 
     mouse_write(0xF4); mouse_read();
-    mouse_x = 640; mouse_y = 360;
+    int32_t max_w = (int32_t)vga_get_fb_width();
+    int32_t max_h = (int32_t)vga_get_fb_height();
+    mouse_x = (max_w > 0) ? (max_w / 2) : 683;
+    mouse_y = (max_h > 0) ? (max_h / 2) : 384;
 }
 
 static int32_t apply_acceleration(int32_t delta) {
@@ -75,10 +90,7 @@ void mouse_handle_event(int x_rel, int y_rel, int buttons) {
     mouse_x += dx;
     mouse_y += dy;
 
-    if (mouse_x < 0) mouse_x = 0;
-    if (mouse_y < 0) mouse_y = 0;
-    if (mouse_x >= 1024) mouse_x = 1023;
-    if (mouse_y >= 768) mouse_y = 767;
+    clamp_mouse_coords();
 }
 
 void mouse_handler(void) {
@@ -114,10 +126,7 @@ void mouse_handler(void) {
         mouse_x += x_rel;
         mouse_y -= y_rel;
 
-        if (mouse_x < 0) mouse_x = 0;
-        if (mouse_y < 0) mouse_y = 0;
-        if (mouse_x >= 1024) mouse_x = 1023;
-        if (mouse_y >= 768) mouse_y = 767;
+        clamp_mouse_coords();
     }
 }
 
