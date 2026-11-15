@@ -328,7 +328,8 @@ execute; their presence does not imply standards-complete browser behavior:
   - Modern ECMAScript collection helpers: guarded fallbacks for `Array.prototype.at`,
     `findLast`, `findLastIndex`, `toReversed`, `toSorted`, `toSpliced`, `with`,
     `String.prototype.replaceAll`, `isWellFormed`, `toWellFormed`, `Object.hasOwn`,
-    `AggregateError`, and `Promise.any`. These are page-local polyfills and do not
+    `AggregateError`, `Promise.any`, `Promise.try`, `Array.fromAsync`,
+    `Object.groupBy`, and `Map.groupBy`. These are page-local polyfills and do not
     change the QuickJS engine or provide a general JavaScript conformance claim.
 - Supports inline scripts and bounded external classic/module scripts. External
   module scripts retain their absolute URL and can resolve a bounded static
