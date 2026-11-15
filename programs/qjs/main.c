@@ -2446,7 +2446,7 @@ static const char qjs_web_env_bootstrap[] =
     "  };\n"
     "  if (!g.TextEncoderStream) g.TextEncoderStream = class TextEncoderStream { constructor() { var enc = new TextEncoder(); var t = new TransformStream({ transform: function(v, c) { c.enqueue(enc.encode(String(v))); } }); this.readable = t.readable; this.writable = t.writable; } };\n"
     "  if (!g.TextDecoderStream) g.TextDecoderStream = class TextDecoderStream { constructor() { var dec = new TextDecoder(); var t = new TransformStream({ transform: function(v, c) { c.enqueue(dec.decode(v, { stream: true })); }, flush: function(c) { c.enqueue(dec.decode()); } }); this.readable = t.readable; this.writable = t.writable; } };\n"
-    "  if (g.Response && !Object.getOwnPropertyDescriptor(g.Response.prototype, 'body')) Object.defineProperty(g.Response.prototype, 'body', { get: function() { var self = this; if (!self._stream) self._stream = new ReadableStream({ pull: function(c) { if (!self.bodyUsed) { self.bodyUsed = true; c.enqueue(self._b); c.close(); } } }); return self._stream; }, configurable: true });\n"
+    "  if (g.Response && !Object.getOwnPropertyDescriptor(g.Response.prototype, 'body')) Object.defineProperty(g.Response.prototype, 'body', { get: function() { var self = this; if (!self._stream) self._stream = new ReadableStream({ pull: function(c) { if (!self.bodyUsed) { self.bodyUsed = true; c.enqueue(new TextEncoder().encode(self._b)); c.close(); } } }); return self._stream; }, configurable: true });\n"
     "\n"
     "  class DOMParser {\n"
     "    parseFromString(source, type) {\n"
