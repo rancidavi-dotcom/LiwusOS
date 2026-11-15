@@ -763,14 +763,14 @@ void kernel_main_continue(void) {
   init_apic();
   pci_init();
   vga_display_init();
-  if (!vga_is_framebuffer() && vga_display_backend_ready()) {
-    vga_display_mode_t modes[VGA_DISPLAY_MAX_MODES];
-    int mode_count = vga_display_modes(modes, VGA_DISPLAY_MAX_MODES);
-    if (mode_count > 0 &&
-        vga_display_set_mode(modes[mode_count - 1].width,
-                             modes[mode_count - 1].height) == 0) {
-      vga_init();
-      serial_print("[display] initialized RGB framebuffer from EDID mode\n");
+  if (vga_display_backend_ready()) {
+    extern uint32_t vga_fb_width, vga_fb_height;
+    if (vga_fb_width != 1366 || vga_fb_height != 768 || !vga_is_framebuffer()) {
+      if (vga_display_set_mode(1366, 768) == 0 ||
+          vga_display_set_mode(1360, 768) == 0) {
+        vga_init();
+        serial_print("[display] resolucao padrao 1366x768 configurada com sucesso\n");
+      }
     }
   }
   pci_print_usb_inventory();

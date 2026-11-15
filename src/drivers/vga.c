@@ -68,7 +68,7 @@ static int edid_checksum_valid(const uint8_t *block) {
 
 static void display_add_mode(uint16_t width, uint16_t height) {
     if (!display_backend_ready || width < 320 || height < 200 ||
-        width > display_max_x || height > display_max_y || (width & 7) ||
+        width > display_max_x || height > display_max_y || (width & 1) ||
         (uint64_t)width * height * 4 > (uint64_t)display_vram_kb * 1024)
         return;
     for (size_t i = 0; i < display_mode_count; i++)
@@ -200,11 +200,21 @@ int vga_display_set_mode(uint16_t width, uint16_t height) {
     uint16_t old_bpp = vbe_read(VBE_BPP), old_en = vbe_read(VBE_ENABLE);
     vbe_restore_mode(width, height, 32, VBE_ENABLED | VBE_LFB | VBE_NOCLEARMEM);
     uint16_t actual_x = vbe_read(VBE_XRES), actual_y = vbe_read(VBE_YRES);
-    if (actual_x != width || actual_y != height || vga_fb_addr == 0) {
+    if (vga_fb_addr == 0) {
+        pci_device_t *gpu = pci_get_gpu();
+        if (gpu) {
+            uint32_t bar0 = pci_read_config(gpu->bus, gpu->device, gpu->function, 0x10);
+            vga_fb_addr = (uint64_t)(bar0 & ~0xFULL);
+        }
+    }
+    if ((actual_x != width && !(width == 1366 && actual_x == 1360)) ||
+        actual_y != height || vga_fb_addr == 0) {
         vbe_restore_mode(old_x, old_y, old_bpp, old_en);
         kfree(new_back);
         return -3;
     }
+    width = actual_x;
+    pitch = (uint32_t)width * 4U;
 
     vmm_map_framebuffer(vga_fb_addr, size);
     uint32_t *old_back = vga_backbuffer;
@@ -212,6 +222,14 @@ int vga_display_set_mode(uint16_t width, uint16_t height) {
     vga_fb_height = height;
     vga_fb_pitch = pitch;
     vga_fb_bpp = 32;
+    vga_fb_type = 1;
+    vga_fb_red_pos = 16;
+    vga_fb_red_size = 8;
+    vga_fb_green_pos = 8;
+    vga_fb_green_size = 8;
+    vga_fb_blue_pos = 0;
+    vga_fb_blue_size = 8;
+    is_framebuffer = true;
     vga_backbuffer = new_back;
     max_cols = width / (size_t)font_width;
     max_rows = height / (size_t)font_height;
@@ -282,7 +300,16 @@ void vga_display_init(void) {
     display_max_y = vbe_read(VBE_YRES);
     uint16_t max_bpp = vbe_read(VBE_BPP);
     display_vram_kb = (uint16_t)(vbe_read(VBE_VIDEO_MEM) * 64U);
+    if (!display_vram_kb) {
+        display_vram_kb = 16384; /* Fallback: pelo menos 16 MB para QEMU/Bochs VBE */
+    }
     vbe_write(VBE_ENABLE, enable);
+
+    uint32_t bar0 = pci_read_config(gpu->bus, gpu->device, gpu->function, 0x10);
+    uint64_t gpu_fb_phys = (uint64_t)(bar0 & ~0xFULL);
+    if (!vga_fb_addr && gpu_fb_phys) {
+        vga_fb_addr = gpu_fb_phys;
+    }
     if (max_bpp < 32 || !display_max_x || !display_max_y || !display_vram_kb) {
         serial_print("[display] VBE reports no usable 32-bit mode\n");
         return;
@@ -296,6 +323,12 @@ void vga_display_init(void) {
         const uint8_t *block = edid + (size_t)i * 128;
         if (edid_checksum_valid(block) && block[0] == 0x02) edid_parse_cta(block);
     }
+    display_add_mode(1366, 768);
+    display_add_mode(1360, 768);
+    display_add_mode(1280, 720);
+    display_add_mode(1024, 768);
+    display_add_mode(800, 600);
+    display_add_mode(640, 480);
     display_add_mode((uint16_t)vga_fb_width, (uint16_t)vga_fb_height);
     if (!display_mode_count) {
         display_backend_ready = false;
