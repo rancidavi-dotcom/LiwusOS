@@ -131,7 +131,9 @@ execute; their presence does not imply standards-complete browser behavior:
     feature-detection, playback-state, and event shims (`play`, `pause`,
     `load`, `canPlayType`, `currentTime`, `requestVideoFrameCallback`, and
     rejected picture-in-picture requests); `navigator.mediaCapabilities`
-    returns explicit unsupported results. `FontFace` and in-memory
+    returns explicit unsupported results, while `navigator.mediaSession` and
+    `MediaMetadata` provide bounded metadata hooks without audio-focus
+    transport. `FontFace` and in-memory
     `FontFaceSet` operations (`add`, `delete`, `has`, `clear`, `forEach`) are
     also available, but no font download or WOFF2 decoding is implemented.
     Codec and media transport are not implemented.
