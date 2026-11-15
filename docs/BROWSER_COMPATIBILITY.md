@@ -193,6 +193,10 @@ execute; their presence does not imply standards-complete browser behavior:
     promise for common async-consumer code. `Response.body` exposes a one-shot
     in-memory stream over the already-buffered response; network transport
     remains non-streaming.
+  - Structured cloning: the page-local `structuredClone()` fallback preserves
+    `Date`, `ArrayBuffer`, typed arrays, arrays, and plain objects for
+    `MessagePort`, `BroadcastChannel`, and IndexedDB shims; transfer lists and
+    host-backed objects remain bounded/unsupported.
   - Viewport & History: `window.screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `devicePixelRatio`, `scrollX`, `scrollY`, `scrollTo`, `scrollBy`, bounded `visualViewport` page offsets, and `Element.scrollIntoView()` state forwarding, plus `history` (`pushState`, `replaceState`, `back`, `forward`, `go`, `state`, `length`). Traversal emits typed `PopStateEvent` objects and bounded `HashChangeEvent` objects when the URL fragment changes.
   - Animation: `requestAnimationFrame`, `cancelAnimationFrame`, a bounded
     `Animation`/`DocumentTimeline` surface, and `Element.animate()`/
