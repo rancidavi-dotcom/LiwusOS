@@ -124,7 +124,10 @@ execute; their presence does not imply standards-complete browser behavior:
   - Encoding & Codecs: `btoa()`, `atob()`, `TextEncoder`, `TextDecoder`.
   - URLs: `URL` and `URLSearchParams` parser/query serializer with root,
     directory, parent-directory, query-only, hash-only, and protocol-relative
-    resolution for bounded page code.
+    resolution for bounded page code. `URLPattern` provides bounded wildcard
+    matching and `test()`/`exec()` results for common route guards.
+  - File APIs: `FileReader` supports asynchronous text, ArrayBuffer and data URL
+    reads from the native `Blob`/`File` shims, with bounded load/error events.
   - Observers: `MutationObserver` now records bounded `childList`, attribute and
     character-data mutations with subtree/attribute filters and microtask
     delivery; `ResizeObserver` and `IntersectionObserver` provide bounded

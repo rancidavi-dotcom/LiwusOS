@@ -287,6 +287,8 @@ int test_ring3_processes(void) {
             "const stream=new ReadableStream({start:function(c){c.enqueue('x');c.close();}});const reader=stream.getReader();"
             "if(!stream.locked||typeof reader.read!=='function'||typeof WritableStream!=='function'||typeof TransformStream!=='function')throw new Error('streams failed');reader.releaseLock();"
             "if(typeof new Blob(['x']).stream!=='function'||typeof new Blob(['x']).bytes!=='function')throw new Error('blob streams failed');"
+            "const up=new URLPattern('https://*.example.test/*');if(!up.test('https://www.example.test/repo')||up.test('https://other.test/repo')||!up.exec('https://www.example.test/repo'))throw new Error('URLPattern failed');"
+            "const fr=new FileReader();if(fr.readyState!==FileReader.EMPTY||typeof fr.readAsText!=='function')throw new Error('FileReader surface failed');"
             "const deferred=Promise.withResolvers();deferred.resolve(7);"
             "deferred.promise.then(function(v){if(v!==7)throw new Error('Promise.withResolvers failed');});"
             "const anim=picked.animate([{opacity:0},{opacity:1}],{duration:1});"
