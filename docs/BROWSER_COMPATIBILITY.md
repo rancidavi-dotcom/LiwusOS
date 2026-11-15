@@ -576,8 +576,8 @@ increment alone is not a security sign-off for logins or sensitive sessions.
    32 requests may be pending, responses are limited to 1 MiB in the kernel
    worker (QuickJS can read up to 4 MiB), and a page-generation ID discards
    late replies after navigation. This is not the full Fetch API: the native
-   bridge still performs GET-like URL-only requests; request headers/body,
-   POST, streaming, response headers other than `Content-Type`, CORS,
+   bridge forwards sanitized request headers and bounded in-memory bodies,
+   including small POST-like requests; streaming and CORS,
    cookie persistence, and service workers are absent. Script, CSS, and image resource fetches during
    initial processing/rendering still run synchronously. The browser also lacks
    event-cancellation parity, full keyboard event objects, and input-focus
@@ -596,8 +596,9 @@ behavior, and substantial page-specific JavaScript support.
 
 The persistent page runtime, IPC snapshot acknowledgement, bounded timers and
 microtask checkpoints, native `click`/`input`/`change` forwarding, asynchronous
-top-level HTML GET, and the limited asynchronous JavaScript `fetch(url)` GET
-bridge are implemented in this workspace. `make all` completed with
+top-level HTML GET, and the bounded asynchronous JavaScript fetch bridge
+(request metadata plus response headers) are implemented in this workspace.
+`make all` completed with
 `-Werror`; `make test-all` passed the host suite and serial QEMU validation in
 test, ring-3, and SMAP configurations (51 unique kernel cases and 23 ring-3
 cases per configuration). A separate live QEMU navigation fetched and
