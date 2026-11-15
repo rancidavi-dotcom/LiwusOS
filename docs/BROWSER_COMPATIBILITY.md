@@ -130,8 +130,10 @@ execute; their presence does not imply standards-complete browser behavior:
     reads from the native `Blob`/`File` shims, with bounded load/error events.
   - Observers: `MutationObserver` now records bounded `childList`, attribute and
     character-data mutations with subtree/attribute filters and microtask
-    delivery; `ResizeObserver`/`IntersectionObserver` provide typed entry
-    objects and bounded initial observations for layout libraries. `matchMedia()`
+    delivery; typed `MutationRecord`, `NodeFilter`, `TreeWalker`, and
+    `NodeIterator` surfaces are available for DOM traversal. `ResizeObserver`/
+    `IntersectionObserver` provide typed entry objects and bounded initial
+    observations for layout libraries. `matchMedia()`
     returns an event-capable `MediaQueryList` with legacy listener aliases.
   - Scheduling and cancellation: `requestIdleCallback()`/
     `cancelIdleCallback()`, `AbortSignal.any()`, `AbortSignal.throwIfAborted()`,
