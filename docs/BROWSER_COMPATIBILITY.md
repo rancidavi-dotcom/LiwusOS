@@ -229,7 +229,10 @@ execute; their presence does not imply standards-complete browser behavior:
     `IntersectionObserver` provide typed entry objects and bounded initial
     observations for layout libraries. `matchMedia()` returns an event-capable
     `MediaQueryList` with legacy listener aliases and bounded composition of
-    `not`, `and`, and comma-separated alternatives.
+    `not`, `and`, and comma-separated alternatives. `onchange` receives a typed
+    `MediaQueryListEvent` when the bounded viewport changes through
+    `resizeTo()`/`resizeBy()`; those helpers also emit `resize` on `window` and
+    `visualViewport` and update the orientation hint.
     `PerformanceObserver`/`PerformanceEntry`, `MessageChannel`/`MessagePort`,
     `Worker`/`SharedWorker`, and `ClipboardItem` surfaces are available for
     feature detection and bounded local messaging; they do not create worker
