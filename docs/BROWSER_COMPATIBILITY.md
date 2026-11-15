@@ -226,7 +226,8 @@ execute; their presence does not imply standards-complete browser behavior:
     bounded real `crypto.subtle.digest('SHA-1'|'SHA-256', data)`; unsupported
     digest algorithms reject with `NotSupportedError`.
   - Encoding & Codecs: `btoa()`, `atob()`, `TextEncoder` (including bounded
-    `encodeInto()`), and `TextDecoder`.
+    `encodeInto()`), and stateful `TextDecoder` with `stream`, `fatal`, and
+    BOM handling.
   - URLs: `URL` (including bounded `URL.parse()`/`URL.canParse()`, mutable
     `search`/`hash`/`pathname` fields, and synchronized `searchParams`) and
     `URLSearchParams` parser/query serializer with root,
