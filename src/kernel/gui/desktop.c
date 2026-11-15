@@ -23,6 +23,7 @@
 #include "ata.h"
 #include "ahci.h"
 #include "gui/html_view.h"
+#include "gui/html_img.h"
 #include "gui/html_font.h"
 #include "gui/browser_url.h"
 #include "kernel/users.h"
@@ -52,7 +53,7 @@ static void browser_stop_runtime(void);
  * translucida para parecer profissional.
  * ========================================================================= */
 #define PANEL_H          40
-#define WIN_HEADER_H     32
+#define WIN_HEADER_H     36
 #define BZ_PANEL         0x151D26
 #define BZ_PANEL_LINE    0x304151
 #define BZ_WIN_BG        0x1D2935
@@ -81,6 +82,59 @@ static uint32_t desktop_screen_w(void) {
 static uint32_t desktop_screen_h(void) {
     uint32_t sh = vga_get_fb_height();
     return sh ? sh : 768;
+}
+
+static lv_img_dsc_t *g_desktop_logo_dsc;
+static lv_obj_t *g_desktop_logo;
+
+static void desktop_logo_round_mask(lv_img_dsc_t *dsc) {
+    if (!dsc || !dsc->data || dsc->header.w <= 0 || dsc->header.h <= 0) return;
+
+    uint32_t w = (uint32_t)dsc->header.w;
+    uint32_t h = (uint32_t)dsc->header.h;
+    uint32_t cx = w / 2U;
+    uint32_t cy = h / 2U;
+    uint32_t radius = (w < h ? w : h) / 2U;
+    if (radius > 3U) radius -= 3U;
+    uint64_t radius_sq = (uint64_t)radius * radius;
+
+    /* html_img_decode returns BGRA32.  Remove only the outside corners; the
+     * circular artwork and its internal dark gradient remain untouched. */
+    uint8_t *pixels = (uint8_t *)(uintptr_t)dsc->data;
+    for (uint32_t y = 0; y < h; y++) {
+        for (uint32_t x = 0; x < w; x++) {
+            int64_t dx = (int64_t)x - (int64_t)cx;
+            int64_t dy = (int64_t)y - (int64_t)cy;
+            if ((uint64_t)(dx * dx + dy * dy) > radius_sq) {
+                pixels[((size_t)y * w + x) * 4U + 3U] = 0;
+            }
+        }
+    }
+}
+
+/* The desktop watermark is loaded from the same initrd asset shipped with the
+ * system, so the branding is identical in Live USB and installed boots.  It
+ * lives below windows and the top panel, and its reduced opacity keeps it from
+ * competing with application content. */
+static void desktop_create_logo(lv_obj_t *scr) {
+    if (!scr || g_desktop_logo) return;
+
+    uint32_t raw_size = 0;
+    const uint8_t *raw = (const uint8_t *)initrd_get_file("LiwusOSlogo.png", &raw_size);
+    if (!raw || raw_size == 0) return;
+
+    g_desktop_logo_dsc = html_img_decode(raw, raw_size, 300, 300);
+    if (!g_desktop_logo_dsc) {
+        serial_print("[desktop] logo decode failed\n");
+        return;
+    }
+    desktop_logo_round_mask(g_desktop_logo_dsc);
+
+    g_desktop_logo = lv_img_create(scr);
+    lv_img_set_src(g_desktop_logo, g_desktop_logo_dsc);
+    lv_obj_set_style_img_opa(g_desktop_logo, LV_OPA_60, 0);
+    lv_obj_clear_flag(g_desktop_logo, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(g_desktop_logo, LV_ALIGN_BOTTOM_RIGHT, -72, -58);
 }
 
 /* Botao plano do Slate (cantos discretos, sem sombra). */
@@ -270,10 +324,10 @@ static void setup_window(lv_obj_t *win, int w, int h, int x, int y) {
         st->maximized = false;
     }
 
-    lv_obj_set_style_shadow_width(win, 16, 0);
+    lv_obj_set_style_shadow_width(win, 22, 0);
     lv_obj_set_style_shadow_color(win, lv_color_black(), 0);
-    lv_obj_set_style_shadow_opa(win, LV_OPA_30, 0);
-    lv_obj_set_style_radius(win, 7, 0);
+    lv_obj_set_style_shadow_opa(win, LV_OPA_40, 0);
+    lv_obj_set_style_radius(win, 10, 0);
     lv_obj_set_style_bg_color(win, lv_color_hex(BZ_WIN_BG), 0);
     lv_obj_set_style_bg_opa(win, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(win, lv_color_hex(BZ_TITLE_LINE), 0);
@@ -284,7 +338,7 @@ static void setup_window(lv_obj_t *win, int w, int h, int x, int y) {
     if (content) {
         lv_obj_set_style_bg_color(content, lv_color_hex(BZ_WIN_BG), 0);
         lv_obj_set_style_bg_opa(content, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(content, 6, 0);
+        lv_obj_set_style_radius(content, 8, 0);
         lv_obj_set_style_text_color(content, lv_color_hex(BZ_TEXT), 0);
     }
 
@@ -294,11 +348,11 @@ static void setup_window(lv_obj_t *win, int w, int h, int x, int y) {
         lv_obj_add_flag(header, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_bg_color(header, lv_color_hex(BZ_TITLE), 0);
         lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(header, 6, 0);
+        lv_obj_set_style_radius(header, 8, 0);
         lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
         lv_obj_set_style_border_color(header, lv_color_hex(BZ_TITLE_LINE), 0);
         lv_obj_set_style_border_width(header, 1, 0);
-        lv_obj_set_style_pad_left(header, 10, 0);
+        lv_obj_set_style_pad_left(header, 12, 0);
         lv_obj_set_style_pad_column(header, 2, 0);
         lv_obj_set_style_pad_right(header, 4, 0);
         lv_obj_set_style_pad_ver(header, 3, 0);
@@ -1279,10 +1333,12 @@ static void bz_style_title_button(lv_obj_t *btn, bool is_close) {
     lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_PRESSED);
     lv_obj_set_style_bg_color(btn, lv_color_hex(is_close ? BZ_RED : BZ_HOVER), LV_STATE_PRESSED);
-    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_border_color(btn, lv_color_hex(BZ_TITLE), 0);
+    lv_obj_set_style_border_width(btn, 1, 0);
+    lv_obj_set_style_border_color(btn, lv_color_hex(BZ_TITLE_LINE), LV_STATE_PRESSED);
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_set_style_outline_width(btn, 0, 0);
-    lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_radius(btn, 5, 0);
     lv_obj_set_style_text_color(btn, lv_color_hex(BZ_TEXT_DIM), 0);
     lv_obj_set_style_text_color(btn, lv_color_hex(BZ_TEXT), LV_STATE_PRESSED);
     lv_obj_set_style_pad_all(btn, 0, 0);
@@ -1296,18 +1352,18 @@ static lv_obj_t *add_window_controls(lv_obj_t *win, const char *title) {
         lv_obj_set_style_text_color(lbl_title, lv_color_hex(BZ_TEXT), 0);
     }
 
-    lv_obj_t *btn_min = lv_win_add_btn(win, LV_SYMBOL_DOWN, 26);
+    lv_obj_t *btn_min = lv_win_add_btn(win, LV_SYMBOL_MINUS, 28);
     bz_style_title_button(btn_min, false);
     lv_obj_add_event_cb(btn_min, win_min_event_cb, LV_EVENT_CLICKED, win);
 
-    lv_obj_t *btn_max = lv_win_add_btn(win, LV_SYMBOL_UP, 26);
+    lv_obj_t *btn_max = lv_win_add_btn(win, LV_SYMBOL_UP, 28);
     bz_style_title_button(btn_max, false);
     lv_obj_add_event_cb(btn_max, win_max_event_cb, LV_EVENT_CLICKED, win);
 
     win_state_t *st = win_state_get(win);
     if (st) st->btn_max = btn_max;
 
-    lv_obj_t *btn_close = lv_win_add_btn(win, LV_SYMBOL_CLOSE, 26);
+    lv_obj_t *btn_close = lv_win_add_btn(win, LV_SYMBOL_CLOSE, 28);
     bz_style_title_button(btn_close, true);
     lv_obj_add_event_cb(btn_close, win_close_event_cb, LV_EVENT_CLICKED, win);
 
@@ -5356,6 +5412,7 @@ void desktop_init(void) {
     /* TRAVA O DESKTOP: impede absolutamente qualquer scroll ou deslocamento da tela inteira! */
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(scr, desktop_bg_press_cb, LV_EVENT_PRESSED, NULL);
+    desktop_create_logo(scr);
 
     init_cursor();
 
