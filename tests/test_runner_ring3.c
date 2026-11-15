@@ -328,6 +328,8 @@ int test_ring3_processes(void) {
             "const segments=Array.from(new Intl.Segmenter('en',{granularity:'word'}).segment('hello world'));if(segments.length!==3||segments[0].segment!=='hello'||segments[0].index!==0||!segments[0].isWordLike)throw new Error('Intl.Segmenter failed');"
             "if(typeof CSS==='undefined'||typeof CSS.supports!=='function'||typeof CSS.escape!=='function')throw new Error('CSS compatibility missing');"
             "if(!CSS.supports('display','grid')||CSS.supports('display','invalid'))throw new Error('CSS supports values failed');"
+            "if(!CSS.supports('--theme-color','red')||typeof CSS.registerProperty!=='function'||typeof CSS.px!=='function'||typeof CSSStyleValue!=='function')throw new Error('CSS typed compatibility missing');"
+            "CSS.registerProperty({name:'--liwus-probe',syntax:'<number>',inherits:false,initialValue:'0'});if(CSS.px(4).toString()!=='4px'||CSS.percent(50).unit!=='percent'||CSSStyleValue.parse('color','red')[0]!=='red')throw new Error('CSS typed values failed');"
             "const tpl=document.createElement('template');tpl.innerHTML='<span>template</span>';"
             "if(!tpl.content||!tpl.content.firstChild||tpl.content.firstChild.textContent!=='template')throw new Error('template content failed');"
             "const shadowHost=document.createElement('div');const shadow=shadowHost.attachShadow({mode:'open'});"

@@ -123,6 +123,9 @@ execute; their presence does not imply standards-complete browser behavior:
     also available, but no font download or WOFF2 decoding is implemented.
     Codec and media transport are not implemented.
   - Platform compatibility: bounded `CSS.supports()`/`CSS.escape()`,
+    `CSS.registerProperty()` for up to 128 validated custom-property
+    definitions, and small CSS Typed OM shims (`CSSUnitValue`, `CSS.px()`,
+    `CSS.percent()`, `CSS.number()`, `CSS.deg()`, `CSSStyleValue.parse()`),
     constructable `CSSStyleSheet` (`replaceSync`, `replace`, rule insertion),
     `HTMLTemplateElement.content`, and an isolated `attachShadow()`/
     `ShadowRoot` surface with `adoptedStyleSheets` for component code. DOM
