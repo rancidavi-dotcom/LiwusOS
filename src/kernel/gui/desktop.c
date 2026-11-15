@@ -45,27 +45,32 @@ bool g_desktop_running = false;
 static void browser_stop_runtime(void);
 
 /* =========================================================================
- * Paleta "Breeze Dark" (estilo KDE Plasma)
+ * Paleta Liwus Slate
+ *
+ * A interface usa superficies opacas, bordas finas e um unico acento ciano.
+ * Isso preserva a leitura em LVGL/VGA e evita depender de blur ou composicao
+ * translucida para parecer profissional.
  * ========================================================================= */
-#define PANEL_H          44
+#define PANEL_H          40
 #define WIN_HEADER_H     32
-#define BZ_PANEL         0x1f2226
-#define BZ_PANEL_LINE    0x383d42
-#define BZ_WIN_BG        0x2a2e32
-#define BZ_TITLE         0x31363b
-#define BZ_TITLE_LINE    0x1b1e20
-#define BZ_VIEW          0x1b1e20
-#define BZ_BUTTON        0x31363b
-#define BZ_BUTTON_LINE   0x4d5359
-#define BZ_HOVER         0x3b4148
-#define BZ_TEXT          0xfcfcfc
-#define BZ_TEXT_DIM      0xa1a9b1
-#define BZ_ACCENT        0x3daee9
-#define BZ_RED           0xda4453
-#define BZ_GREEN         0x27ae60
-#define BZ_AMBER         0xf67400
-#define BZ_WALL_TOP      0x223042
-#define BZ_WALL_BOTTOM   0x0d1117
+#define BZ_PANEL         0x151D26
+#define BZ_PANEL_LINE    0x304151
+#define BZ_WIN_BG        0x1D2935
+#define BZ_TITLE         0x202F3D
+#define BZ_TITLE_LINE    0x3A4D5E
+#define BZ_VIEW          0x111A22
+#define BZ_BUTTON        0x263746
+#define BZ_BUTTON_LINE   0x42586A
+#define BZ_HOVER         0x2F4A5D
+#define BZ_TEXT          0xE7EEF3
+#define BZ_TEXT_DIM      0x9AAEBC
+#define BZ_ACCENT        0x22C7D6
+#define BZ_ACCENT_DARK   0x155A68
+#define BZ_RED           0xE05A68
+#define BZ_GREEN         0x32C48D
+#define BZ_AMBER         0xE9B44C
+#define BZ_WALL_TOP      0x1D3342
+#define BZ_WALL_BOTTOM   0x0B1117
 #define BROWSER_QJS_MODULE_FETCH_ID_BASE 0x40000000U
 
 static uint32_t desktop_screen_w(void) {
@@ -78,7 +83,7 @@ static uint32_t desktop_screen_h(void) {
     return sh ? sh : 768;
 }
 
-/* Botao plano estilo Breeze (cantos discretos, sem sombra). */
+/* Botao plano do Slate (cantos discretos, sem sombra). */
 static void bz_style_button(lv_obj_t *btn) {
     lv_obj_set_style_bg_color(btn, lv_color_hex(BZ_BUTTON), 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
@@ -204,12 +209,12 @@ static void win_drag_event_cb(lv_event_t *e) {
         lv_coord_t win_w = lv_obj_get_width(win);
         lv_coord_t win_h = lv_obj_get_height(win);
         lv_coord_t max_x = (lv_coord_t)sw - win_w;
-        lv_coord_t max_y = (lv_coord_t)sh - PANEL_H - win_h;
+        lv_coord_t max_y = (lv_coord_t)sh - win_h;
         if (max_x < 0) max_x = 0;
-        if (max_y < 0) max_y = 0;
+        if (max_y < PANEL_H) max_y = PANEL_H;
 
         if (x < 0) x = 0;
-        if (y < 0) y = 0;
+        if (y < PANEL_H) y = PANEL_H;
         if (x > max_x) x = max_x;
         if (y > max_y) y = max_y;
 
@@ -240,15 +245,16 @@ static void setup_window(lv_obj_t *win, int w, int h, int x, int y) {
 
     int max_w = (int)sw;
     int max_h = (int)sh - PANEL_H;
+    int max_bottom = (int)sh;
     if (max_h < 120) max_h = 120;
 
     if (w > max_w) w = max_w;
     if (h > max_h) h = max_h;
 
     if (x + w > max_w) x = max_w - w;
-    if (y + h > max_h) y = max_h - h;
+    if (y + h > max_bottom) y = max_bottom - h;
     if (x < 0) x = 0;
-    if (y < 0) y = 0;
+    if (y < PANEL_H) y = PANEL_H;
 
     lv_obj_set_size(win, w, h);
     lv_obj_set_align(win, LV_ALIGN_TOP_LEFT);
@@ -264,10 +270,10 @@ static void setup_window(lv_obj_t *win, int w, int h, int x, int y) {
         st->maximized = false;
     }
 
-    lv_obj_set_style_shadow_width(win, 22, 0);
+    lv_obj_set_style_shadow_width(win, 16, 0);
     lv_obj_set_style_shadow_color(win, lv_color_black(), 0);
-    lv_obj_set_style_shadow_opa(win, LV_OPA_50, 0);
-    lv_obj_set_style_radius(win, 0, 0);
+    lv_obj_set_style_shadow_opa(win, LV_OPA_30, 0);
+    lv_obj_set_style_radius(win, 7, 0);
     lv_obj_set_style_bg_color(win, lv_color_hex(BZ_WIN_BG), 0);
     lv_obj_set_style_bg_opa(win, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(win, lv_color_hex(BZ_TITLE_LINE), 0);
@@ -278,7 +284,7 @@ static void setup_window(lv_obj_t *win, int w, int h, int x, int y) {
     if (content) {
         lv_obj_set_style_bg_color(content, lv_color_hex(BZ_WIN_BG), 0);
         lv_obj_set_style_bg_opa(content, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(content, 0, 0);
+        lv_obj_set_style_radius(content, 6, 0);
         lv_obj_set_style_text_color(content, lv_color_hex(BZ_TEXT), 0);
     }
 
@@ -288,7 +294,7 @@ static void setup_window(lv_obj_t *win, int w, int h, int x, int y) {
         lv_obj_add_flag(header, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_bg_color(header, lv_color_hex(BZ_TITLE), 0);
         lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(header, 0, 0);
+        lv_obj_set_style_radius(header, 6, 0);
         lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
         lv_obj_set_style_border_color(header, lv_color_hex(BZ_TITLE_LINE), 0);
         lv_obj_set_style_border_width(header, 1, 0);
@@ -979,7 +985,7 @@ static void settings_refresh_choices(void) {
         if (!btn_settings_layout[i]) continue;
         bool active = (int)keyboard_get_layout() == layout_ids[i];
         lv_obj_set_style_bg_color(btn_settings_layout[i],
-                                  lv_color_hex(active ? 0x215d80 : BZ_BUTTON), 0);
+                                  lv_color_hex(active ? BZ_ACCENT_DARK : BZ_BUTTON), 0);
         lv_obj_set_style_border_color(btn_settings_layout[i],
                                       lv_color_hex(active ? BZ_ACCENT : BZ_BUTTON_LINE), 0);
     }
@@ -1503,14 +1509,14 @@ static void create_terminal_window(void) {
 
     lv_obj_t *content = lv_win_get_content(win_terminal);
     lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(content, lv_color_hex(0x232627), 0);
+    lv_obj_set_style_bg_color(content, lv_color_hex(BZ_VIEW), 0);
     lv_obj_set_style_pad_all(content, 10, 0);
     lv_obj_add_event_cb(content, win_focus_event_cb, LV_EVENT_PRESSED, win_terminal);
 
     lbl_term_text = lv_label_create(content);
     lv_obj_set_width(lbl_term_text, lv_pct(100));
     lv_obj_set_style_text_font(lbl_term_text, &lv_font_unscii_8, 0);
-    lv_obj_set_style_text_color(lbl_term_text, lv_color_hex(0xeff0f1), 0);
+    lv_obj_set_style_text_color(lbl_term_text, lv_color_hex(BZ_TEXT), 0);
     lv_label_set_long_mode(lbl_term_text, LV_LABEL_LONG_WRAP);
     lv_obj_add_flag(lbl_term_text, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(lbl_term_text, win_focus_event_cb, LV_EVENT_PRESSED, win_terminal);
@@ -1574,9 +1580,9 @@ static void create_settings_window(void) {
     lv_coord_t wh = sh >= 800 ? 560 : ((lv_coord_t)sh - PANEL_H - 24);
     if (wh < 380) wh = 380;
     lv_coord_t x = ((lv_coord_t)sw - ww) / 2;
-    lv_coord_t y = ((lv_coord_t)sh - PANEL_H - wh) / 2;
+    lv_coord_t y = PANEL_H + ((lv_coord_t)sh - PANEL_H - wh) / 2;
     if (x < 0) x = 8;
-    if (y < 0) y = 8;
+    if (y < PANEL_H) y = PANEL_H;
     win_settings = lv_win_create(lv_scr_act(), WIN_HEADER_H);
     setup_window(win_settings, ww, wh, x, y);
     add_window_controls(win_settings, "  Central de Controle & Configuracoes");
@@ -1628,7 +1634,7 @@ static void create_settings_window(void) {
     lv_obj_set_size(btn_settings_elevate, 200, 30);
     lv_obj_align(btn_settings_elevate, LV_ALIGN_BOTTOM_LEFT, 0, 0);
     bz_style_button(btn_settings_elevate);
-    lv_obj_set_style_bg_color(btn_settings_elevate, lv_color_hex(0x215d80), 0);
+    lv_obj_set_style_bg_color(btn_settings_elevate, lv_color_hex(BZ_ACCENT_DARK), 0);
     lbl_settings_elevate_btn = lv_label_create(btn_settings_elevate);
     lv_label_set_text(lbl_settings_elevate_btn, LV_SYMBOL_SHUFFLE "  Elevar Privilegios");
     lv_obj_center(lbl_settings_elevate_btn);
@@ -1763,7 +1769,7 @@ static void create_settings_window(void) {
     lv_obj_set_size(apply_mode, 160, 34);
     lv_obj_set_pos(apply_mode, 336, 60);
     bz_style_button(apply_mode);
-    lv_obj_set_style_bg_color(apply_mode, lv_color_hex(0x215d80), 0);
+    lv_obj_set_style_bg_color(apply_mode, lv_color_hex(BZ_ACCENT_DARK), 0);
     lv_obj_t *apply_label = lv_label_create(apply_mode);
     lv_label_set_text(apply_label, "Aplicar agora");
     lv_obj_center(apply_label);
@@ -1878,7 +1884,7 @@ static void create_settings_window(void) {
     lv_obj_set_size(btn_test_sound, 180, 32);
     lv_obj_set_pos(btn_test_sound, 0, 100);
     bz_style_button(btn_test_sound);
-    lv_obj_set_style_bg_color(btn_test_sound, lv_color_hex(0x215d80), 0);
+    lv_obj_set_style_bg_color(btn_test_sound, lv_color_hex(BZ_ACCENT_DARK), 0);
     lv_obj_t *lbl_test_snd = lv_label_create(btn_test_sound);
     lv_label_set_text(lbl_test_snd, LV_SYMBOL_AUDIO "  Testar Som / Chime");
     lv_obj_center(lbl_test_snd);
@@ -1920,7 +1926,7 @@ static void create_settings_window(void) {
     lv_obj_set_size(btn_ping, 160, 30);
     lv_obj_set_pos(btn_ping, 150, 120);
     bz_style_button(btn_ping);
-    lv_obj_set_style_bg_color(btn_ping, lv_color_hex(0x215d80), 0);
+    lv_obj_set_style_bg_color(btn_ping, lv_color_hex(BZ_ACCENT_DARK), 0);
     lv_obj_t *lbl_ping = lv_label_create(btn_ping);
     lv_label_set_text(lbl_ping, LV_SYMBOL_WIFI "  Testar Gateway");
     lv_obj_center(lbl_ping);
@@ -3915,7 +3921,7 @@ static void pkgmgr_refresh_list(void) {
             lv_obj_t *btn_inst = lv_btn_create(row);
             lv_obj_set_size(btn_inst, 84, 30);
             bz_style_button(btn_inst);
-            lv_obj_set_style_bg_color(btn_inst, lv_color_hex(0x215d80), 0);
+            lv_obj_set_style_bg_color(btn_inst, lv_color_hex(BZ_ACCENT_DARK), 0);
             lv_obj_set_style_border_color(btn_inst, lv_color_hex(BZ_ACCENT), 0);
             lv_obj_align(btn_inst, LV_ALIGN_RIGHT_MID, 0, 0);
             lv_obj_t *l_in = lv_label_create(btn_inst);
@@ -4058,7 +4064,7 @@ static void create_pkgmgr_window(void) {
     lv_obj_t *btn_inst = lv_btn_create(bar);
     lv_obj_set_size(btn_inst, 100, 32);
     bz_style_button(btn_inst);
-    lv_obj_set_style_bg_color(btn_inst, lv_color_hex(0x215d80), 0);
+    lv_obj_set_style_bg_color(btn_inst, lv_color_hex(BZ_ACCENT_DARK), 0);
     lv_obj_set_style_border_color(btn_inst, lv_color_hex(BZ_ACCENT), 0);
     lv_obj_t *lbl_inst = lv_label_create(btn_inst);
     lv_label_set_text(lbl_inst, LV_SYMBOL_DOWNLOAD " Instalar");
@@ -4185,7 +4191,7 @@ static void create_pkgmgr_window(void) {
     lv_obj_t *btn_apply = lv_btn_create(act_row);
     lv_obj_set_size(btn_apply, 230, 34);
     bz_style_button(btn_apply);
-    lv_obj_set_style_bg_color(btn_apply, lv_color_hex(0x215d80), 0);
+    lv_obj_set_style_bg_color(btn_apply, lv_color_hex(BZ_ACCENT_DARK), 0);
     lv_obj_set_style_border_color(btn_apply, lv_color_hex(BZ_ACCENT), 0);
     lv_obj_t *lbl_app = lv_label_create(btn_apply);
     lv_label_set_text(lbl_app, LV_SYMBOL_DOWNLOAD " Atualizar Sistema Agora");
@@ -4803,7 +4809,7 @@ static void create_installer_window(void) {
     btn_inst_start = lv_btn_create(act_row);
     lv_obj_set_size(btn_inst_start, 270, 32);
     bz_style_button(btn_inst_start);
-    lv_obj_set_style_bg_color(btn_inst_start, lv_color_hex(0x215d80), 0);
+    lv_obj_set_style_bg_color(btn_inst_start, lv_color_hex(BZ_ACCENT_DARK), 0);
     lv_obj_set_style_border_color(btn_inst_start, lv_color_hex(BZ_ACCENT), 0);
     lv_obj_t *l_st = lv_label_create(btn_inst_start);
     lv_label_set_text(l_st, LV_SYMBOL_DRIVE " Instalar LiwusOS no HD Agora");
@@ -4849,7 +4855,7 @@ static void create_about_window(void) {
     lv_obj_set_style_text_color(lbl_desc, lv_color_hex(BZ_TEXT_DIM), 0);
     lv_label_set_text(lbl_desc,
         "Sistema Operacional x86_64 Monolitico.\n\n"
-        "Ambiente Grafico: LVGL v8.3 (tema Breeze)\n"
+        "Ambiente Grafico: LVGL v8.3 (tema Liwus Slate)\n"
         "Editor Oficial: Kilo Text Editor\n"
         "Compilador: TinyCC (tcc) Nativo\n"
         "Rede: TCP/IP lwIP + TLS BearSSL");
@@ -4928,7 +4934,7 @@ static void desktop_resize_for_display(void) {
     uint32_t sw = desktop_screen_w(), sh = desktop_screen_h();
     if (g_taskbar) {
         lv_obj_set_size(g_taskbar, (lv_coord_t)sw, PANEL_H);
-        lv_obj_set_pos(g_taskbar, 0, (lv_coord_t)(sh - PANEL_H));
+        lv_obj_set_pos(g_taskbar, 0, 0);
         int visible = 0;
         for (int i = 0; i < TASK_ITEM_COUNT; i++)
             if (!g_task_items[i].live_only || is_live_mode) visible++;
@@ -4946,7 +4952,7 @@ static void desktop_resize_for_display(void) {
         lv_coord_t mh = is_live_mode ? 514 : 466;
         if (mh > (lv_coord_t)sh - PANEL_H) mh = (lv_coord_t)sh - PANEL_H;
         lv_obj_set_size(g_start_menu, 320, mh);
-        lv_obj_set_pos(g_start_menu, 0, (lv_coord_t)sh - PANEL_H - mh);
+        lv_obj_set_pos(g_start_menu, 0, PANEL_H);
     }
     lv_obj_t *wins[] = { win_terminal, win_browser, win_pkgmgr, win_installer,
                          win_sysmon, win_calc, win_about, win_settings };
@@ -4959,12 +4965,12 @@ static void desktop_resize_for_display(void) {
         lv_coord_t x = lv_obj_get_x(win), y = lv_obj_get_y(win);
         if (win == win_settings) {
             x = ((lv_coord_t)sw - w) / 2;
-            y = ((lv_coord_t)sh - PANEL_H - h) / 2;
+            y = PANEL_H + ((lv_coord_t)sh - PANEL_H - h) / 2;
         }
         if (x + w > (lv_coord_t)sw) x = (lv_coord_t)sw - w;
-        if (y + h > (lv_coord_t)sh - PANEL_H) y = (lv_coord_t)sh - PANEL_H - h;
+        if (y + h > (lv_coord_t)sh) y = (lv_coord_t)sh - h;
         if (x < 0) x = 0;
-        if (y < 0) y = 0;
+        if (y < PANEL_H) y = PANEL_H;
         lv_obj_set_pos(win, x, y);
     }
     lv_obj_update_layout(lv_scr_act());
@@ -5025,11 +5031,10 @@ static lv_obj_t *panel_separator(lv_obj_t *parent) {
 
 static void create_taskbar(void) {
     uint32_t sw = desktop_screen_w();
-    uint32_t sh = desktop_screen_h();
 
     g_taskbar = lv_obj_create(lv_layer_top());
     lv_obj_set_size(g_taskbar, (lv_coord_t)sw, PANEL_H);
-    lv_obj_set_pos(g_taskbar, 0, (lv_coord_t)(sh - PANEL_H));
+    lv_obj_set_pos(g_taskbar, 0, 0);
     lv_obj_clear_flag(g_taskbar, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(g_taskbar, lv_color_hex(BZ_PANEL), 0);
     lv_obj_set_style_bg_opa(g_taskbar, LV_OPA_COVER, 0);
@@ -5061,7 +5066,7 @@ static void create_taskbar(void) {
     lv_obj_clear_flag(logo, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(logo, 26, 26);
     lv_obj_center(logo);
-    lv_obj_set_style_radius(logo, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_radius(logo, 5, 0);
     lv_obj_set_style_bg_color(logo, lv_color_hex(BZ_ACCENT), 0);
     lv_obj_set_style_bg_opa(logo, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(logo, 0, 0);
@@ -5168,7 +5173,7 @@ static lv_obj_t *menu_add_entry(lv_obj_t *parent, const char *icon, const char *
     lv_obj_set_size(btn, lv_pct(100), subtitle ? 46 : 36);
     lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_PRESSED);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x2c6b8f), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(BZ_ACCENT_DARK), LV_STATE_PRESSED);
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_set_style_radius(btn, 3, 0);
     lv_obj_set_style_pad_all(btn, 0, 0);
@@ -5197,13 +5202,12 @@ static lv_obj_t *menu_add_entry(lv_obj_t *parent, const char *icon, const char *
 }
 
 static void create_start_menu(void) {
-    uint32_t sh = desktop_screen_h();
     const lv_coord_t mw = 320;
     const lv_coord_t mh = is_live_mode ? 514 : 466;
 
     g_start_menu = lv_obj_create(lv_layer_top());
     lv_obj_set_size(g_start_menu, mw, mh);
-    lv_obj_set_pos(g_start_menu, 0, (lv_coord_t)(sh - PANEL_H - mh));
+    lv_obj_set_pos(g_start_menu, 0, PANEL_H);
     lv_obj_clear_flag(g_start_menu, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(g_start_menu, lv_color_hex(BZ_WIN_BG), 0);
     lv_obj_set_style_bg_opa(g_start_menu, LV_OPA_COVER, 0);
@@ -5371,9 +5375,9 @@ void desktop_init(void) {
     create_start_menu();
 
     if (is_live_mode) {
-        term_append("LiwusOS (Modo Live USB / Breeze Dark) - Abra 'Instalar' para instalar no HD.\n");
+        term_append("LiwusOS (Modo Live USB / Liwus Slate) - Abra 'Instalar' para instalar no HD.\n");
     } else {
-        term_append("LiwusOS (Instalado no Disco Rigido HD / Breeze Dark)\n");
+        term_append("LiwusOS (Instalado no Disco Rigido HD / Liwus Slate)\n");
     }
     term_append("Digite 'lpkg list' para ver pacotes ou 'help' para comandos.\n\n");
     terminal_update_view();
