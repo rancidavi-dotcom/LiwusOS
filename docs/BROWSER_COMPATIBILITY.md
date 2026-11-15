@@ -220,7 +220,8 @@ execute; their presence does not imply standards-complete browser behavior:
   - URLs: `URL` (including bounded `URL.parse()`/`URL.canParse()`) and `URLSearchParams` parser/query serializer with root,
     directory, parent-directory, query-only, hash-only, and protocol-relative
     resolution for bounded page code. `URLPattern` provides bounded wildcard
-    matching and `test()`/`exec()` results for common route guards. The
+    matching, named `:param` captures, and `test()`/`exec()` results for common
+    route guards. The
     `entries()`, `keys()`, and `values()` methods on `URLSearchParams`,
     `Headers`, and `FormData` return standard iterable iterators.
   - File APIs: `Blob`/`File` preserve string and typed-array bytes through
