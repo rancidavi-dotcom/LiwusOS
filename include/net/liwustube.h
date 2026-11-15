@@ -11,9 +11,13 @@
 #define LIWUSTUBE_MAX_ID      32
 #define LIWUSTUBE_MAX_URL     512
 
-/* Instâncias públicas padrão */
+/* Instâncias públicas e Bridge padrão */
+#define LIWUSTUBE_DEFAULT_BRIDGE_API    "http://10.0.2.2:8085"
 #define LIWUSTUBE_DEFAULT_PIPED_API     "https://api.piped.private.coffee"
 #define LIWUSTUBE_DEFAULT_INVIDIOUS_API "https://inv.nadeko.net"
+
+const char *liwustube_get_api(void);
+void liwustube_set_api(const char *url);
 
 typedef struct {
     char id[LIWUSTUBE_MAX_ID];

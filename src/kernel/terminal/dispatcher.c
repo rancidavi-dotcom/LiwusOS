@@ -192,6 +192,36 @@ int run_snes_app(int argc, char **argv) {
     return -1;
 }
 
+int run_craft_app(int argc, char **argv) {
+    extern int launch_initrd_program_argv(const char *filename, char *const argv[]);
+    extern int sys_waitpid(int pid, int *status, int options);
+    extern void vga_clear_framebuffer(uint32_t xrgb);
+    extern void desktop_force_redraw(void);
+    extern void keyboard_flush(void);
+
+    char *prog_argv[17];
+    prog_argv[0] = "craft";
+    int n = 1;
+    for (int i = 1; argv && i < argc && n < 16; i++) prog_argv[n++] = argv[i];
+    prog_argv[n] = NULL;
+
+    vga_clear_framebuffer(0x00000000U);
+    keyboard_flush();
+    int pid = launch_initrd_program_argv("/bin/craft.lxe", prog_argv);
+    if (pid <= 0) pid = launch_initrd_program_argv("craft.lxe", prog_argv);
+    if (pid <= 0) pid = launch_initrd_program_argv("bin/craft.lxe", prog_argv);
+    if (pid > 0) {
+        int status = 0;
+        sys_waitpid(pid, &status, 0);
+        keyboard_flush();
+        desktop_force_redraw();
+        return 0;
+    }
+    keyboard_flush();
+    desktop_force_redraw();
+    return -1;
+}
+
 void cmd_snes(int argc, char **argv) {
     if (run_snes_app(argc, argv) < 0) vga_puts("snes: falha ao carregar o emulador\n");
 }

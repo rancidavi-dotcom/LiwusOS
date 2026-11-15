@@ -10,6 +10,7 @@
 
 #define TUBE_TMP_JSON "/tmp/tube_query.json"
 #define TUBE_TMP_MP4  "/tmp/tube_stream.mp4"
+#define TUBE_CONF     "/etc/tube.conf"
 
 static void print_str(int fd, const char *str) {
     if (!str) return;
@@ -51,20 +52,41 @@ static char *read_file_all(const char *path, size_t *out_size) {
     return buf;
 }
 
-static int cmd_search(const char *query) {
-    print_str(1, "[LiwusTube] Pesquisando: \"");
-    print_str(1, query);
-    print_str(1, "\"...\n");
+static void load_config_if_present(void) {
+    size_t sz = 0;
+    char *cfg = read_file_all(TUBE_CONF, &sz);
+    if (cfg) {
+        char *line = cfg;
+        while (*line == ' ' || *line == '\t' || *line == '\r' || *line == '\n') line++;
+        char *end = line;
+        while (*end && *end != '\r' && *end != '\n') end++;
+        *end = '\0';
+        if (line[0]) {
+            liwustube_set_api(line);
+        }
+        free(cfg);
+    }
+}
 
+static int cmd_search(const char *query) {
     char url[LIWUSTUBE_MAX_URL];
     if (liwustube_build_search_url(NULL, query, url, sizeof(url)) != 0) {
         print_str(2, "[LiwusTube] Erro: falha ao montar URL de busca\n");
         return 1;
     }
 
+    print_str(1, "[LiwusTube] Pesquisando: \"");
+    print_str(1, query);
+    print_str(1, "\"\n[LiwusTube] Endpoint: ");
+    print_str(1, url);
+    print_str(1, "\n[LiwusTube] Aguarde a resposta...\n");
+
     long dl = liw_net_http_get(url, TUBE_TMP_JSON);
     if (dl <= 0) {
-        print_str(2, "[LiwusTube] Erro de rede ao consultar API\n");
+        print_str(2, "[LiwusTube] Erro de rede ao consultar API\n"
+                     "[LiwusTube] Dica: Certifique-se de que a rede esta ativa e execute o bridge local:\n"
+                     "            python3 scripts/tube_bridge.py\n"
+                     "            tube --bridge http://10.0.2.2:8085 search \"...\n");
         return 1;
     }
 
@@ -127,15 +149,17 @@ static int cmd_resolve(const char *input, liwustube_stream_info_t *out_info) {
         return -1;
     }
 
-    print_str(1, "[LiwusTube] Resolvendo video ID: ");
-    print_str(1, id);
-    print_str(1, "...\n");
-
     char url[LIWUSTUBE_MAX_URL];
     if (liwustube_build_stream_url(NULL, id, url, sizeof(url)) != 0) {
         print_str(2, "[LiwusTube] Erro ao montar URL do video\n");
         return -1;
     }
+
+    print_str(1, "[LiwusTube] Resolvendo video ID: ");
+    print_str(1, id);
+    print_str(1, "\n[LiwusTube] Endpoint: ");
+    print_str(1, url);
+    print_str(1, "\n[LiwusTube] Aguarde a resposta...\n");
 
     long dl = liw_net_http_get(url, TUBE_TMP_JSON);
     if (dl <= 0) {
@@ -182,7 +206,9 @@ static int cmd_play(const char *input) {
 
     print_str(1, "[LiwusTube] Baixando stream progressiva: ");
     print_str(1, info.title);
-    print_str(1, "\n[LiwusTube] Por favor aguarde o streaming inicial...\n");
+    print_str(1, "\n[LiwusTube] Stream URL: ");
+    print_str(1, info.stream_url);
+    print_str(1, "\n[LiwusTube] Aguarde o download do video MP4...\n");
 
     long dl = liw_net_http_get(info.stream_url, TUBE_TMP_MP4);
     if (dl <= 0) {
@@ -198,33 +224,48 @@ static int cmd_play(const char *input) {
 
 int main(int argc, char **argv, char **envp) {
     (void)envp;
-    if (argc < 2) {
+    load_config_if_present();
+
+    int arg_idx = 1;
+    while (arg_idx < argc) {
+        if (liw_strcmp(argv[arg_idx], "--bridge") == 0 || liw_strcmp(argv[arg_idx], "--server") == 0) {
+            if (arg_idx + 1 < argc) {
+                liwustube_set_api(argv[arg_idx + 1]);
+                arg_idx += 2;
+                continue;
+            }
+        }
+        break;
+    }
+
+    if (arg_idx >= argc) {
         print_str(2, "Uso: tube search \"termo de busca\"\n"
                      "     tube get <ID ou URL do YouTube>\n"
-                     "     tube play <ID ou URL do YouTube>\n");
+                     "     tube play <ID ou URL do YouTube>\n"
+                     "     tube --bridge http://10.0.2.2:8085 <comando>\n");
         return 2;
     }
 
-    if (liw_strcmp(argv[1], "search") == 0) {
-        if (argc < 3) {
+    if (liw_strcmp(argv[arg_idx], "search") == 0) {
+        if (arg_idx + 1 >= argc) {
             print_str(2, "Uso: tube search \"termo de busca\"\n");
             return 2;
         }
-        return cmd_search(argv[2]);
-    } else if (liw_strcmp(argv[1], "get") == 0) {
-        if (argc < 3) {
+        return cmd_search(argv[arg_idx + 1]);
+    } else if (liw_strcmp(argv[arg_idx], "get") == 0) {
+        if (arg_idx + 1 >= argc) {
             print_str(2, "Uso: tube get <ID ou URL>\n");
             return 2;
         }
-        return cmd_get(argv[2]);
-    } else if (liw_strcmp(argv[1], "play") == 0) {
-        if (argc < 3) {
+        return cmd_get(argv[arg_idx + 1]);
+    } else if (liw_strcmp(argv[arg_idx], "play") == 0) {
+        if (arg_idx + 1 >= argc) {
             print_str(2, "Uso: tube play <ID ou URL>\n");
             return 2;
         }
-        return cmd_play(argv[2]);
+        return cmd_play(argv[arg_idx + 1]);
     } else {
         /* Se passar direto o ID ou URL, assume play */
-        return cmd_play(argv[1]);
+        return cmd_play(argv[arg_idx]);
     }
 }

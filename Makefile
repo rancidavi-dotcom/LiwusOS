@@ -45,10 +45,10 @@ TEST_ISO_IMAGE = liwusos-test.iso
 # files. User-editable examples opt into UID/GID 1000 on their tar entries.
 export TAR_OPTIONS := --owner=0 --group=0 --numeric-owner
 UPDATE_FEED_DIR ?= build/update-feed
-UPDATE_VERSION ?= 2.2.34
+UPDATE_VERSION ?= 2.2.35
 UPDATE_DATE ?= 2026-11-15
 UPDATE_BASE_URL ?= https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo
-UPDATE_NOTES ?= LiwusOS 2.2.34: LiwusTube integrado (pesquisa e resolucao de streams do YouTube via Invidious/Piped no Desktop e CLI)
+UPDATE_NOTES ?= LiwusOS 2.2.35: LiwusTube Bridge de alta performance, UI cooperativa sem travamentos, suporte a streaming progressivo MP4 360p com feedback em tempo real no Desktop e CLI tube.lxe
 LINUX_STATIC_TEST_DEP =
 LINUX_STATIC_EXPECT ?= Hello from an unmodified static GNU/Linux ELF
 ifneq ($(strip $(LINUX_STATIC_ELF)),)
@@ -153,6 +153,7 @@ TCC_LXE = build/liwus-sdk/bin/tcc.lxe
 KILO_LXE = build/liwus-sdk/bin/kilo.lxe
 DOOM_LXE = build/liwus-sdk/bin/doom.lxe
 SNES_LXE = build/liwus-sdk/bin/snes.lxe
+CRAFT_LXE = build/liwus-sdk/bin/craft.lxe
 NEOFETCH_LXE = build/liwus-sdk/bin/neofetch.lxe
 SNAKE_LXE = build/liwus-sdk/bin/snake.lxe
 MATRIX_LXE = build/liwus-sdk/bin/matrix.lxe
@@ -172,7 +173,7 @@ SDK_CRT0 = build/liwus-sdk/lib/crt0.o
 SDK_LINKER_SCRIPT = build/liwus-sdk/share/liwus/elf64.ld
 SDK_HEADERS_STAMP = build/liwus-sdk/include/.headers-installed
 
-.PHONY: all run run-log test test-build ring3-test smap-test user-c-example sdk sdk-install liwsh external-sdk-build shell-test app-install sdfs-put clean
+.PHONY: all run run-log test test-build ring3-test smap-test user-c-example sdk sdk-install liwsh external-sdk-build shell-test app-install sdfs-put clean craft
 .PHONY: test-harness test-unit test-stress test-all app-install-test
 .NOTPARALLEL: test-all sdk shell-test app-install-test
 
@@ -271,6 +272,19 @@ $(SNES_LXE): $(wildcard programs/snes/*.c) programs/snes/Makefile \
 		$(wildcard third_party/lakesnes/snes/*.h) \
 		$(SDK_LIBRARY) $(SDK_OPENLIBM) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
 	$(MAKE) -C programs/snes all
+
+craft: $(CRAFT_LXE)
+
+$(CRAFT_LXE): $(wildcard programs/craft/*.c) $(wildcard programs/craft/*.h) \
+		$(wildcard programs/craft/compat/GL/*.h) \
+		$(wildcard programs/craft/compat/GLFW/*.h) \
+		$(wildcard third_party/craft/src/*.c) \
+		$(wildcard third_party/craft/src/*.h) \
+		$(wildcard third_party/craft/deps/noise/*) \
+		$(wildcard third_party/craft/deps/lodepng/*) \
+		programs/craft/Makefile $(SDK_LIBRARY) $(SDK_OPENLIBM) \
+		$(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
+	$(MAKE) -C programs/craft all
 
 
 $(NEOFETCH_LXE): programs/neofetch/main.c programs/neofetch/Makefile programs/native-app.mk $(SDK_LIBRARY) $(SDK_CRT0) $(SDK_LINKER_SCRIPT) $(SDK_HEADERS_STAMP)
@@ -602,7 +616,7 @@ $(USER_EDITOR_ELF): $(OBJ_DIR)/programs/user_editor/main.o $(OBJ_DIR)/programs/u
 		-Wl,-T,programs/user_editor/linker.ld -o $@ \
 		$(OBJ_DIR)/programs/user_editor/start.o $(OBJ_DIR)/programs/user_editor/runtime.o $(OBJ_DIR)/programs/user_editor/main.o
 
-$(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) $(NATIVE_UTIL_LXES) $(PKG_REPO_LXES) $(KILO_LXE) $(DOOM_LXE) $(SNES_LXE) $(TCC_LXE) $(C_DEMO_LXE) assets/readme.txt assets/doom1.wad
+$(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) $(NATIVE_UTIL_LXES) $(PKG_REPO_LXES) $(KILO_LXE) $(DOOM_LXE) $(SNES_LXE) $(CRAFT_LXE) $(TCC_LXE) $(C_DEMO_LXE) assets/readme.txt assets/doom1.wad
 	@mkdir -p repo build/hd_isodir/boot/grub
 	cp $(KERNEL_BIN) build/hd_isodir/boot/kernel.bin
 	printf 'set timeout=1\nset default=0\ninsmod all_video\ninsmod gfxterm\ninsmod vbe\ninsmod vga\nset gfxmode=1366x768x32,1366x768,1360x768x32,1360x768,1280x720x32,1280x720,1600x900x32,1600x900,1920x1080x32,1920x1080,1024x768x32,1024x768,auto\nset gfxpayload=keep\nterminal_output gfxterm\nmenuentry "LiwusOS x86_64 (Instalado no HD)" {\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n\tset gfxpayload=1366x768x32,1366x768,1360x768x32,1360x768,1280x720x32,1280x720,1600x900x32,1600x900,1920x1080x32,1920x1080,1024x768x32,1024x768,keep\n}\n' > build/hd_isodir/boot/grub/grub.cfg
@@ -619,6 +633,8 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 	tar -rf initrd.tar --format=ustar --transform='s|doom.lxe|bin/doom.lxe|' -C build/liwus-sdk/bin doom.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|snes.lxe|bin/snes|' -C build/liwus-sdk/bin snes.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|snes.lxe|bin/snes.lxe|' -C build/liwus-sdk/bin snes.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|craft.lxe|bin/craft.lxe|' -C build/liwus-sdk/bin craft.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|^|apps/craft/|' -C third_party/craft shaders textures
 	tar -rf initrd.tar --format=ustar --transform='s|native-hello.lxe|bin/native-hello.lxe|' -C build/liwus-sdk/bin native-hello.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|liwsh.lxe|liwsh.lxe|' -C build/liwus-sdk/bin liwsh.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|liwsh.lxe|bin/liwsh.lxe|' -C build/liwus-sdk/bin liwsh.lxe
@@ -639,6 +655,7 @@ $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_I
 	tar -rf initrd.tar --format=ustar --transform='s|play.lxe|play|' -C build/liwus-sdk/bin play.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|play.lxe|bin/play.lxe|' -C build/liwus-sdk/bin play.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|tube.lxe|tube|' -C build/liwus-sdk/bin tube.lxe
+	tar -rf initrd.tar --format=ustar --transform='s|tube.lxe|bin/tube|' -C build/liwus-sdk/bin tube.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|tube.lxe|bin/tube.lxe|' -C build/liwus-sdk/bin tube.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|head.lxe|bin/head.lxe|' -C build/liwus-sdk/bin head.lxe
 	tar -rf initrd.tar --format=ustar --transform='s|webtext.lxe|bin/webtext.lxe|' -C build/liwus-sdk/bin webtext.lxe

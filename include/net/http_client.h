@@ -27,6 +27,10 @@ typedef struct {
 int http_download_file(const char *url, const char *dest_path,
                        http_output_fn output_cb, void *user_data);
 
+int http_download_file_progress(const char *url, const char *dest_path,
+                                http_output_fn output_cb, void *user_data,
+                                http_progress_fn progress_cb, void *progress_data);
+
 /* Baixa uma pagina ou recurso via HTTP ou HTTPS e armazena em memoria dinamica (kmalloc).
  * Retorna bytes no body (> 0) em caso de sucesso, preenchendo *out_body e *out_size.
  * O chamador e responsavel por liberar *out_body com kfree().

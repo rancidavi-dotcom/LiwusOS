@@ -23,6 +23,7 @@ liwus_disk.img
 *.so
 *.dll
 *.dylib
+tools/yt-dlp
 
 # Logs e temporarios
 *.log

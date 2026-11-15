@@ -296,9 +296,27 @@ static void format_two_digits(int v, char *out) {
     out[1] = (char)('0' + (v % 10));
 }
 
+static char g_liwustube_api[LIWUSTUBE_MAX_URL] = LIWUSTUBE_DEFAULT_BRIDGE_API;
+
+const char *liwustube_get_api(void) {
+    return g_liwustube_api;
+}
+
+void liwustube_set_api(const char *url) {
+    if (!url || !url[0]) {
+        str_copy(g_liwustube_api, sizeof(g_liwustube_api), LIWUSTUBE_DEFAULT_BRIDGE_API);
+        return;
+    }
+    str_copy(g_liwustube_api, sizeof(g_liwustube_api), url);
+    size_t len = strlen(g_liwustube_api);
+    if (len > 0 && g_liwustube_api[len - 1] == '/') {
+        g_liwustube_api[len - 1] = '\0';
+    }
+}
+
 int liwustube_build_search_url(const char *base_api, const char *query, char *out_url, size_t out_size) {
     if (!query || !out_url || out_size < 32) return -1;
-    if (!base_api) base_api = LIWUSTUBE_DEFAULT_PIPED_API;
+    if (!base_api) base_api = liwustube_get_api();
 
     char enc[128];
     url_encode(query, enc, sizeof(enc));
@@ -320,7 +338,7 @@ int liwustube_build_search_url(const char *base_api, const char *query, char *ou
 
 int liwustube_build_stream_url(const char *base_api, const char *video_id, char *out_url, size_t out_size) {
     if (!video_id || !out_url || out_size < 32) return -1;
-    if (!base_api) base_api = LIWUSTUBE_DEFAULT_PIPED_API;
+    if (!base_api) base_api = liwustube_get_api();
 
     out_url[0] = '\0';
     str_copy(out_url, out_size, base_api);
@@ -549,10 +567,12 @@ int liwustube_parse_stream_json(const char *json, size_t json_len, liwustube_str
             }
         }
 
-        /* Se for stream progressivo de vídeo + áudio (video_only == false ou formatStreams do Invidious) */
-        bool is_mp4 = (strstr(format, "MP4") != NULL || strstr(format, "MPEG_4") != NULL ||
+        /* Se for stream progressivo de vídeo + áudio (video_only == false ou formatStreams do Invidious/Bridge) */
+        bool is_mp4 = (strstr(format, "mp4") != NULL || strstr(format, "MP4") != NULL ||
+                       strstr(format, "MPEG_4") != NULL || strstr(url, ".mp4") != NULL ||
+                       strstr(url, "/video/") != NULL ||
                        strstr(url, "video%2Fmp4") != NULL || strstr(url, "video/mp4") != NULL);
-        bool has_both = (!video_only || streams_key == strstr(json, "\"formatStreams\":"));
+        bool has_both = (!video_only || strstr(json, "\"formatStreams\":") != NULL || strstr(url, "/video/") != NULL);
 
         if (url[0] != '\0' && is_mp4 && has_both) {
             bool is_360p = (strstr(quality, "360") != NULL);

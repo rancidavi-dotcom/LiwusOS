@@ -1587,6 +1587,14 @@ static void dock_snes_cb(lv_event_t *e) {
     run_snes_app(0, NULL);
 }
 
+static void dock_craft_cb(lv_event_t *e) {
+    (void)e;
+    extern int run_craft_app(int argc, char **argv);
+    set_browser_url_focus(false);
+    set_pkg_input_focus(false);
+    run_craft_app(0, NULL);
+}
+
 static void dock_settings_cb(lv_event_t *e) {
     (void)e;
     lv_obj_clear_flag(win_settings, LV_OBJ_FLAG_HIDDEN);
@@ -5274,11 +5282,59 @@ static void player_tube_click_cb(lv_event_t *e) {
     set_player_tube_focus(true);
 }
 
+static void tube_ui_log_cb(const char *msg, void *user_data) {
+    (void)user_data;
+    if (lbl_player_track && msg) {
+        char buf[128];
+        lv_snprintf(buf, sizeof(buf), "LiwusTube: %s", msg);
+        lv_label_set_text(lbl_player_track, buf);
+    }
+    net_poll();
+    usb_ehci_service();
+    usb_xhci_poll();
+    lv_timer_handler();
+    vga_flip();
+}
+
+static void tube_ui_progress_cb(size_t cur, size_t total, void *user_data) {
+    (void)user_data;
+    if (lbl_player_track) {
+        char buf[128];
+        if (total > 0) {
+            uint32_t pct = (uint32_t)((cur * 100ULL) / total);
+            lv_snprintf(buf, sizeof(buf), "LiwusTube: Baixando %u%% (%u/%u KiB)",
+                        pct, (uint32_t)(cur / 1024U), (uint32_t)(total / 1024U));
+        } else {
+            lv_snprintf(buf, sizeof(buf), "LiwusTube: Baixando (%u KiB)",
+                        (uint32_t)(cur / 1024U));
+        }
+        lv_label_set_text(lbl_player_track, buf);
+    }
+    net_poll();
+    usb_ehci_service();
+    usb_xhci_poll();
+    lv_timer_handler();
+    vga_flip();
+}
+
 static void player_tube_search_cb(lv_event_t *e) {
     (void)e;
     if (!ta_player_tube) return;
     const char *txt = lv_textarea_get_text(ta_player_tube);
     if (!txt || !txt[0]) return;
+
+    if (strncmp(txt, "bridge ", 7) == 0 || strncmp(txt, "server ", 7) == 0) {
+        const char *new_api = txt + 7;
+        while (*new_api == ' ') new_api++;
+        liwustube_set_api(new_api);
+        if (lbl_player_track) {
+            char msg[128];
+            lv_snprintf(msg, sizeof(msg), "LiwusTube: API configurada para %s", liwustube_get_api());
+            lv_label_set_text(lbl_player_track, msg);
+        }
+        vga_flip();
+        return;
+    }
 
     if (!net_has_ip()) {
         if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Sem conexao de rede ativa.");
@@ -5296,7 +5352,8 @@ static void player_tube_search_cb(lv_event_t *e) {
         uint8_t *json_data = NULL;
         size_t json_sz = 0;
         int status = 0;
-        int res = http_get_mem_progress_limit(stream_info_url, &json_data, &json_sz, &status, NULL, NULL, NULL, NULL, 512 * 1024);
+        int res = http_get_mem_progress_limit(stream_info_url, &json_data, &json_sz, &status,
+                                              tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL, 512 * 1024);
         if (res > 0 && json_data) {
             liwustube_stream_info_t sinfo;
             if (liwustube_parse_stream_json((const char *)json_data, json_sz, &sinfo) == 0) {
@@ -5306,7 +5363,8 @@ static void player_tube_search_cb(lv_event_t *e) {
                     lv_label_set_text(lbl_player_track, msg);
                 }
                 vga_flip();
-                int dl = http_download_file(sinfo.stream_url, "/tmp/youtube.mp4", NULL, NULL);
+                int dl = http_download_file_progress(sinfo.stream_url, "/tmp/youtube.mp4",
+                                                     tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL);
                 if (dl > 0) {
                     player_open_file("/tmp/youtube.mp4");
                 } else {
@@ -5317,7 +5375,7 @@ static void player_tube_search_cb(lv_event_t *e) {
             }
             kfree(json_data);
         } else {
-            if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Erro de conexao com API Piped.");
+            if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Erro de conexao com API/Bridge.");
         }
     } else {
         if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Pesquisando na API...");
@@ -5329,7 +5387,8 @@ static void player_tube_search_cb(lv_event_t *e) {
         uint8_t *json_data = NULL;
         size_t json_sz = 0;
         int status = 0;
-        int res = http_get_mem_progress_limit(search_url, &json_data, &json_sz, &status, NULL, NULL, NULL, NULL, 512 * 1024);
+        int res = http_get_mem_progress_limit(search_url, &json_data, &json_sz, &status,
+                                              tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL, 512 * 1024);
         if (res > 0 && json_data) {
             liwustube_search_result_t sres;
             if (liwustube_parse_search_json((const char *)json_data, json_sz, &sres) == 0 && sres.count > 0) {
@@ -5345,11 +5404,13 @@ static void player_tube_search_cb(lv_event_t *e) {
                 }
                 vga_flip();
 
-                res = http_get_mem_progress_limit(stream_info_url, &json_data, &json_sz, &status, NULL, NULL, NULL, NULL, 512 * 1024);
+                res = http_get_mem_progress_limit(stream_info_url, &json_data, &json_sz, &status,
+                                                  tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL, 512 * 1024);
                 if (res > 0 && json_data) {
                     liwustube_stream_info_t sinfo;
                     if (liwustube_parse_stream_json((const char *)json_data, json_sz, &sinfo) == 0) {
-                        int dl = http_download_file(sinfo.stream_url, "/tmp/youtube.mp4", NULL, NULL);
+                        int dl = http_download_file_progress(sinfo.stream_url, "/tmp/youtube.mp4",
+                                                             tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL);
                         if (dl > 0) {
                             player_open_file("/tmp/youtube.mp4");
                         } else {
@@ -5646,6 +5707,7 @@ static task_item_t g_task_items[] = {
     { LV_SYMBOL_PLUS,     "Calc",     dock_calc_cb,      &win_calc,      NULL, NULL, -1, false },
     { LV_SYMBOL_PLAY,     "DOOM",     dock_doom_cb,      NULL,           NULL, NULL, -1, false },
     { LV_SYMBOL_PLAY,     "SNES",     dock_snes_cb,      NULL,           NULL, NULL, -1, false },
+    { LV_SYMBOL_PLAY,     "Craft",    dock_craft_cb,     NULL,           NULL, NULL, -1, false },
     { LV_SYMBOL_AUDIO,    "Midia",    dock_player_cb,    &win_player,    NULL, NULL, -1, false },
     { LV_SYMBOL_SETTINGS, "Settings", dock_settings_cb,  &win_settings, NULL, NULL, -1, false },
 };
@@ -6052,6 +6114,7 @@ static void create_start_menu(void) {
     menu_add_entry(list, LV_SYMBOL_PLUS, "Calculadora", "Operacoes basicas", menu_item_cb, (void *)dock_calc_cb);
     menu_add_entry(list, LV_SYMBOL_PLAY, "DOOM", "Shareware (id Software, 1993)", menu_item_cb, (void *)dock_doom_cb);
     menu_add_entry(list, LV_SYMBOL_PLAY, "Emulador de SNES", "Jogar ROMs proprias de Super Nintendo", menu_item_cb, (void *)dock_snes_cb);
+    menu_add_entry(list, LV_SYMBOL_PLAY, "Craft", "Mundo voxel para um jogador (offline)", menu_item_cb, (void *)dock_craft_cb);
     menu_add_entry(list, LV_SYMBOL_AUDIO, "Player de Midia (MP3/MP4)", "Reproduzir musicas e videos com som HDA", menu_item_cb, (void *)dock_player_cb);
     menu_add_entry(list, LV_SYMBOL_SETTINGS, "Settings", "Teclado, resolucao e status de rede", menu_item_cb, (void *)dock_settings_cb);
     menu_add_entry(list, LV_SYMBOL_FILE, "Sobre o LiwusOS", NULL, menu_item_cb, (void *)dock_about_cb);

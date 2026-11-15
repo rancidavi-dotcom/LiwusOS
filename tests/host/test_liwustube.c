@@ -50,6 +50,14 @@ static void test_url_builders(void) {
     liwustube_format_duration(3665, dur, sizeof(dur));
     assert(strcmp(dur, "01:01:05") == 0);
 
+    /* Teste de API configurável e Bridge */
+    liwustube_set_api("http://192.168.1.100:8085/");
+    assert(strcmp(liwustube_get_api(), "http://192.168.1.100:8085") == 0);
+    assert(liwustube_build_search_url(NULL, "jazz", url, sizeof(url)) == 0);
+    assert(strstr(url, "http://192.168.1.100:8085/search?q=jazz") != NULL);
+    liwustube_set_api(NULL);
+    assert(strcmp(liwustube_get_api(), LIWUSTUBE_DEFAULT_BRIDGE_API) == 0);
+
     printf("liwustube url_builders and duration: PASS\n");
 }
 

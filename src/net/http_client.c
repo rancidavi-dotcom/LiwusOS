@@ -1154,6 +1154,15 @@ int http_download_file(const char *url, const char *dest_path,
                                 "GET", NULL, NULL, 0);
 }
 
+int http_download_file_progress(const char *url, const char *dest_path,
+                                http_output_fn output_cb, void *user_data,
+                                http_progress_fn progress_cb, void *progress_data) {
+    return http_perform_request(url, NULL, NULL, NULL,
+                                dest_path ? dest_path : "", output_cb,
+                                user_data, progress_cb, progress_data, NULL, 0,
+                                "GET", NULL, NULL, 0);
+}
+
 int http_get_mem(const char *url, uint8_t **out_body, size_t *out_size, int *out_status,
                  http_output_fn output_cb, void *user_data) {
     return http_perform_request(url, out_body, out_size, out_status, NULL,
