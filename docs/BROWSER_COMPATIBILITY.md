@@ -134,6 +134,8 @@ execute; their presence does not imply standards-complete browser behavior:
     definitions, and small CSS Typed OM shims (`CSSUnitValue`, `CSS.px()`,
     `CSS.percent()`, `CSS.number()`, `CSS.deg()`, `CSSStyleValue.parse()`),
     constructable `CSSStyleSheet` (`replaceSync`, `replace`, rule insertion),
+    and bounded `CSSRule`/`CSSStyleRule`/`CSSLayerBlockRule` constructors for
+    stylesheet feature detection,
     `HTMLTemplateElement.content`, and an isolated `attachShadow()`/
     `ShadowRoot` surface with `adoptedStyleSheets` for component code. DOM
     elements created through `createElementNS()` retain namespace/local-name
