@@ -8,17 +8,22 @@ LXE = $(SDK_DIR)/bin/craft.lxe
 CFLAGS = -std=gnu99 -O3 -ffast-math -ffreestanding -fno-builtin -Wall -Wextra \
 	-Wno-unused-parameter -Wno-unused-function -Wno-sign-compare \
 	-fno-pie -fno-pic -fno-stack-protector -m64 -mno-red-zone \
-	-DLIWUSOS_SYNC_CHUNK_WORKERS -include config.h \
-	-I. -Icompat -I$(UPSTREAM)/src -I$(UPSTREAM)/deps/noise \
+	-DLIWUSOS_SYNC_CHUNK_WORKERS -DLIWUSOS_SYNC_DB -include config.h \
+	-I. -Icompat -I$(UPSTREAM)/src -I$(UPSTREAM)/deps/sqlite -I$(UPSTREAM)/deps/noise \
 	-I$(UPSTREAM)/deps/lodepng -I$(SDK_DIR)/include
+
+SQLITE_CFLAGS = $(CFLAGS) -fno-fast-math -DSQLITE_OS_OTHER=1 -DSQLITE_THREADSAFE=0 \
+	-DSQLITE_TEMP_STORE=3 -DSQLITE_OMIT_WAL \
+	-DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DEFAULT_MEMSTATUS=0 \
+	-DSQLITE_OMIT_SHARED_CACHE
 
 SRCS = $(UPSTREAM)/src/main.c $(UPSTREAM)/src/cube.c \
 	$(UPSTREAM)/src/item.c $(UPSTREAM)/src/map.c \
 	$(UPSTREAM)/src/matrix.c $(UPSTREAM)/src/ring.c \
-	$(UPSTREAM)/src/sign.c $(UPSTREAM)/src/util.c \
+	$(UPSTREAM)/src/sign.c $(UPSTREAM)/src/util.c $(UPSTREAM)/src/db.c \
 	$(UPSTREAM)/src/world.c $(UPSTREAM)/deps/noise/noise.c \
-	$(UPSTREAM)/deps/lodepng/lodepng.c platform.c softgl.c \
-	offline_services.c compat/string_extra.c
+	$(UPSTREAM)/deps/lodepng/lodepng.c $(UPSTREAM)/deps/sqlite/sqlite3.c \
+	platform.c softgl.c liwus_vfs.c offline_services.c compat/string_extra.c
 OBJS = $(addprefix $(OBJ_DIR)/,$(notdir $(SRCS:.c=.o)))
 CRAFT_HEADERS = $(wildcard *.h compat/*.h compat/GL/*.h \
 	compat/GLFW/*.h compat/curl/*.h) $(UPSTREAM)/src/config.h
@@ -38,6 +43,10 @@ $(OBJ_DIR)/lodepng.o: $(UPSTREAM)/deps/lodepng/lodepng.c
 	@mkdir -p $(OBJ_DIR)
 	$(CC) $(CFLAGS) -w -c $< -o $@
 
+$(OBJ_DIR)/sqlite3.o: $(UPSTREAM)/deps/sqlite/sqlite3.c
+	@mkdir -p $(OBJ_DIR)
+	$(CC) $(SQLITE_CFLAGS) -w -c $< -o $@
+
 $(OBJ_DIR)/platform.o: platform.c
 	@mkdir -p $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -45,6 +54,10 @@ $(OBJ_DIR)/platform.o: platform.c
 $(OBJ_DIR)/softgl.o: softgl.c
 	@mkdir -p $(OBJ_DIR)
 	$(CC) $(CFLAGS) -w -c $< -o $@
+
+$(OBJ_DIR)/liwus_vfs.o: liwus_vfs.c
+	@mkdir -p $(OBJ_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/offline_services.o: offline_services.c
 	@mkdir -p $(OBJ_DIR)
@@ -65,4 +78,4 @@ $(LXE): $(OBJS) $(SDK_DIR)/lib/libliwus.a $(SDK_DIR)/lib/libopenlibm.a \
 clean:
 	rm -rf $(OBJ_DIR) $(LXE)
 
-$(OBJS): $(CRAFT_HEADERS) Makefile
+$(OBJS): $(CRAFT_HEADERS) Makefile $(UPSTREAM)/deps/sqlite/sqlite3.h

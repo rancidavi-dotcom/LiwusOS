@@ -35,6 +35,7 @@
 #include "minimp3.h"
 
 #include "lvgl.h"
+#include "lvgl/src/draw/lv_img_cache.h"
 #include "lvgl_port.h"
 #include "acpi.h"
 
@@ -1470,6 +1471,7 @@ int desktop_craft_present(const uint32_t *pixels, uint32_t width, uint32_t heigh
     if (!win_craft || !img_craft || !pixels || !width || !height ||
         width > 1920 || height > 1080) return -1;
     size_t count = (size_t)width * height;
+    lv_img_cache_invalidate_src(&craft_frame_desc);
     if (count > craft_frame_capacity) {
         uint32_t *next = kmalloc(count * sizeof(uint32_t));
         if (!next) return -1;
@@ -1478,8 +1480,6 @@ int desktop_craft_present(const uint32_t *pixels, uint32_t width, uint32_t heigh
         craft_frame_capacity = count;
     }
     memcpy(craft_frame_pixels, pixels, count * sizeof(uint32_t));
-    static int logged_first_frame;
-    if (!logged_first_frame) { serial_printf("[craft-window] primeiro quadro %ux%u\n", width, height); logged_first_frame = 1; }
     craft_frame_desc.header.cf = LV_IMG_CF_TRUE_COLOR;
     craft_frame_desc.header.always_zero = 0;
     craft_frame_desc.header.reserved = 0;
@@ -1503,8 +1503,6 @@ int desktop_craft_window_state(uint32_t *width, uint32_t *height, int32_t *close
     if (width) *width = (uint32_t)lv_obj_get_width(content);
     if (height) *height = (uint32_t)lv_obj_get_height(content);
     if (closed) *closed = craft_close_requested ? 1 : 0;
-    static int logged_state;
-    if (!logged_state) { serial_printf("[craft-window] poll %ux%u closed=%d\n", (unsigned)lv_obj_get_width(content), (unsigned)lv_obj_get_height(content), craft_close_requested); logged_state = 1; }
     if (mouse_x || mouse_y) {
         int32_t mx = 0, my = 0, left = 0, right = 0;
         struct { int32_t x, y, left, right; } mouse = {0};
@@ -1515,7 +1513,6 @@ int desktop_craft_window_state(uint32_t *width, uint32_t *height, int32_t *close
         if (mouse_left) *mouse_left = left;
         if (mouse_right) *mouse_right = right;
     }
-    if (craft_close_requested && craft_process_running) craft_process_running = false;
     return 0;
 }
 
@@ -1526,7 +1523,6 @@ void desktop_craft_finished(void) {
 }
 
 int desktop_craft_open(void) {
-    serial_print("[craft-window] open\n");
     if (craft_process_running && win_craft) {
         craft_close_requested = false;
         lv_obj_clear_flag(win_craft, LV_OBJ_FLAG_HIDDEN);
@@ -1568,7 +1564,6 @@ int desktop_craft_open(void) {
         lv_obj_add_flag(win_craft, LV_OBJ_FLAG_HIDDEN);
         return -1;
     }
-    serial_printf("[craft-window] pid=%d\n", pid);
     craft_process_running = true;
     return 0;
 }
@@ -5898,19 +5893,20 @@ static void desktop_resize_for_display(void) {
         int visible = 0;
         for (int i = 0; i < TASK_ITEM_COUNT; i++)
             if (!g_task_items[i].live_only || is_live_mode) visible++;
-        int task_w = visible ? ((int)sw - 390) / visible : 112;
-        if (task_w > 112) task_w = 112;
-        if (task_w < 42) task_w = 42;
+        int task_w = visible ? ((int)sw - 390) / visible : 80;
+        if (task_w > 96) task_w = 96;
+        if (task_w < 40) task_w = 40;
         for (int i = 0; i < TASK_ITEM_COUNT; i++) {
             task_item_t *it = &g_task_items[i];
             if (!it->btn) continue;
             lv_obj_set_width(it->btn, (lv_coord_t)task_w);
-            if (it->indicator) lv_obj_set_width(it->indicator, (lv_coord_t)(task_w - 10));
+            if (it->indicator) lv_obj_set_width(it->indicator, (lv_coord_t)(task_w - 8));
         }
     }
     if (g_start_menu) {
-        lv_coord_t mh = is_live_mode ? 514 : 466;
-        if (mh > (lv_coord_t)sh - PANEL_H) mh = (lv_coord_t)sh - PANEL_H;
+        lv_coord_t mh = (lv_coord_t)sh - PANEL_H - 16;
+        if (mh > 580) mh = 580;
+        if (mh < 320) mh = 320;
         lv_obj_set_size(g_start_menu, 320, mh);
         lv_obj_set_pos(g_start_menu, 0, PANEL_H);
     }
@@ -6040,7 +6036,13 @@ static void create_taskbar(void) {
     panel_separator(g_taskbar);
 
     /* Gerenciador de tarefas */
-    lv_coord_t btn_w = is_live_mode ? 94 : 112;
+    int visible = 0;
+    for (int i = 0; i < TASK_ITEM_COUNT; i++)
+        if (!g_task_items[i].live_only || is_live_mode) visible++;
+    int task_w = visible ? ((int)sw - 390) / visible : 80;
+    if (task_w > 96) task_w = 96;
+    if (task_w < 40) task_w = 40;
+    lv_coord_t btn_w = (lv_coord_t)task_w;
     for (int i = 0; i < TASK_ITEM_COUNT; i++) {
         task_item_t *it = &g_task_items[i];
         if (it->live_only && !is_live_mode) {
@@ -6056,20 +6058,22 @@ static void create_taskbar(void) {
         lv_obj_set_style_shadow_width(btn, 0, 0);
         lv_obj_set_style_radius(btn, 2, 0);
         lv_obj_set_style_pad_all(btn, 0, 0);
-        lv_obj_set_style_pad_left(btn, 7, 0);
+        lv_obj_set_style_pad_left(btn, 6, 0);
         lv_obj_add_event_cb(btn, task_btn_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
         lv_obj_t *lbl = lv_label_create(btn);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(lbl, lv_color_hex(it->live_only ? BZ_ACCENT : BZ_TEXT), 0);
-        lv_label_set_text_fmt(lbl, "%s  %s", it->icon, it->label);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
+        lv_obj_set_width(lbl, btn_w - 6);
+        lv_label_set_text_fmt(lbl, "%s %s", it->icon, it->label);
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
 
         lv_obj_t *ind = lv_obj_create(btn);
         lv_obj_clear_flag(ind, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(ind, LV_OBJ_FLAG_IGNORE_LAYOUT);
-        lv_obj_set_size(ind, btn_w - 10, 2);
-        lv_obj_align(ind, LV_ALIGN_TOP_MID, -4, 0);
+        lv_obj_set_size(ind, btn_w - 8, 2);
+        lv_obj_align(ind, LV_ALIGN_TOP_MID, 0, 0);
         lv_obj_set_style_bg_color(ind, lv_color_hex(BZ_ACCENT), 0);
         lv_obj_set_style_bg_opa(ind, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(ind, 0, 0);
@@ -6130,18 +6134,18 @@ static void menu_item_cb(lv_event_t *e) {
 static lv_obj_t *menu_add_entry(lv_obj_t *parent, const char *icon, const char *title,
                                 const char *subtitle, lv_event_cb_t cb, void *user_data) {
     lv_obj_t *btn = lv_btn_create(parent);
-    lv_obj_set_size(btn, lv_pct(100), subtitle ? 46 : 36);
+    lv_obj_set_size(btn, lv_pct(100), subtitle ? 40 : 32);
     lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_PRESSED);
     lv_obj_set_style_bg_color(btn, lv_color_hex(BZ_ACCENT_DARK), LV_STATE_PRESSED);
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_set_style_radius(btn, 3, 0);
     lv_obj_set_style_pad_all(btn, 0, 0);
-    lv_obj_set_style_pad_left(btn, 12, 0);
+    lv_obj_set_style_pad_left(btn, 10, 0);
     lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, user_data);
 
     lv_obj_t *ico = lv_label_create(btn);
-    lv_obj_set_style_text_font(ico, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_font(ico, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(ico, lv_color_hex(BZ_ACCENT), 0);
     lv_label_set_text(ico, icon);
     lv_obj_align(ico, LV_ALIGN_LEFT_MID, 0, 0);
@@ -6149,21 +6153,24 @@ static lv_obj_t *menu_add_entry(lv_obj_t *parent, const char *icon, const char *
     lv_obj_t *lbl = lv_label_create(btn);
     lv_obj_set_style_text_color(lbl, lv_color_hex(BZ_TEXT), 0);
     lv_label_set_text(lbl, title);
-    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 34, subtitle ? -8 : 0);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 30, subtitle ? -7 : 0);
 
     if (subtitle) {
         lv_obj_t *sub = lv_label_create(btn);
         lv_obj_set_style_text_font(sub, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(sub, lv_color_hex(BZ_TEXT_DIM), 0);
         lv_label_set_text(sub, subtitle);
-        lv_obj_align(sub, LV_ALIGN_LEFT_MID, 34, 9);
+        lv_obj_align(sub, LV_ALIGN_LEFT_MID, 30, 8);
     }
     return btn;
 }
 
 static void create_start_menu(void) {
     const lv_coord_t mw = 320;
-    const lv_coord_t mh = is_live_mode ? 514 : 466;
+    uint32_t sh = desktop_screen_h();
+    lv_coord_t mh = (lv_coord_t)sh - PANEL_H - 16;
+    if (mh > 580) mh = 580;
+    if (mh < 320) mh = 320;
 
     g_start_menu = lv_obj_create(lv_layer_top());
     lv_obj_set_size(g_start_menu, mw, mh);
@@ -6223,13 +6230,14 @@ static void create_start_menu(void) {
 
     /* Lista de aplicativos */
     lv_obj_t *list = lv_obj_create(g_start_menu);
-    lv_obj_clear_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_set_size(list, lv_pct(100), mh - 64 - 48);
     lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, 64);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(list, 0, 0);
     lv_obj_set_style_radius(list, 0, 0);
-    lv_obj_set_style_pad_all(list, 6, 0);
+    lv_obj_set_style_pad_all(list, 4, 0);
     lv_obj_set_style_pad_row(list, 2, 0);
     lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
 
@@ -6252,7 +6260,8 @@ static void create_start_menu(void) {
     menu_add_entry(list, LV_SYMBOL_PLAY, "DOOM", "Shareware (id Software, 1993)", menu_item_cb, (void *)dock_doom_cb);
     menu_add_entry(list, LV_SYMBOL_PLAY, "Emulador de SNES", "Jogar ROMs proprias de Super Nintendo", menu_item_cb, (void *)dock_snes_cb);
     menu_add_entry(list, LV_SYMBOL_PLAY, "Craft", "Mundo voxel para um jogador (offline)", menu_item_cb, (void *)dock_craft_cb);
-    menu_add_entry(list, LV_SYMBOL_AUDIO, "Player de Midia (MP3/MP4)", "Reproduzir musicas e videos com som HDA", menu_item_cb, (void *)dock_player_cb);
+    menu_add_entry(list, LV_SYMBOL_AUDIO, "Player de Midia", "Reproduzir MP3/MP4 e LiwusTube", menu_item_cb, (void *)dock_player_cb);
+    menu_add_entry(list, LV_SYMBOL_PLAY, "LiwusTube (YouTube)", "Buscar e assistir videos no Player", menu_item_cb, (void *)dock_player_cb);
     menu_add_entry(list, LV_SYMBOL_SETTINGS, "Settings", "Teclado, resolucao e status de rede", menu_item_cb, (void *)dock_settings_cb);
     menu_add_entry(list, LV_SYMBOL_FILE, "Sobre o LiwusOS", NULL, menu_item_cb, (void *)dock_about_cb);
 
@@ -6337,6 +6346,7 @@ void desktop_init(void) {
 
     create_taskbar();
     create_start_menu();
+    desktop_resize_for_display();
 
     if (is_live_mode) {
         term_append("LiwusOS (Modo Live USB / Liwus Slate) - Abra 'Instalar' para instalar no HD.\n");

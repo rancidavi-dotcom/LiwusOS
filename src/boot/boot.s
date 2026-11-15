@@ -25,18 +25,16 @@ mb2_tags_start:
   .long 15     /* ACPI new RSDP */
   .long 8      /* framebuffer information */
 
-  /* Framebuffer tag (Type 5): solicita framebuffer ao GRUB.
-   * width=0, height=0, depth=0 instrui o GRUB a usar a resolucao nativa do monitor
-   * (seja 1920x1080, 1366x768, 1280x720 ou 1024x768).
-   * flags=0 (obrigatorio) forca o GRUB a ativar o GOP/VBE em vez de abortar silenciosamente.
+  /* Framebuffer tag (Type 5): solicita resolucao padrao 1366x768x32 ao GRUB.
+   * flags=1 (opcional) garante compatibilidade caso a tela nao suporte 1366x768 nativo.
    */
   .align 8
   .word 5      /* type = 5 */
-  .word 0      /* flags = 0 (obrigatorio) */
+  .word 1      /* flags = 1 (opcional) */
   .long 20     /* size = 20 */
-  .long 0      /* width: 0 = qualquer resolucao suportada */
-  .long 0      /* height: 0 = qualquer altura */
-  .long 0      /* depth: 0 = qualquer profundidade (32bpp preferencial) */
+  .long 1366   /* width: 1366 pixels */
+  .long 768    /* height: 768 pixels */
+  .long 32     /* depth: 32 bpp */
 
   .align 8
   .word 0, 0          /* end tag type=0, flags=0 */

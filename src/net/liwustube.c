@@ -546,9 +546,14 @@ int liwustube_parse_stream_json(const char *json, size_t json_len, liwustube_str
 
             if (strcmp(key, "url") == 0) {
                 cur = parse_json_string(cur, obj_end, url, sizeof(url));
-            } else if (strcmp(key, "quality") == 0) {
-                cur = parse_json_string(cur, obj_end, quality, sizeof(quality));
-            } else if (strcmp(key, "format") == 0 || strcmp(key, "container") == 0) {
+            } else if (strcmp(key, "quality") == 0 || strcmp(key, "qualityLabel") == 0 || strcmp(key, "resolution") == 0) {
+                char qtmp[16] = {0};
+                cur = parse_json_string(cur, obj_end, qtmp, sizeof(qtmp));
+                if (quality[0] == '\0' || strstr(qtmp, "360") != NULL || strstr(qtmp, "p") != NULL) {
+                    strncpy(quality, qtmp, sizeof(quality) - 1);
+                }
+            } else if (strcmp(key, "format") == 0 || strcmp(key, "container") == 0 ||
+                       strcmp(key, "type") == 0 || strcmp(key, "mimeType") == 0 || strcmp(key, "ext") == 0) {
                 cur = parse_json_string(cur, obj_end, format, sizeof(format));
             } else if (strcmp(key, "codec") == 0 || strcmp(key, "encoding") == 0) {
                 cur = parse_json_string(cur, obj_end, vcodec, sizeof(vcodec));
@@ -570,12 +575,13 @@ int liwustube_parse_stream_json(const char *json, size_t json_len, liwustube_str
         /* Se for stream progressivo de vídeo + áudio (video_only == false ou formatStreams do Invidious/Bridge) */
         bool is_mp4 = (strstr(format, "mp4") != NULL || strstr(format, "MP4") != NULL ||
                        strstr(format, "MPEG_4") != NULL || strstr(url, ".mp4") != NULL ||
-                       strstr(url, "/video/") != NULL ||
-                       strstr(url, "video%2Fmp4") != NULL || strstr(url, "video/mp4") != NULL);
+                       strstr(url, "/video/") != NULL || strstr(url, "mime=video") != NULL ||
+                       strstr(url, "video%2Fmp4") != NULL || strstr(url, "video/mp4") != NULL ||
+                       format[0] == '\0'); /* Se formato omitido, aceita com fallback */
         bool has_both = (!video_only || strstr(json, "\"formatStreams\":") != NULL || strstr(url, "/video/") != NULL);
 
-        if (url[0] != '\0' && is_mp4 && has_both) {
-            bool is_360p = (strstr(quality, "360") != NULL);
+        if (url[0] != '\0' && (is_mp4 || !found_best) && (has_both || !found_best)) {
+            bool is_360p = (strstr(quality, "360") != NULL || h == 360);
 
             /* Preferência por 360p */
             if (is_360p || !found_best) {
