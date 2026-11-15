@@ -215,6 +215,9 @@ execute; their presence does not imply standards-complete browser behavior:
     `navigator.userActivation`, `pdfViewerEnabled`, `keyboard`, and
     `virtualKeyboard` are exposed as feature-detection surfaces; keyboard
     layout locking and virtual-keyboard control are intentionally unsupported.
+    `navigator.globalPrivacyControl` is explicitly `false`, and the bounded
+    `window.navigation` object exposes current-entry inspection plus
+    same-document navigation promises without a separate history process.
     `navigator.storage.persist()` and bounded immediate `navigator.locks`
     requests/query results are also available; `scheduler.postTask()` and
     `scheduler.yield()` schedule work through the existing Promise queue and
