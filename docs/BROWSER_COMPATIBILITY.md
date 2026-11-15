@@ -89,6 +89,8 @@ execute; their presence does not imply standards-complete browser behavior:
     code. `structuredClone()` handles plain objects, arrays, dates, buffers and
     typed-array views within the runtime memory limit.
   - `Element.prototype.style`: Dynamic `CSSStyleDeclaration` proxy mapping camelCase and kebab-case style properties and `cssText` directly to and from element inline style attributes.
+    It also exposes bounded `length`/`item()`, `getPropertyPriority()`,
+    `setProperty()` priority handling, and `removeProperty()` results.
   - `Element.prototype.dataset`: `DOMStringMap` proxy synchronizing camelCase properties with `data-*` attributes.
   - Traversal and mutation helpers: `matches()`, `closest()`, `parentElement`,
     `children`, `childElementCount`, element-sibling accessors, `className`,
