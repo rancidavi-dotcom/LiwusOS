@@ -104,6 +104,9 @@ execute; their presence does not imply standards-complete browser behavior:
   - Geometry & Interaction: `getBoundingClientRect()`, `getClientRects()`, `scrollIntoView()`, `focus()`, `blur()`, `click()`, plus bounded `DOMRect`, `DOMRectReadOnly`, `DOMPoint`, and 2D `DOMMatrix` operations (`translate`, `scale`, `rotate`, `multiply`, `inverse`, typed-array export) with `visualViewport` primitives for layout/observer feature detection.
   - DOM Tree Mutation: `insertAdjacentHTML()`, `insertAdjacentElement()`, `append()`, `prepend()`.
   - Document & View: `window.getComputedStyle()`, `window.matchMedia()`, `document.cookie`, `document.defaultView`, `document.readyState`, `document.compatMode`, `document.doctype`, `document.scripts`, `document.getElementsByName()`, `document.createRange()`, `document.createElementNS()`.
+    Computed-style results expose read-only collection helpers (`length`,
+    `item()`, `getPropertyValue()`, and `getPropertyPriority()`) over the
+    bounded inline/default style view.
   - Media and fonts: bounded `document.fonts` readiness/load checks plus
     `Image()` and `Audio()` constructors. `audio`/`video` elements expose
     feature-detection, playback-state, and event shims (`play`, `pause`,
