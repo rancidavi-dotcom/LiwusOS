@@ -208,6 +208,7 @@ int test_ring3_processes(void) {
             "!document.fonts.check('14px sans-serif'))throw new Error('media/font globals failed');"
             "const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');"
             "if(svg.namespaceURI!=='http://www.w3.org/2000/svg'||svg.localName!=='svg'||!(svg instanceof SVGSVGElement))throw new Error('SVG DOM identity failed');"
+            "svg.setAttributeNS('http://www.w3.org/2000/svg','viewBox','0 0 10 10');if(!svg.hasAttributeNS(null,'viewBox')||svg.getAttributeNS(null,'viewBox')!=='0 0 10 10')throw new Error('SVG attribute namespace failed');svg.removeAttributeNS(null,'viewBox');if(svg.hasAttribute('viewBox'))throw new Error('SVG attribute removal failed');"
             "const video=document.createElement('video');if(typeof video.play!=='function'||video.canPlayType('video/mp4')!=='maybe'||video.paused!==true)throw new Error('media element surface failed');video.currentTime=2;video.play();if(video.paused!==false||video.currentTime!==2)throw new Error('media element state failed');video.pause();"
             "if(new Intl.PluralRules().select(2)!=='other'||new Intl.ListFormat().format(['a','b'])!=='a and b'||"
             "new Intl.Collator().compare('a','b')>=0)throw new Error('Intl globals failed');"

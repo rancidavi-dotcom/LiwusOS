@@ -3175,6 +3175,13 @@ static JSValue qjs_dom_has_attribute(JSContext *ctx, JSValueConst this_value,
     return JS_NewBool(ctx, found);
 }
 
+static JSValue qjs_dom_has_attribute_ns(JSContext *ctx,
+                                        JSValueConst this_value, int argc,
+                                        JSValueConst *argv) {
+    if (argc < 2) return JS_ThrowTypeError(ctx, "namespace and name are required");
+    return qjs_dom_has_attribute(ctx, this_value, 1, argv + 1);
+}
+
 static JSValue qjs_dom_toggle_attribute(JSContext *ctx, JSValueConst this_value,
                                         int argc, JSValueConst *argv) {
     qjs_dom_node_t *node = qjs_get_dom_node(ctx, this_value);
@@ -3386,6 +3393,44 @@ static JSValue qjs_dom_set_attribute(JSContext *ctx, JSValueConst this_value,
     if (rc != LIW_WEBDOM_OK)
         return JS_ThrowTypeError(ctx, "cannot set attribute on this node");
     return JS_UNDEFINED;
+}
+
+static JSValue qjs_dom_remove_attribute(JSContext *ctx,
+                                        JSValueConst this_value, int argc,
+                                        JSValueConst *argv) {
+    qjs_dom_node_t *node = qjs_get_dom_node(ctx, this_value);
+    if (!node) return JS_EXCEPTION;
+    if (argc < 1)
+        return JS_ThrowTypeError(ctx, "attribute name is required");
+    const char *name = JS_ToCString(ctx, argv[0]);
+    if (!name) return JS_EXCEPTION;
+    int rc = liw_webdom_remove_attribute(node->document, node->node, name);
+    JS_FreeCString(ctx, name);
+    if (rc != LIW_WEBDOM_OK && rc != LIW_WEBDOM_NOT_FOUND)
+        return JS_ThrowTypeError(ctx, "cannot remove attribute from this node");
+    return JS_UNDEFINED;
+}
+
+static JSValue qjs_dom_get_attribute_ns(JSContext *ctx,
+                                        JSValueConst this_value, int argc,
+                                        JSValueConst *argv) {
+    if (argc < 2) return JS_ThrowTypeError(ctx, "namespace and name are required");
+    return qjs_dom_get_attribute(ctx, this_value, 1, argv + 1);
+}
+
+static JSValue qjs_dom_set_attribute_ns(JSContext *ctx,
+                                        JSValueConst this_value, int argc,
+                                        JSValueConst *argv) {
+    if (argc < 3) return JS_ThrowTypeError(ctx, "namespace, name and value are required");
+    JSValue args[2] = { argv[1], argv[2] };
+    return qjs_dom_set_attribute(ctx, this_value, 2, args);
+}
+
+static JSValue qjs_dom_remove_attribute_ns(JSContext *ctx,
+                                           JSValueConst this_value, int argc,
+                                           JSValueConst *argv) {
+    if (argc < 2) return JS_ThrowTypeError(ctx, "namespace and name are required");
+    return qjs_dom_remove_attribute(ctx, this_value, 1, argv + 1);
 }
 
 static const char *qjs_dom_attribute_name(int magic) {
@@ -5610,6 +5655,10 @@ static int qjs_install_document(JSContext *ctx) {
     } while (0)
     QJS_DOM_METHOD(prototype, "getAttribute", qjs_dom_get_attribute, 1);
     QJS_DOM_METHOD(prototype, "setAttribute", qjs_dom_set_attribute, 2);
+    QJS_DOM_METHOD(prototype, "removeAttribute", qjs_dom_remove_attribute, 1);
+    QJS_DOM_METHOD(prototype, "getAttributeNS", qjs_dom_get_attribute_ns, 2);
+    QJS_DOM_METHOD(prototype, "setAttributeNS", qjs_dom_set_attribute_ns, 3);
+    QJS_DOM_METHOD(prototype, "removeAttributeNS", qjs_dom_remove_attribute_ns, 2);
     QJS_DOM_METHOD(prototype, "appendChild", qjs_dom_append_child, 1);
     QJS_DOM_METHOD(prototype, "removeChild", qjs_dom_remove_child, 1);
     QJS_DOM_METHOD(prototype, "hasChildNodes", qjs_dom_has_child_nodes, 0);
@@ -5626,6 +5675,7 @@ static int qjs_install_document(JSContext *ctx) {
     QJS_DOM_METHOD(prototype, "remove", qjs_dom_remove, 0);
     QJS_DOM_METHOD(prototype, "contains", qjs_dom_contains, 1);
     QJS_DOM_METHOD(prototype, "hasAttribute", qjs_dom_has_attribute, 1);
+    QJS_DOM_METHOD(prototype, "hasAttributeNS", qjs_dom_has_attribute_ns, 2);
     QJS_DOM_METHOD(prototype, "toggleAttribute", qjs_dom_toggle_attribute, 2);
     QJS_DOM_METHOD(prototype, "cloneNode", qjs_dom_clone_node, 1);
     QJS_DOM_METHOD(prototype, "addEventListener", qjs_dom_add_event_listener, 2);

@@ -894,3 +894,15 @@ It confirms the dark background and light text are now applied after page
 rendering. The screenshot still has large blank regions, no repository sidebar,
 missing file metadata, and clipped repository details; it is not Chromium
 parity. This was a QEMU run only.
+
+### Namespaced DOM attributes and SVG component safety (2026-11-15)
+
+The QuickJS DOM binding now exposes `removeAttribute()` and the bounded
+namespace forms `getAttributeNS()`, `setAttributeNS()`, `hasAttributeNS()`, and
+`removeAttributeNS()`. They share LIWUS's bounded attribute store while
+preserving the browser method signatures, so SVG and Web Component code can
+mutate attributes without relying on a JavaScript-only fallback. A ring-3
+regression creates an SVG element, writes and reads `viewBox` through the
+namespace API, and removes it again. `make test` passes with 51 kernel cases
+and 23 ring-3 cases. This is DOM/API compatibility; it does not claim SVG
+path rasterization or full browser namespace semantics.
