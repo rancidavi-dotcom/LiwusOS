@@ -203,6 +203,8 @@ int test_ring3_processes(void) {
             "const image=new Image(32,16);const face=new FontFace('Probe','url(probe.woff2)');face.load();document.fonts.add(face);"
             "if(image.width!==32||image.height!==16||face.status!=='loaded'||!document.fonts.has(face)||"
             "!document.fonts.check('14px sans-serif'))throw new Error('media/font globals failed');"
+            "const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');"
+            "if(svg.namespaceURI!=='http://www.w3.org/2000/svg'||svg.localName!=='svg'||!(svg instanceof SVGSVGElement))throw new Error('SVG DOM identity failed');"
             "const video=document.createElement('video');if(typeof video.play!=='function'||video.canPlayType('video/mp4')!=='maybe'||video.paused!==true)throw new Error('media element surface failed');video.currentTime=2;video.play();if(video.paused!==false||video.currentTime!==2)throw new Error('media element state failed');video.pause();"
             "if(new Intl.PluralRules().select(2)!=='other'||new Intl.ListFormat().format(['a','b'])!=='a and b'||"
             "new Intl.Collator().compare('a','b')>=0)throw new Error('Intl globals failed');"

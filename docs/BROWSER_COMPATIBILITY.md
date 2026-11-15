@@ -118,8 +118,11 @@ execute; their presence does not imply standards-complete browser behavior:
   - Platform compatibility: bounded `CSS.supports()`/`CSS.escape()`,
     constructable `CSSStyleSheet` (`replaceSync`, `replace`, rule insertion),
     `HTMLTemplateElement.content`, and an isolated `attachShadow()`/
-    `ShadowRoot` surface with `adoptedStyleSheets` for component code. Shadow
-    content is not promoted into the native page renderer's layout tree.
+    `ShadowRoot` surface with `adoptedStyleSheets` for component code. DOM
+    elements created through `createElementNS()` retain namespace/local-name
+    identity and receive SVG element brands for feature detection. Shadow
+    content and SVG vectors are not promoted into the native page renderer's
+    layout/raster tree.
   - Streams: bounded `ReadableStream`, `WritableStream`, `TransformStream`,
     `TextEncoderStream`, and `TextDecoderStream` surfaces. `Response.body`
     exposes a one-shot in-memory stream over the already-buffered response;
