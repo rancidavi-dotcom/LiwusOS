@@ -187,7 +187,7 @@ execute; their presence does not imply standards-complete browser behavior:
     promise for common async-consumer code. `Response.body` exposes a one-shot
     in-memory stream over the already-buffered response; network transport
     remains non-streaming.
-  - Viewport & History: `window.screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `devicePixelRatio`, `scrollX`, `scrollY`, `scrollTo`, `scrollBy`, bounded `visualViewport` page offsets, and `Element.scrollIntoView()` state forwarding, plus `history` (`pushState`, `replaceState`, `back`, `forward`, `go`, `state`, `length`).
+  - Viewport & History: `window.screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `devicePixelRatio`, `scrollX`, `scrollY`, `scrollTo`, `scrollBy`, bounded `visualViewport` page offsets, and `Element.scrollIntoView()` state forwarding, plus `history` (`pushState`, `replaceState`, `back`, `forward`, `go`, `state`, `length`). Traversal emits typed `PopStateEvent` objects and bounded `HashChangeEvent` objects when the URL fragment changes.
   - Animation: `requestAnimationFrame`, `cancelAnimationFrame`, a bounded
     `Animation`/`DocumentTimeline` surface, and `Element.animate()`/
     `getAnimations()` objects for code that expects the Web Animations surface;
