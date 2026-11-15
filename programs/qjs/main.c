@@ -1573,7 +1573,7 @@ static const char qjs_web_env_bootstrap[] =
     "  };\n"
     "  if (!g.CSSUnparsedValue) g.CSSUnparsedValue = class CSSUnparsedValue { constructor(values) { values = values || []; this.length = values.length; for (var i = 0; i < values.length; i++) this[i] = values[i]; } };\n"
     "  if (!g.CSS.supports) g.CSS.supports = function(prop, value) {\n"
-    "    if (arguments.length === 1) { var text = String(prop), at = text.indexOf(':'); if (at < 0) { var selectorMatch = /^selector\\((.*)\\)$/i.exec(text.trim()); return !!(selectorMatch && selectorMatch[1]); } value = text.substring(at + 1); prop = text.substring(0, at); }\n"
+    "    if (arguments.length === 1) { var text = String(prop), trimmed = text.trim(); if (/^selector\\(/i.test(trimmed)) { var selectorMatch = /^selector\\((.*)\\)$/i.exec(trimmed); return !!(selectorMatch && selectorMatch[1]); } var at = text.indexOf(':'); if (at < 0) return false; value = text.substring(at + 1); prop = text.substring(0, at); }\n"
     "    prop = String(prop).trim().toLowerCase(); value = String(value == null ? '' : value).trim().toLowerCase();\n"
     "    if (!prop || !value) return false;\n"
     "    if (prop.indexOf('--') === 0) return true;\n"
