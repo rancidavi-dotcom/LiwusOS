@@ -129,7 +129,8 @@ execute; their presence does not imply standards-complete browser behavior:
     `FontFaceSet` operations (`add`, `delete`, `has`, `clear`, `forEach`) are
     also available, but no font download or WOFF2 decoding is implemented.
     Codec and media transport are not implemented.
-  - Platform compatibility: bounded `CSS.supports()`/`CSS.escape()`,
+  - Platform compatibility: bounded `CSS.supports()` (including common
+    `selector(...)` feature queries)/`CSS.escape()`,
     `CSS.registerProperty()` for up to 128 validated custom-property
     definitions, and small CSS Typed OM shims (`CSSUnitValue`, `CSS.px()`,
     `CSS.percent()`, `CSS.number()`, `CSS.deg()`, `CSSStyleValue.parse()`),
