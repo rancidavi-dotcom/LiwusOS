@@ -290,9 +290,10 @@ execute; their presence does not imply standards-complete browser behavior:
     Page lifecycle listeners receive bounded `DOMContentLoaded` and `load`
     dispatch after inline/module scripts complete.
   - `WebSocket`, `EventSource`, and `BroadcastChannel` are exposed so feature
-    detection and teardown paths do not crash. WebSocket/EventSource transport
-    is intentionally not implemented yet; connections close with an explicit
-    error instead of pretending to be connected.
+    detection and teardown paths do not crash. `BroadcastChannel` delivers
+    cloned `MessageEvent` payloads asynchronously between channels in the same
+    page runtime; WebSocket/EventSource transport is intentionally not
+    implemented yet and connections close with an explicit error.
   - Performance: relative `performance.now()`, `timeOrigin`, a bounded
     `navigation` timing entry, typed-in-shape `mark()`/`measure()` entries,
     `getEntries*()` and mark/measure clearing. The timeline is bounded to the

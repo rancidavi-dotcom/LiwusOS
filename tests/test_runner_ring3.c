@@ -246,7 +246,7 @@ int test_ring3_processes(void) {
             "if(ws.readyState!==WebSocket.CLOSED||es.readyState!==EventSource.CLOSED)"
             "throw new Error('network event shims failed');ws.close();es.close();"
             "const channel=new MessageChannel();let channelValue='';channel.port2.onmessage=function(ev){channelValue=ev.data;};channel.port1.postMessage('ok');const worker=new Worker('/worker.js');worker.postMessage('x');worker.terminate();if(typeof PerformanceObserver!=='function'||typeof ClipboardItem!=='function'||typeof worker.terminate!=='function'||typeof channel.port1.postMessage!=='function')throw new Error('worker/channel compatibility failed');"
-            "const bc=new BroadcastChannel('qjs-test');bc.close();"
+            "const bc=new BroadcastChannel('qjs-test'),bcPeer=new BroadcastChannel('qjs-test');let bcValue=null,bcEvent=null;bcPeer.onmessage=function(ev){bcValue=ev.data;bcEvent=ev;};bc.postMessage({value:7});setTimeout(function(){if(!bcValue||bcValue.value!==7||!(bcEvent instanceof MessageEvent)||bcEvent.origin!==(location.origin||''))throw new Error('BroadcastChannel delivery failed');bc.close();bcPeer.close();try{bc.postMessage('closed');throw new Error('BroadcastChannel close guard failed');}catch(e){if(!(e instanceof DOMException)||e.name!=='InvalidStateError')throw e;}},2);"
             "const controller=new AbortController();const combined=AbortSignal.any([controller.signal]);"
             "controller.abort('stop');if(!combined.aborted||combined.reason!=='stop')"
             "throw new Error('AbortSignal.any failed');"
