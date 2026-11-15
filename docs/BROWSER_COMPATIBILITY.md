@@ -157,6 +157,10 @@ execute; their presence does not imply standards-complete browser behavior:
     `cancelIdleCallback()`, `AbortSignal.any()`, `AbortSignal.throwIfAborted()`,
     and `navigator.sendBeacon()` (using the existing fetch bridge) are exposed.
     These APIs do not add a service-worker process or background network stack.
+  - Clipboard and drag/drop surfaces: `navigator.clipboard.writeText()` /
+    `readText()` retain a bounded in-memory value for the page lifetime, while
+    `DataTransfer` and `ClipboardEvent` expose string payloads and event fields.
+    This does not access the host clipboard or implement OS drag/drop transport.
   - Form and window compatibility: `submit()`, `requestSubmit()`,
     `checkValidity()`, `reportValidity()`, `Promise.withResolvers()`,
     `window.open()`, and `getSelection()` are available as bounded shims.

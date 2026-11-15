@@ -172,6 +172,8 @@ int test_ring3_processes(void) {
             "location.href!=='about:blank'||location.protocol!=='about:'||"
             "location.pathname!=='blank'||document.URL!=='about:blank')"
             "throw new Error('basic web globals/location failed');"
+            "if(!navigator.clipboard||typeof navigator.clipboard.writeText!=='function'||typeof navigator.clipboard.readText!=='function')throw new Error('clipboard surface failed');"
+            "const dt=new DataTransfer();dt.setData('Text','copied');if(dt.getData('text')!=='copied'||dt.types[0]!=='text'||!(new ClipboardEvent('copy',{clipboardData:dt}) instanceof Event))throw new Error('clipboard event surface failed');"
             "output.dataset.extra='dataset-ok';"
             "output.style.backgroundColor='rgb(1, 2, 3)';"
             "if(output.dataset.extra!=='dataset-ok'||"
