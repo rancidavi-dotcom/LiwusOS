@@ -135,6 +135,10 @@ execute; their presence does not imply standards-complete browser behavior:
   - Animation: `requestAnimationFrame`, `cancelAnimationFrame`, and a bounded
     `Element.animate()` object for code that expects the Web Animations surface.
 - **Web API shims & networking**:
+  - The browser HTTP client and ring-3 `navigator.userAgent` advertise a
+    Chromium-compatible UA (`Chrome/120`) so sites do not select legacy or
+    text-only fallbacks solely because LiwusWeb is unknown. This is an
+    interoperability choice, not a claim of Chromium engine parity.
   - `fetch(input, init)` returning real Promises, with support for `Headers`, `Request`, and `Response`.
     The native bridge now propagates the received `Content-Type` into
     `Response.headers.get('content-type')` (whitespace is normalized for the

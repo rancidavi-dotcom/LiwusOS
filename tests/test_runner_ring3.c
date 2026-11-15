@@ -167,7 +167,7 @@ int test_ring3_processes(void) {
             "const output=document.getElementById('out');"
             "document.addEventListener('DOMContentLoaded',function(){output.setAttribute('data-dom-ready','yes');});"
             "addEventListener('load',function(){output.setAttribute('data-window-load','yes');});"
-            "if(window!==globalThis||self!==globalThis||"
+            "if(window!==globalThis||self!==globalThis||navigator.userAgent.indexOf('Chrome/120')<0||"
             "navigator.platform!=='LIWUS'||navigator.onLine!==true||"
             "location.href!=='about:blank'||location.protocol!=='about:'||"
             "location.pathname!=='blank'||document.URL!=='about:blank')"

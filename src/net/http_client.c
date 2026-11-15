@@ -587,7 +587,7 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
             strcat(req, path);
             strcat(req, " HTTP/1.1\r\nHost: ");
             strcat(req, host);
-            strcat(req, "\r\nUser-Agent: LiwusOS/2.0 Web (freestanding)\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n");
+            strcat(req, "\r\nUser-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n");
 
             if (tls_write(tls, req, strlen(req)) < 0) {
                 int err = tls_last_error(tls);

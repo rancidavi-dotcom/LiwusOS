@@ -1999,7 +1999,7 @@ static int qjs_install_web_globals(JSContext *ctx, const char *href) {
 
     JSValue navigator = JS_NewObject(ctx);
     if (JS_IsException(navigator) ||
-        qjs_set_string(ctx, navigator, "userAgent", "LiwusWeb/0.1") < 0 ||
+        qjs_set_string(ctx, navigator, "userAgent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36") < 0 ||
         qjs_set_string(ctx, navigator, "platform", "LIWUS") < 0 ||
         qjs_set_string(ctx, navigator, "language", "en-US") < 0 ||
         JS_SetPropertyStr(ctx, navigator, "onLine", JS_TRUE) < 0 ||
