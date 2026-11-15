@@ -70,6 +70,15 @@ long liw_net_ntp(const char *server_ip, char *out_time_buf, uint32_t buf_len);
 long liw_net_resolve(const char *hostname, char *out_ip, size_t max_len);
 long liw_net_http_get(const char *url, const char *dest_path);
 long liw_fb_blit(const uint32_t *pixels, uint32_t width, uint32_t height);
+long liw_window_present(const uint32_t *pixels, uint32_t width, uint32_t height);
+typedef struct {
+    uint32_t width, height;
+    int32_t closed;
+    int32_t mouse_x, mouse_y;
+    int32_t mouse_left, mouse_right;
+} liw_window_state_t;
+long liw_window_poll(liw_window_state_t *state);
+void liw_window_finish(void);
 long liw_sleep_ms(uint32_t ms);
 
 typedef struct {

@@ -46,5 +46,8 @@
 #define SYS_NET_HTTP_GET 47
 #define SYS_FB_BLIT    48
 #define SYS_SLEEP_MS   49
+#define SYS_WINDOW_PRESENT 50
+#define SYS_WINDOW_POLL 51
+#define SYS_WINDOW_FINISH 52
 
 #endif

@@ -4,6 +4,8 @@
 #include "mouse.h"
 #include "keyboard.h"
 #include "kheap.h"
+#include "kernel_layout.h"
+#include "kernel/kernel_layout.h"
 
 extern void fast_memcpy(void *dst, const void *src, uint64_t size);
 
@@ -16,6 +18,10 @@ static lv_indev_t *g_mouse_indev = NULL;
 
 static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p) {
     uint32_t *fb = vga_get_backbuffer();
+    if (!fb && vga_is_framebuffer()) {
+        extern uint64_t vga_fb_addr;
+        fb = (uint32_t *)phys_to_virt(vga_fb_addr);
+    }
     if (!fb) {
         lv_disp_flush_ready(drv);
         return;

@@ -750,14 +750,17 @@ void vga_init(void) {
     max_cols = 80;
     max_rows = 25;
 
-    /* Se o GRUB reportar 32bpp ou 24bpp sem preencher a mascara, define layout RGB padrao */
-    if ((vga_fb_bpp == 32 || vga_fb_bpp == 24) && vga_fb_red_size == 0 && vga_fb_blue_size == 0) {
-        vga_fb_red_pos = 16;
-        vga_fb_red_size = 8;
-        vga_fb_green_pos = 8;
-        vga_fb_green_size = 8;
-        vga_fb_blue_pos = 0;
-        vga_fb_blue_size = 8;
+    /* Se o GRUB reportar 32bpp ou 24bpp, trata como RGB e preenche layout se ausente */
+    if (vga_fb_bpp == 32 || vga_fb_bpp == 24) {
+        if (vga_fb_type == 0) vga_fb_type = 1;
+        if (vga_fb_red_size == 0 && vga_fb_blue_size == 0) {
+            vga_fb_red_pos = 16;
+            vga_fb_red_size = 8;
+            vga_fb_green_pos = 8;
+            vga_fb_green_size = 8;
+            vga_fb_blue_pos = 0;
+            vga_fb_blue_size = 8;
+        }
     }
 
     if (vga_hw_bpp == 0 && (vga_fb_bpp == 32 || vga_fb_bpp == 24)) {

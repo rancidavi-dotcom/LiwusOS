@@ -32,6 +32,7 @@
 #define EEXIST  17
 #define ENOTDIR 20
 #define ENOSPC  28
+#define ENODEV  19
 #define EPERM    1
 #define EPIPE   32
 

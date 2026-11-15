@@ -698,6 +698,14 @@ static lv_obj_t *win_installer = NULL;
 static lv_obj_t *win_about = NULL;
 static lv_obj_t *win_settings = NULL;
 static lv_obj_t *win_player = NULL;
+static lv_obj_t *win_craft = NULL;
+static lv_obj_t *img_craft = NULL;
+static lv_obj_t *craft_resize_grip = NULL;
+static lv_img_dsc_t craft_frame_desc;
+static uint32_t *craft_frame_pixels = NULL;
+static size_t craft_frame_capacity = 0;
+static bool craft_close_requested = false;
+static bool craft_process_running = false;
 static lv_obj_t *lbl_settings_network = NULL;
 static lv_obj_t *lbl_settings_status = NULL;
 static lv_obj_t *lbl_settings_volume = NULL;
@@ -1095,6 +1103,8 @@ static void win_close_event_cb(lv_event_t *e) {
             if (lbl_calc_display) lv_label_set_text(lbl_calc_display, g_calc_str);
         } else if (win == win_player) {
             hda_stream_stop();
+        } else if (win == win_craft) {
+            craft_close_requested = true;
         }
     }
 }
@@ -1436,6 +1446,133 @@ static lv_obj_t *add_window_controls(lv_obj_t *win, const char *title) {
     return lbl_title;
 }
 
+static void craft_resize_event_cb(lv_event_t *e) {
+    lv_obj_t *grip = lv_event_get_target(e);
+    lv_indev_t *indev = lv_indev_get_act();
+    if (!win_craft || !grip || !indev) return;
+    lv_point_t delta;
+    lv_indev_get_vect(indev, &delta);
+    lv_coord_t w = lv_obj_get_width(win_craft) + delta.x;
+    lv_coord_t h = lv_obj_get_height(win_craft) + delta.y;
+    if (w < 360) w = 360;
+    if (h < 260) h = 260;
+    lv_coord_t max_w = (lv_coord_t)desktop_screen_w() - lv_obj_get_x(win_craft);
+    lv_coord_t max_h = (lv_coord_t)desktop_screen_h() - lv_obj_get_y(win_craft);
+    if (w > max_w) w = max_w;
+    if (h > max_h) h = max_h;
+    lv_obj_set_size(win_craft, w, h);
+    lv_obj_align(grip, LV_ALIGN_BOTTOM_RIGHT, -3, -3);
+    lv_obj_update_layout(win_craft);
+}
+
+/* Called by the Craft syscalls while the LVGL desktop remains in control. */
+int desktop_craft_present(const uint32_t *pixels, uint32_t width, uint32_t height) {
+    if (!win_craft || !img_craft || !pixels || !width || !height ||
+        width > 1920 || height > 1080) return -1;
+    size_t count = (size_t)width * height;
+    if (count > craft_frame_capacity) {
+        uint32_t *next = kmalloc(count * sizeof(uint32_t));
+        if (!next) return -1;
+        if (craft_frame_pixels) kfree(craft_frame_pixels);
+        craft_frame_pixels = next;
+        craft_frame_capacity = count;
+    }
+    memcpy(craft_frame_pixels, pixels, count * sizeof(uint32_t));
+    static int logged_first_frame;
+    if (!logged_first_frame) { serial_printf("[craft-window] primeiro quadro %ux%u\n", width, height); logged_first_frame = 1; }
+    craft_frame_desc.header.cf = LV_IMG_CF_TRUE_COLOR;
+    craft_frame_desc.header.always_zero = 0;
+    craft_frame_desc.header.reserved = 0;
+    craft_frame_desc.header.w = width;
+    craft_frame_desc.header.h = height;
+    craft_frame_desc.data_size = (uint32_t)(count * sizeof(uint32_t));
+    craft_frame_desc.data = (const uint8_t *)craft_frame_pixels;
+    lv_img_set_src(img_craft, &craft_frame_desc);
+    lv_obj_invalidate(img_craft);
+    craft_process_running = true;
+    return 0;
+}
+
+int desktop_craft_window_state(uint32_t *width, uint32_t *height, int32_t *closed,
+                              int32_t *mouse_x, int32_t *mouse_y,
+                              int32_t *mouse_left, int32_t *mouse_right) {
+    if (!win_craft || !img_craft) return -1;
+    lv_obj_t *content = lv_win_get_content(win_craft);
+    lv_area_t area;
+    lv_obj_get_coords(content, &area);
+    if (width) *width = (uint32_t)lv_obj_get_width(content);
+    if (height) *height = (uint32_t)lv_obj_get_height(content);
+    if (closed) *closed = craft_close_requested ? 1 : 0;
+    static int logged_state;
+    if (!logged_state) { serial_printf("[craft-window] poll %ux%u closed=%d\n", (unsigned)lv_obj_get_width(content), (unsigned)lv_obj_get_height(content), craft_close_requested); logged_state = 1; }
+    if (mouse_x || mouse_y) {
+        int32_t mx = 0, my = 0, left = 0, right = 0;
+        struct { int32_t x, y, left, right; } mouse = {0};
+        extern int sys_mouse_get(void *);
+        if (sys_mouse_get(&mouse) == 0) { mx = mouse.x; my = mouse.y; left = mouse.left; right = mouse.right; }
+        if (mouse_x) *mouse_x = mx - area.x1;
+        if (mouse_y) *mouse_y = my - area.y1;
+        if (mouse_left) *mouse_left = left;
+        if (mouse_right) *mouse_right = right;
+    }
+    if (craft_close_requested && craft_process_running) craft_process_running = false;
+    return 0;
+}
+
+void desktop_craft_finished(void) {
+    craft_process_running = false;
+    craft_close_requested = true;
+    if (win_craft) lv_obj_add_flag(win_craft, LV_OBJ_FLAG_HIDDEN);
+}
+
+int desktop_craft_open(void) {
+    serial_print("[craft-window] open\n");
+    if (craft_process_running && win_craft) {
+        craft_close_requested = false;
+        lv_obj_clear_flag(win_craft, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(win_craft);
+        return 0;
+    }
+    if (!win_craft) {
+        win_craft = lv_win_create(lv_scr_act(), WIN_HEADER_H);
+        setup_window(win_craft, 800, 560, 90, 70);
+        add_window_controls(win_craft, "Craft - Mundo voxel");
+        lv_obj_t *content = lv_win_get_content(win_craft);
+        lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_bg_color(content, lv_color_hex(0x080C10), 0);
+        lv_obj_set_style_pad_all(content, 0, 0);
+        img_craft = lv_img_create(content);
+        lv_obj_set_size(img_craft, lv_pct(100), lv_pct(100));
+        lv_obj_center(img_craft);
+        lv_obj_add_event_cb(content, win_focus_event_cb, LV_EVENT_PRESSED, win_craft);
+        craft_resize_grip = lv_btn_create(win_craft);
+        lv_obj_set_size(craft_resize_grip, 18, 18);
+        lv_obj_add_flag(craft_resize_grip, LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_FLOATING);
+        lv_obj_align(craft_resize_grip, LV_ALIGN_BOTTOM_RIGHT, -3, -3);
+        lv_obj_set_style_bg_color(craft_resize_grip, lv_color_hex(BZ_ACCENT), 0);
+        lv_obj_set_style_bg_opa(craft_resize_grip, LV_OPA_70, 0);
+        lv_obj_set_style_border_width(craft_resize_grip, 0, 0);
+        lv_obj_set_style_radius(craft_resize_grip, 4, 0);
+        lv_obj_add_event_cb(craft_resize_grip, craft_resize_event_cb, LV_EVENT_PRESSING, NULL);
+        lv_obj_update_layout(win_craft);
+    } else {
+        lv_obj_clear_flag(win_craft, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(win_craft);
+    }
+    craft_close_requested = false;
+    extern int launch_initrd_program_argv(const char *, char *const []);
+    char *argv[] = { "craft", NULL };
+    int pid = launch_initrd_program_argv("/bin/craft.lxe", argv);
+    if (pid <= 0) pid = launch_initrd_program_argv("craft.lxe", argv);
+    if (pid <= 0) {
+        lv_obj_add_flag(win_craft, LV_OBJ_FLAG_HIDDEN);
+        return -1;
+    }
+    serial_printf("[craft-window] pid=%d\n", pid);
+    craft_process_running = true;
+    return 0;
+}
+
 static void dock_settings_cb(lv_event_t *e);
 static void dock_calc_cb(lv_event_t *e);
 static void dock_sysmon_cb(lv_event_t *e);
@@ -1589,10 +1726,10 @@ static void dock_snes_cb(lv_event_t *e) {
 
 static void dock_craft_cb(lv_event_t *e) {
     (void)e;
-    extern int run_craft_app(int argc, char **argv);
+    extern int desktop_craft_open(void);
     set_browser_url_focus(false);
     set_pkg_input_focus(false);
-    run_craft_app(0, NULL);
+    (void)desktop_craft_open();
 }
 
 static void dock_settings_cb(lv_event_t *e) {
@@ -5707,7 +5844,7 @@ static task_item_t g_task_items[] = {
     { LV_SYMBOL_PLUS,     "Calc",     dock_calc_cb,      &win_calc,      NULL, NULL, -1, false },
     { LV_SYMBOL_PLAY,     "DOOM",     dock_doom_cb,      NULL,           NULL, NULL, -1, false },
     { LV_SYMBOL_PLAY,     "SNES",     dock_snes_cb,      NULL,           NULL, NULL, -1, false },
-    { LV_SYMBOL_PLAY,     "Craft",    dock_craft_cb,     NULL,           NULL, NULL, -1, false },
+    { LV_SYMBOL_PLAY,     "Craft",    dock_craft_cb,     &win_craft,     NULL, NULL, -1, false },
     { LV_SYMBOL_AUDIO,    "Midia",    dock_player_cb,    &win_player,    NULL, NULL, -1, false },
     { LV_SYMBOL_SETTINGS, "Settings", dock_settings_cb,  &win_settings, NULL, NULL, -1, false },
 };
@@ -5741,7 +5878,7 @@ static void desktop_bg_press_cb(lv_event_t *e) {
 
 /* Janela visivel mais ao topo (a "janela ativa"). */
 static lv_obj_t *desktop_active_window(void) {
-    lv_obj_t *wins[] = { win_terminal, win_browser, win_pkgmgr, win_installer, win_sysmon, win_calc, win_about, win_settings, win_player };
+    lv_obj_t *wins[] = { win_terminal, win_browser, win_pkgmgr, win_installer, win_sysmon, win_calc, win_about, win_settings, win_player, win_craft };
     lv_obj_t *top = NULL;
     int32_t top_idx = -1;
     for (size_t i = 0; i < sizeof(wins) / sizeof(wins[0]); i++) {
@@ -5778,7 +5915,7 @@ static void desktop_resize_for_display(void) {
         lv_obj_set_pos(g_start_menu, 0, PANEL_H);
     }
     lv_obj_t *wins[] = { win_terminal, win_browser, win_pkgmgr, win_installer,
-                         win_sysmon, win_calc, win_about, win_settings, win_player };
+                         win_sysmon, win_calc, win_about, win_settings, win_player, win_craft };
     for (size_t i = 0; i < sizeof(wins) / sizeof(wins[0]); i++) {
         lv_obj_t *win = wins[i];
         if (!win) continue;

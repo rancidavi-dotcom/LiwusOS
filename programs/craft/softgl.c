@@ -55,11 +55,11 @@ static uint32_t rgb(float r, float g, float b) {
     unsigned ri = (unsigned)(clamp01(r) * 255.0f + 0.5f);
     unsigned gi = (unsigned)(clamp01(g) * 255.0f + 0.5f);
     unsigned bi = (unsigned)(clamp01(b) * 255.0f + 0.5f);
-    return (ri << 16) | (gi << 8) | bi;
+    return 0xFF000000U | (ri << 16) | (gi << 8) | bi;
 }
 
 int craft_gl_init(int width, int height) {
-    if (width <= 0 || height <= 0 || width > 1024 || height > 768) return -1;
+    if (width <= 0 || height <= 0 || width > 1920 || height > 1080) return -1;
     color_buffer = calloc((size_t)width * height, sizeof(uint32_t));
     depth_buffer = malloc((size_t)width * height * sizeof(float));
     if (!color_buffer || !depth_buffer) { craft_gl_shutdown(); return -1; }
@@ -68,6 +68,21 @@ int craft_gl_init(int width, int height) {
     scissor_w = width; scissor_h = height;
     clear_color = 0;
     for (size_t i = 0; i < (size_t)width * height; ++i) depth_buffer[i] = 1.0f;
+    return 0;
+}
+int craft_gl_resize(int width, int height) {
+    if (width == screen_w && height == screen_h) return 0;
+    if (width <= 0 || height <= 0 || width > 1920 || height > 1080) return -1;
+    uint32_t *new_color = calloc((size_t)width * height, sizeof(uint32_t));
+    float *new_depth = malloc((size_t)width * height * sizeof(float));
+    if (!new_color || !new_depth) { free(new_color); free(new_depth); return -1; }
+    for (size_t i = 0; i < (size_t)width * height; ++i) new_depth[i] = 1.0f;
+    free(color_buffer); free(depth_buffer);
+    color_buffer = new_color; depth_buffer = new_depth;
+    screen_w = width; screen_h = height;
+    viewport_x = viewport_y = 0;
+    viewport_w = scissor_w = width;
+    viewport_h = scissor_h = height;
     return 0;
 }
 void craft_gl_shutdown(void) {

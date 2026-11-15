@@ -195,6 +195,18 @@ long liw_fb_blit(const uint32_t *pixels, uint32_t width, uint32_t height) {
     return liw_syscall3(SYS_FB_BLIT, (long)pixels, (long)width, (long)height);
 }
 
+long liw_window_present(const uint32_t *pixels, uint32_t width, uint32_t height) {
+    return liw_syscall3(SYS_WINDOW_PRESENT, (long)pixels, (long)width, (long)height);
+}
+
+long liw_window_poll(liw_window_state_t *state) {
+    return liw_syscall1(SYS_WINDOW_POLL, (long)state);
+}
+
+void liw_window_finish(void) {
+    (void)liw_syscall0(SYS_WINDOW_FINISH);
+}
+
 long liw_sleep_ms(uint32_t ms) {
     return liw_syscall1(SYS_SLEEP_MS, (long)ms);
 }

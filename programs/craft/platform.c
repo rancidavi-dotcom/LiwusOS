@@ -23,6 +23,30 @@ static double time_origin;
 static uint64_t tick_origin;
 static int mouse_buttons[3];
 static char clipboard[256];
+static int modifiers(void);
+
+static int refresh_window_state(void) {
+    liw_window_state_t state = {0};
+    if (liw_window_poll(&state) < 0) { window_storage.close = 1; return -1; }
+    if (state.closed) window_storage.close = 1;
+    if (state.width >= 160 && state.height >= 120 &&
+        ((int)state.width != window_storage.width || (int)state.height != window_storage.height)) {
+        if (craft_gl_resize((int)state.width, (int)state.height) == 0) {
+            window_storage.width = (int)state.width;
+            window_storage.height = (int)state.height;
+        }
+    }
+    window_storage.cursor_x = state.mouse_x;
+    window_storage.cursor_y = state.mouse_y;
+    int now[3] = {state.mouse_left, state.mouse_right, 0};
+    for (int i = 0; i < 3; ++i) {
+        if (now[i] != mouse_buttons[i] && window_storage.mouse_callback)
+            window_storage.mouse_callback(&window_storage, i,
+                now[i] ? GLFW_PRESS : GLFW_RELEASE, modifiers());
+        mouse_buttons[i] = now[i];
+    }
+    return 0;
+}
 
 uint64_t craft_platform_ticks(void) { return liw_timer_ticks(); }
 
@@ -91,12 +115,16 @@ int glfwInit(void) {
     tick_origin = craft_platform_ticks();
     return GLFW_TRUE;
 }
-void glfwTerminate(void) {}
+void glfwTerminate(void) { liw_window_finish(); }
 GLFWwindow *glfwCreateWindow(int width, int height, const char *title,
                              GLFWmonitor *monitor, GLFWwindow *share) {
     (void)title; (void)monitor; (void)share;
-    if (width <= 0 || width > 320) width = 320;
-    if (height <= 0 || height > 200) height = 200;
+    liw_window_state_t state = {0};
+    if (liw_window_poll(&state) == 0 && state.width >= 160 && state.height >= 120) {
+        width = (int)state.width; height = (int)state.height;
+    }
+    if (width <= 0 || width > 1920) width = 800;
+    if (height <= 0 || height > 1080) height = 520;
     window_storage.width = width;
     window_storage.height = height;
     if (craft_gl_init(width, height) != 0) return NULL;
@@ -129,10 +157,12 @@ void glfwGetCursorPos(GLFWwindow *w, double *x, double *y) {
 }
 const char *glfwGetClipboardString(GLFWwindow *w) { (void)w; return clipboard; }
 void glfwGetWindowSize(GLFWwindow *w, int *width, int *height) {
+    (void)refresh_window_state();
     if (width) *width = w ? w->width : 640;
     if (height) *height = w ? w->height : 400;
 }
 void glfwGetFramebufferSize(GLFWwindow *w, int *width, int *height) {
+    (void)refresh_window_state();
     glfwGetWindowSize(w, width, height);
 }
 double glfwGetTime(void) {
@@ -141,6 +171,7 @@ double glfwGetTime(void) {
 void glfwSetTime(double value) { time_origin = value; tick_origin = craft_platform_ticks(); }
 
 void glfwPollEvents(void) {
+    (void)refresh_window_state();
     liw_key_event_t ev;
     while (liw_key_event(&ev) > 0) {
         int key = key_from_scancode(ev.scancode);
@@ -156,21 +187,9 @@ void glfwPollEvents(void) {
         }
     }
 
-    struct { int32_t x, y, left, right; } mouse = {0};
-    if (liw_syscall1(37, (long)&mouse) == 0) {
-        window_storage.cursor_x = mouse.x;
-        window_storage.cursor_y = mouse.y;
-        int now[3] = {mouse.left, mouse.right, 0};
-        for (int i = 0; i < 3; ++i) {
-            if (now[i] != mouse_buttons[i] && window_storage.mouse_callback)
-                window_storage.mouse_callback(&window_storage, i,
-                    now[i] ? GLFW_PRESS : GLFW_RELEASE, modifiers());
-            mouse_buttons[i] = now[i];
-        }
-    }
 }
 
 void craft_platform_present(const uint32_t *pixels, int width, int height) {
     if (pixels && width > 0 && height > 0)
-        (void)liw_fb_blit(pixels, (uint32_t)width, (uint32_t)height);
+        (void)liw_window_present(pixels, (uint32_t)width, (uint32_t)height);
 }

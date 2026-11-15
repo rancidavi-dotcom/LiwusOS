@@ -2886,8 +2886,8 @@ int main(int argc, char **argv) {
                 hour = hour % 12;
                 hour = hour ? hour : 12;
 #ifdef LIWUSOS_SYNC_CHUNK_WORKERS
-                snprintf(text_buffer, 1024, "chunks:%d fps:%d",
-                    g->chunk_count, fps.fps);
+                snprintf(text_buffer, 1024, "x:%d z:%d c:%d f:%d",
+                    (int)s->x, (int)s->z, g->chunk_count, fps.fps);
 #else
                 snprintf(
                     text_buffer, 1024,

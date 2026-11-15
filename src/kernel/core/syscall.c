@@ -2707,6 +2707,62 @@ void syscall_handler(registers_t *regs) {
       regs->rax = 0;
       break;
     }
+    case 50: { /* SYS_WINDOW_PRESENT: Craft frame into its LVGL window */
+      const uint32_t *user_pixels = (const uint32_t *)regs->rdi;
+      uint32_t width = (uint32_t)regs->rsi, height = (uint32_t)regs->rdx;
+      uint64_t bytes64 = (uint64_t)width * height * sizeof(uint32_t);
+      if (!user_pixels || !width || !height || width > 1920 || height > 1080 ||
+          bytes64 > 1920ULL * 1080ULL * sizeof(uint32_t)) {
+        regs->rax = (uint64_t)-EINVAL;
+        break;
+      }
+      static uint32_t *window_staging;
+      static size_t window_staging_bytes;
+      size_t bytes = (size_t)bytes64;
+      if (bytes > window_staging_bytes) {
+        uint32_t *next = kmalloc(bytes);
+        if (!next) { regs->rax = (uint64_t)-ENOMEM; break; }
+        if (window_staging) kfree(window_staging);
+        window_staging = next;
+        window_staging_bytes = bytes;
+      }
+      if (copy_from_user(window_staging, user_pixels, bytes) < 0) {
+        regs->rax = (uint64_t)-EFAULT;
+        break;
+      }
+      extern int desktop_craft_present(const uint32_t *, uint32_t, uint32_t);
+      regs->rax = desktop_craft_present(window_staging, width, height) == 0
+                      ? 0ULL : (uint64_t)-EIO;
+      break;
+    }
+    case 51: { /* SYS_WINDOW_POLL: current window size, close and mouse state */
+      struct craft_window_state {
+        uint32_t width, height;
+        int32_t closed, mouse_x, mouse_y, mouse_left, mouse_right;
+      } *out = (void *)regs->rdi;
+      if (!out || validate_user_write(out, sizeof(*out)) != 0) {
+        regs->rax = (uint64_t)-EFAULT;
+        break;
+      }
+      struct craft_window_state state = {0};
+      extern int desktop_craft_window_state(uint32_t *, uint32_t *, int32_t *,
+          int32_t *, int32_t *, int32_t *, int32_t *);
+      if (desktop_craft_window_state(&state.width, &state.height, &state.closed,
+              &state.mouse_x, &state.mouse_y, &state.mouse_left,
+              &state.mouse_right) != 0) {
+        regs->rax = (uint64_t)-19;
+        break;
+      }
+      regs->rax = copy_to_user(out, &state, sizeof(state)) < 0
+                      ? (uint64_t)-EFAULT : 0ULL;
+      break;
+    }
+    case 52: { /* SYS_WINDOW_FINISH */
+      extern void desktop_craft_finished(void);
+      desktop_craft_finished();
+      regs->rax = 0;
+      break;
+    }
   }
 }
 
