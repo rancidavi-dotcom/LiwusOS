@@ -109,7 +109,7 @@ execute; their presence does not imply standards-complete browser behavior:
     `TextEncoderStream`, and `TextDecoderStream` surfaces. `Response.body`
     exposes a one-shot in-memory stream over the already-buffered response;
     network transport remains non-streaming.
-  - Viewport & History: `window.screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `devicePixelRatio`, `scrollX`, `scrollY`, `scrollTo`, `scrollBy`, `history` (`pushState`, `replaceState`, `back`, `forward`, `go`, `state`, `length`).
+  - Viewport & History: `window.screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `devicePixelRatio`, `scrollX`, `scrollY`, `scrollTo`, `scrollBy`, bounded `visualViewport`, and `history` (`pushState`, `replaceState`, `back`, `forward`, `go`, `state`, `length`).
   - Animation: `requestAnimationFrame`, `cancelAnimationFrame`, and a bounded
     `Element.animate()` object for code that expects the Web Animations surface.
 - **Web API shims & networking**:
@@ -130,8 +130,9 @@ execute; their presence does not imply standards-complete browser behavior:
     reads from the native `Blob`/`File` shims, with bounded load/error events.
   - Observers: `MutationObserver` now records bounded `childList`, attribute and
     character-data mutations with subtree/attribute filters and microtask
-    delivery; `ResizeObserver` and `IntersectionObserver` provide bounded
-    initial observations for layout libraries.
+    delivery; `ResizeObserver`/`IntersectionObserver` provide typed entry
+    objects and bounded initial observations for layout libraries. `matchMedia()`
+    returns an event-capable `MediaQueryList` with legacy listener aliases.
   - Scheduling and cancellation: `requestIdleCallback()`/
     `cancelIdleCallback()`, `AbortSignal.any()`, `AbortSignal.throwIfAborted()`,
     and `navigator.sendBeacon()` (using the existing fetch bridge) are exposed.
