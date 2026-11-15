@@ -105,7 +105,10 @@ execute; their presence does not imply standards-complete browser behavior:
     `form`/`elements`/`name` (including `form="id"`), and input selection and
     validity surfaces (`selectionStart`, `select()`, `validity`,
     `setCustomValidity()`),
-    `before()`, `after()`, `remove()`, and `innerText`.
+    `before()`, `after()`, `remove()`, and `innerText`. Common ARIA IDL
+    reflections (`ariaLabel`, `ariaCurrent`, `ariaExpanded`, `ariaControls`,
+    `ariaSelected`, `ariaPressed`, `ariaDescribedby`, and related state names)
+    round-trip through their `aria-*` attributes.
   - Collection compatibility: bounded snapshot results from `querySelectorAll()`
     are branded as `NodeList`, while `getElementsByTagName()` and
     `getElementsByClassName()` use `HTMLCollection`; `children` and `childNodes`
