@@ -53,7 +53,12 @@ static void mouse_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
 
     data->point.x = mx;
     data->point.y = my;
-    data->state = is_left_clicked() ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    extern bool desktop_is_craft_mouse_grabbed(void);
+    if (desktop_is_craft_mouse_grabbed()) {
+        data->state = LV_INDEV_STATE_RELEASED;
+    } else {
+        data->state = is_left_clicked() ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    }
 }
 
 void lvgl_port_init(void) {

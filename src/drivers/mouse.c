@@ -132,6 +132,11 @@ void mouse_handler(void) {
 
 int32_t get_mouse_x(void) { return mouse_x; }
 int32_t get_mouse_y(void) { return mouse_y; }
+void mouse_set_coords(int32_t x, int32_t y) {
+    mouse_x = x;
+    mouse_y = y;
+    clamp_mouse_coords();
+}
 bool is_left_clicked(void) { return left_clicked; }
 bool is_right_clicked(void) { return right_clicked; }
 

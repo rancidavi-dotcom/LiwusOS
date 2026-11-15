@@ -115,7 +115,10 @@ int glfwInit(void) {
     tick_origin = craft_platform_ticks();
     return GLFW_TRUE;
 }
-void glfwTerminate(void) { liw_window_finish(); }
+void glfwTerminate(void) {
+    liw_window_grab_mouse(0);
+    liw_window_finish();
+}
 GLFWwindow *glfwCreateWindow(int width, int height, const char *title,
                              GLFWmonitor *monitor, GLFWwindow *share) {
     (void)title; (void)monitor; (void)share;
@@ -139,7 +142,10 @@ void glfwSwapInterval(int interval) { (void)interval; }
 void glfwSwapBuffers(GLFWwindow *w) { (void)w; craft_gl_present(); }
 int glfwWindowShouldClose(GLFWwindow *w) { return w ? w->close : 1; }
 void glfwSetInputMode(GLFWwindow *w, int mode_id, int value) {
-    if (w && mode_id == GLFW_CURSOR) w->cursor_mode = value;
+    if (w && mode_id == GLFW_CURSOR) {
+        w->cursor_mode = value;
+        liw_window_grab_mouse(value == GLFW_CURSOR_DISABLED ? 1 : 0);
+    }
 }
 int glfwGetInputMode(GLFWwindow *w, int mode_id) {
     return w && mode_id == GLFW_CURSOR ? w->cursor_mode : 0;
@@ -154,6 +160,12 @@ int glfwGetKey(GLFWwindow *w, int key) {
 void glfwGetCursorPos(GLFWwindow *w, double *x, double *y) {
     if (x) *x = w ? w->cursor_x : 0;
     if (y) *y = w ? w->cursor_y : 0;
+}
+void glfwSetCursorPos(GLFWwindow *w, double x, double y) {
+    if (w) {
+        w->cursor_x = x;
+        w->cursor_y = y;
+    }
 }
 const char *glfwGetClipboardString(GLFWwindow *w) { (void)w; return clipboard; }
 void glfwGetWindowSize(GLFWwindow *w, int *width, int *height) {

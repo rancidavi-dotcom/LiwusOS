@@ -207,6 +207,10 @@ void liw_window_finish(void) {
     (void)liw_syscall0(SYS_WINDOW_FINISH);
 }
 
+long liw_window_grab_mouse(int grab) {
+    return liw_syscall1(SYS_WINDOW_GRAB_MOUSE, grab);
+}
+
 long liw_sleep_ms(uint32_t ms) {
     return liw_syscall1(SYS_SLEEP_MS, (long)ms);
 }

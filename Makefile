@@ -45,10 +45,10 @@ TEST_ISO_IMAGE = liwusos-test.iso
 # files. User-editable examples opt into UID/GID 1000 on their tar entries.
 export TAR_OPTIONS := --owner=0 --group=0 --numeric-owner
 UPDATE_FEED_DIR ?= build/update-feed
-UPDATE_VERSION ?= 2.2.36
+UPDATE_VERSION ?= 2.2.37
 UPDATE_DATE ?= 2026-11-15
 UPDATE_BASE_URL ?= https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo
-UPDATE_NOTES ?= LiwusOS 2.2.36: Resolucao padrao 1366x768 nativa, barra de tarefas com largura responsiva sem ocultar apps (Midia/Settings), menu iniciar com rolagem completa, suporte ampliado a streams LiwusTube
+UPDATE_NOTES ?= LiwusOS 2.2.37: Suporte a resolucoes nativas de tela (Full HD 1920x1080 / 1600x900 / 1366x768) no HD/Live e travamento de mouse (pointer lock) no Craft para rotacao 360 livre da camera
 LINUX_STATIC_TEST_DEP =
 LINUX_STATIC_EXPECT ?= Hello from an unmodified static GNU/Linux ELF
 ifneq ($(strip $(LINUX_STATIC_ELF)),)
@@ -619,7 +619,7 @@ $(USER_EDITOR_ELF): $(OBJ_DIR)/programs/user_editor/main.o $(OBJ_DIR)/programs/u
 $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) $(NATIVE_UTIL_LXES) $(PKG_REPO_LXES) $(KILO_LXE) $(DOOM_LXE) $(SNES_LXE) $(CRAFT_LXE) $(TCC_LXE) $(C_DEMO_LXE) assets/readme.txt assets/doom1.wad
 	@mkdir -p repo build/hd_isodir/boot/grub
 	cp $(KERNEL_BIN) build/hd_isodir/boot/kernel.bin
-	printf 'set timeout=1\nset default=0\ninsmod all_video\ninsmod gfxterm\nset gfxmode=1366x768x32,1366x768,1360x768x32,1360x768,1280x720x32,1280x720,1920x1080x32,1920x1080,1024x768x32,1024x768,auto\nset gfxpayload=keep\nterminal_output gfxterm\nmenuentry "LiwusOS x86_64 (Instalado no HD)" {\n\tset gfxpayload=1366x768x32,1366x768,1360x768x32,1360x768,1280x720x32,1280x720,1920x1080x32,1920x1080,1024x768x32,1024x768,keep,auto\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\n' > build/hd_isodir/boot/grub/grub.cfg
+	printf 'set timeout=1\nset default=0\nif [ x$$grub_platform = xefi ]; then\n\tinsmod efi_gop\nelse\n\tinsmod vbe\n\tinsmod vga\nfi\ninsmod all_video\ninsmod font\ninsmod gfxterm\nset gfxmode=1920x1080x32,1920x1080,1600x900x32,1600x900,1366x768x32,1366x768,1360x768x32,1360x768,1280x720x32,1280x720,1024x768x32,1024x768,auto\nset gfxpayload=keep\nterminal_output gfxterm\nmenuentry "LiwusOS x86_64 (Instalado no HD)" {\n\tset gfxpayload=1920x1080x32,1920x1080,1600x900x32,1600x900,1366x768x32,1366x768,1360x768x32,1360x768,1280x720x32,1280x720,1024x768x32,1024x768,keep,auto\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\n' > build/hd_isodir/boot/grub/grub.cfg
 	$(GRUB) -d /usr/lib/grub/i386-pc --fonts="" --locales="" --themes="" -o build/hd_boot.img build/hd_isodir
 	tar -cf initrd.tar -C repo . --format=ustar
 	tar -rf initrd.tar --format=ustar --transform='s|hd_boot.img|boot/hd_boot.img|' -C build hd_boot.img

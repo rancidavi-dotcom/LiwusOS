@@ -1105,6 +1105,8 @@ static void win_close_event_cb(lv_event_t *e) {
         } else if (win == win_player) {
             hda_stream_stop();
         } else if (win == win_craft) {
+            extern int desktop_craft_set_mouse_grab(int);
+            desktop_craft_set_mouse_grab(0);
             craft_close_requested = true;
         }
     }
@@ -1493,6 +1495,37 @@ int desktop_craft_present(const uint32_t *pixels, uint32_t width, uint32_t heigh
     return 0;
 }
 
+static bool g_craft_mouse_grabbed = false;
+static int32_t g_craft_virtual_mx = 400;
+static int32_t g_craft_virtual_my = 280;
+
+bool desktop_is_craft_mouse_grabbed(void) {
+    return g_craft_mouse_grabbed;
+}
+
+int desktop_craft_set_mouse_grab(int grab) {
+    if (!win_craft || !craft_process_running) {
+        g_craft_mouse_grabbed = false;
+        if (g_cursor_obj) lv_obj_clear_flag(g_cursor_obj, LV_OBJ_FLAG_HIDDEN);
+        return 0;
+    }
+    if (grab) {
+        g_craft_mouse_grabbed = true;
+        if (g_cursor_obj) lv_obj_add_flag(g_cursor_obj, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_t *content = lv_win_get_content(win_craft);
+        lv_area_t area;
+        lv_obj_get_coords(content, &area);
+        int32_t cx = (area.x1 + area.x2) / 2;
+        int32_t cy = (area.y1 + area.y2) / 2;
+        extern void mouse_set_coords(int32_t x, int32_t y);
+        mouse_set_coords(cx, cy);
+    } else {
+        g_craft_mouse_grabbed = false;
+        if (g_cursor_obj) lv_obj_clear_flag(g_cursor_obj, LV_OBJ_FLAG_HIDDEN);
+    }
+    return 0;
+}
+
 int desktop_craft_window_state(uint32_t *width, uint32_t *height, int32_t *closed,
                               int32_t *mouse_x, int32_t *mouse_y,
                               int32_t *mouse_left, int32_t *mouse_right) {
@@ -1508,8 +1541,25 @@ int desktop_craft_window_state(uint32_t *width, uint32_t *height, int32_t *close
         struct { int32_t x, y, left, right; } mouse = {0};
         extern int sys_mouse_get(void *);
         if (sys_mouse_get(&mouse) == 0) { mx = mouse.x; my = mouse.y; left = mouse.left; right = mouse.right; }
-        if (mouse_x) *mouse_x = mx - area.x1;
-        if (mouse_y) *mouse_y = my - area.y1;
+        if (g_craft_mouse_grabbed) {
+            int32_t cx = (area.x1 + area.x2) / 2;
+            int32_t cy = (area.y1 + area.y2) / 2;
+            int32_t dx = mx - cx;
+            int32_t dy = my - cy;
+            g_craft_virtual_mx += dx;
+            g_craft_virtual_my += dy;
+            if (dx != 0 || dy != 0) {
+                extern void mouse_set_coords(int32_t x, int32_t y);
+                mouse_set_coords(cx, cy);
+            }
+            if (mouse_x) *mouse_x = g_craft_virtual_mx;
+            if (mouse_y) *mouse_y = g_craft_virtual_my;
+        } else {
+            g_craft_virtual_mx = mx - area.x1;
+            g_craft_virtual_my = my - area.y1;
+            if (mouse_x) *mouse_x = g_craft_virtual_mx;
+            if (mouse_y) *mouse_y = g_craft_virtual_my;
+        }
         if (mouse_left) *mouse_left = left;
         if (mouse_right) *mouse_right = right;
     }
@@ -1517,12 +1567,16 @@ int desktop_craft_window_state(uint32_t *width, uint32_t *height, int32_t *close
 }
 
 void desktop_craft_finished(void) {
+    desktop_craft_set_mouse_grab(0);
     craft_process_running = false;
     craft_close_requested = true;
     if (win_craft) lv_obj_add_flag(win_craft, LV_OBJ_FLAG_HIDDEN);
 }
 
 int desktop_craft_open(void) {
+    g_craft_mouse_grabbed = false;
+    g_craft_virtual_mx = 400;
+    g_craft_virtual_my = 280;
     if (craft_process_running && win_craft) {
         craft_close_requested = false;
         lv_obj_clear_flag(win_craft, LV_OBJ_FLAG_HIDDEN);
@@ -6307,13 +6361,15 @@ void desktop_init(void) {
     lvgl_port_init();
     html_fonts_init();
 
-    /* Prioriza a resolucao padrao 1366x768 solicitada para o sistema */
+    /* Eleva a resolucao caso o sistema tenha inicializado em modo de baixa resolucao */
     if (vga_display_backend_ready()) {
         uint16_t cur_w = (uint16_t)desktop_screen_w();
         uint16_t cur_h = (uint16_t)desktop_screen_h();
-        if (cur_w != 1366 || cur_h != 768) {
-            if (lvgl_port_set_resolution(1366, 768) != 0) {
-                lvgl_port_set_resolution(1360, 768);
+        if (cur_w < 1024 || cur_h < 720) {
+            if (lvgl_port_set_resolution(1920, 1080) != 0) {
+                if (lvgl_port_set_resolution(1366, 768) != 0) {
+                    lvgl_port_set_resolution(1360, 768);
+                }
             }
         }
     }

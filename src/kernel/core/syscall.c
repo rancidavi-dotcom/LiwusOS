@@ -2763,6 +2763,11 @@ void syscall_handler(registers_t *regs) {
       regs->rax = 0;
       break;
     }
+    case 53: { /* SYS_WINDOW_GRAB_MOUSE */
+      extern int desktop_craft_set_mouse_grab(int grab);
+      regs->rax = desktop_craft_set_mouse_grab((int)regs->rdi) == 0 ? 0ULL : (uint64_t)-EINVAL;
+      break;
+    }
   }
 }
 

@@ -79,6 +79,7 @@ typedef struct {
 } liw_window_state_t;
 long liw_window_poll(liw_window_state_t *state);
 void liw_window_finish(void);
+long liw_window_grab_mouse(int grab);
 long liw_sleep_ms(uint32_t ms);
 
 typedef struct {
