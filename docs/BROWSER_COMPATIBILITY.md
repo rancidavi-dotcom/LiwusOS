@@ -85,18 +85,32 @@ execute; their presence does not imply standards-complete browser behavior:
     typed-array views within the runtime memory limit.
   - `Element.prototype.style`: Dynamic `CSSStyleDeclaration` proxy mapping camelCase and kebab-case style properties and `cssText` directly to and from element inline style attributes.
   - `Element.prototype.dataset`: `DOMStringMap` proxy synchronizing camelCase properties with `data-*` attributes.
+  - Traversal and mutation helpers: `matches()`, `closest()`, `parentElement`,
+    `children`, `childElementCount`, element-sibling accessors, `className`,
+    `getAttributeNames()`, `toggleAttribute()`, `replaceChildren()`,
+    `before()`, `after()`, `remove()`, and `innerText`.
   - Geometry & Interaction: `getBoundingClientRect()`, `getClientRects()`, `scrollIntoView()`, `focus()`, `blur()`, `click()`.
   - DOM Tree Mutation: `insertAdjacentHTML()`, `insertAdjacentElement()`, `append()`, `prepend()`.
   - Document & View: `window.getComputedStyle()`, `window.matchMedia()`, `document.cookie`, `document.defaultView`, `document.readyState`, `document.compatMode`, `document.doctype`, `document.scripts`, `document.getElementsByName()`, `document.createRange()`, `document.createElementNS()`.
+  - Media and fonts: bounded `document.fonts` readiness/load checks plus
+    `Image()` and `Audio()` constructors for feature-detection and simple
+    resource code paths.
   - Viewport & History: `window.screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `devicePixelRatio`, `scrollX`, `scrollY`, `scrollTo`, `scrollBy`, `history` (`pushState`, `replaceState`, `back`, `forward`, `go`, `state`, `length`).
-  - Animation: `requestAnimationFrame`, `cancelAnimationFrame`.
+  - Animation: `requestAnimationFrame`, `cancelAnimationFrame`, and a bounded
+    `Element.animate()` object for code that expects the Web Animations surface.
 - **Web API shims & networking**:
   - `fetch(input, init)` returning real Promises, with support for `Headers`, `Request`, and `Response`.
+    The native bridge now propagates the received `Content-Type` into
+    `Response.headers.get('content-type')` (whitespace is normalized for the
+    bounded IPC record). Other response headers are still intentionally not
+    exposed.
   - `XMLHttpRequest`: partial multi-state polyfill (`UNSENT`, `OPENED`, `HEADERS_RECEIVED`, `LOADING`, `DONE`) backed by `fetch`.
   - Storage: `window.localStorage` and `window.sessionStorage` with standard Web Storage API and dynamic property access.
   - Web Crypto: `crypto.getRandomValues(typedArray)`, `crypto.randomUUID()`, and `crypto.subtle.digest()`.
   - Encoding & Codecs: `btoa()`, `atob()`, `TextEncoder`, `TextDecoder`.
-  - URLs: Standards-compliant `URL` and `URLSearchParams` parser and query serializer.
+  - URLs: `URL` and `URLSearchParams` parser/query serializer with root,
+    directory, parent-directory, query-only, hash-only, and protocol-relative
+    resolution for bounded page code.
   - Observers: `MutationObserver` now records bounded `childList`, attribute and
     character-data mutations with subtree/attribute filters and microtask
     delivery; `ResizeObserver` and `IntersectionObserver` provide bounded
@@ -105,7 +119,16 @@ execute; their presence does not imply standards-complete browser behavior:
     `cancelIdleCallback()`, `AbortSignal.any()`, `AbortSignal.throwIfAborted()`,
     and `navigator.sendBeacon()` (using the existing fetch bridge) are exposed.
     These APIs do not add a service-worker process or background network stack.
+  - Form and window compatibility: `submit()`, `requestSubmit()`,
+    `checkValidity()`, `reportValidity()`, `Promise.withResolvers()`,
+    `window.open()`, and `getSelection()` are available as bounded shims.
+  - `WebSocket`, `EventSource`, and `BroadcastChannel` are exposed so feature
+    detection and teardown paths do not crash. WebSocket/EventSource transport
+    is intentionally not implemented yet; connections close with an explicit
+    error instead of pretending to be connected.
   - Performance: `performance.now()`, `timeOrigin`, `mark()`, `measure()`.
+  - Locale helpers: bounded fallbacks for `Intl.PluralRules`, `Intl.ListFormat`,
+    and `Intl.Collator` when the QuickJS build does not provide them.
 - Supports inline scripts and bounded external classic/module scripts. External
   module scripts retain their absolute URL and can resolve a bounded static
   import graph over the browser worker bridge. Import maps support the first
@@ -482,11 +505,14 @@ increment alone is not a security sign-off for logins or sensitive sessions.
    during initial page processing/rendering remain synchronous. Persistent
    QuickJS pages can issue `fetch(url)` GETs; the kernel worker resolves
    absolute, root-relative, and directory-relative URLs and returns a response
-   with `status`, `ok`, `text()`, and `json()`. At most eight requests may be
-   pending, responses are limited to 1 MiB, and a page-generation ID discards
-   late replies after navigation. This is not the full Fetch API: request
-   options, POST, headers, streaming, XHR, CORS, cookies, abort signals, and
-   service workers are absent. Script, CSS, and image resource fetches during
+   with `status`, `ok`, `url`, `headers`, `text()`, `json()`, `blob()`,
+   `arrayBuffer()`, `formData()`, `clone()`, and body-consumption state. At most
+   32 requests may be pending, responses are limited to 1 MiB in the kernel
+   worker (QuickJS can read up to 4 MiB), and a page-generation ID discards
+   late replies after navigation. This is not the full Fetch API: the native
+   bridge still performs GET-like URL-only requests; request headers/body,
+   POST, streaming, response headers other than `Content-Type`, CORS,
+   cookie persistence, and service workers are absent. Script, CSS, and image resource fetches during
    initial processing/rendering still run synchronously. The browser also lacks
    event-cancellation parity, full keyboard event objects, and input-focus
    restoration after a page snapshot. This milestone is a runtime foundation,
@@ -512,6 +538,24 @@ cases per configuration). A separate live QEMU navigation fetched and
 partially rendered `https://github.com/`; this checks one current site response
 and does not establish broad site compatibility. The new browser paths have
 not been validated on physical hardware.
+
+### JavaScript compatibility checkpoint (2026-11-14)
+
+The ring-3 QuickJS fixture now exercises DOM traversal (`matches`, `closest`,
+element siblings and children), DOM convenience mutations, form submission and
+validity shims, Web Animations surface objects, `Promise.withResolvers`, and
+window selection/open helpers, media/font globals, and relative URL resolution
+in addition to the existing parser, history, observer, fetch, URL, storage,
+and abort coverage. `make ring3-test` passed
+after this checkpoint with 51 unique kernel cases and 23 ring-3 cases. These
+APIs improve framework survivability and page scripts; they do not claim a
+standards-complete browser or real WebSocket transport.
+
+The same checkpoint also validates that a native fetch response preserves its
+URL and status and exposes the server's `Content-Type` through the Response
+Headers object. The bridge remains URL-only and GET-like; request headers,
+request bodies, response streaming, cookies, and non-GET transport are not
+implemented by this change.
 
 ## GitHub live-page check and memory findings (2026-11-14)
 

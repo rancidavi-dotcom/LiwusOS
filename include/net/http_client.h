@@ -8,6 +8,12 @@
 typedef void (*http_output_fn)(const char *msg, void *user_data);
 typedef void (*http_progress_fn)(size_t received, size_t total, void *user_data);
 
+/* Metadados limitados que podem ser expostos ao consumidor de uma resposta.
+ * O cliente continua sendo deliberadamente GET-only neste milestone. */
+typedef struct {
+    char content_type[128];
+} http_response_meta_t;
+
 /* Baixa um arquivo via HTTP ou HTTPS (GET) e grava diretamente no disco SDFS.
  * Suporta formatos de URL:
  *   http://192.168.0.21:8000/arquivo.txt
@@ -40,5 +46,15 @@ int http_get_mem_progress_limit(const char *url, uint8_t **out_body,
                                 http_output_fn output_cb, void *user_data,
                                 http_progress_fn progress_cb,
                                 void *progress_data, size_t max_body_size);
+
+/* Variante que retorna os metadados básicos da resposta sem alterar a API
+ * existente usada pelo kernel e pelos aplicativos nativos. */
+int http_get_mem_progress_limit_meta(const char *url, uint8_t **out_body,
+                                     size_t *out_size, int *out_status,
+                                     http_output_fn output_cb, void *user_data,
+                                     http_progress_fn progress_cb,
+                                     void *progress_data,
+                                     http_response_meta_t *meta,
+                                     size_t max_body_size);
 
 #endif /* NET_HTTP_CLIENT_H */

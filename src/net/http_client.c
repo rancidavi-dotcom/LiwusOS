@@ -35,6 +35,7 @@ typedef struct {
     size_t body_limit;
     uint32_t hdr_window;
     char location[HTTP_URL_MAX];
+    char content_type[128];
     uint8_t *body_buf;
     size_t body_size;
     size_t body_capacity;
@@ -97,7 +98,9 @@ static bool extract_header_value(const char *headers, const char *name, char *ou
 
 static void parse_http_headers(const char *scratch, size_t scratch_len,
                                int *out_status, int *out_content_len,
-                               char *out_location, size_t loc_sz, bool *out_chunked) {
+                               char *out_location, size_t loc_sz,
+                               bool *out_chunked, char *out_content_type,
+                               size_t content_type_sz) {
     if (out_status) {
         *out_status = 0;
         const char *status_pos = str_casestr_local(scratch, "HTTP/1.");
@@ -113,6 +116,10 @@ static void parse_http_headers(const char *scratch, size_t scratch_len,
     }
     if (out_location && loc_sz > 0) {
         extract_header_value(scratch, "Location", out_location, loc_sz);
+    }
+    if (out_content_type && content_type_sz > 0) {
+        extract_header_value(scratch, "Content-Type", out_content_type,
+                             content_type_sz);
     }
     if (out_chunked) {
         char te_buf[64];
@@ -172,13 +179,16 @@ static void resolve_redirect_url(bool is_tls, const char *host, uint16_t port,
 
 static void parse_http_headers(const char *scratch, size_t scratch_len,
                                int *out_status, int *out_content_len,
-                               char *out_location, size_t loc_sz, bool *out_chunked);
+                               char *out_location, size_t loc_sz,
+                               bool *out_chunked, char *out_content_type,
+                               size_t content_type_sz);
 
 /* Acumula cabecalhos HTTP e detecta o delimitador \r\n\r\n mesmo que exceda HTTP_SCRATCH_SIZE */
 static bool feed_header_byte(uint8_t b, char *scratch, size_t *scratch_len,
                              uint32_t *hdr_window, int *status_code,
                              int *content_length, char *location, size_t loc_sz,
-                             bool *is_chunked) {
+                             bool *is_chunked, char *content_type,
+                             size_t content_type_sz) {
     if (*scratch_len < (HTTP_SCRATCH_SIZE - 1)) {
         scratch[(*scratch_len)++] = (char)b;
         scratch[*scratch_len] = '\0';
@@ -187,7 +197,8 @@ static bool feed_header_byte(uint8_t b, char *scratch, size_t *scratch_len,
     if (*hdr_window == 0x0D0A0D0AUL) {
         parse_http_headers(scratch, *scratch_len,
                            status_code, content_length,
-                           location, loc_sz, is_chunked);
+                           location, loc_sz, is_chunked,
+                           content_type, content_type_sz);
         return true;
     }
     return false;
@@ -222,7 +233,9 @@ static err_t http_recv_cb(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t 
             if (feed_header_byte(b, ctx->scratch, &ctx->scratch_len,
                                  &ctx->hdr_window, &ctx->status_code,
                                  &ctx->content_length, ctx->location,
-                                 sizeof(ctx->location), &ctx->is_chunked)) {
+                                 sizeof(ctx->location), &ctx->is_chunked,
+                                 ctx->content_type,
+                                 sizeof(ctx->content_type))) {
                 ctx->headers_done = true;
                 break;
             }
@@ -395,6 +408,7 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
                                 int *out_status, const char *dest_path,
                                 http_output_fn output_cb, void *user_data,
                                 http_progress_fn progress_cb, void *progress_data,
+                                http_response_meta_t *meta,
                                 size_t body_limit) {
     if (!url || !net_is_active()) {
         http_log(output_cb, user_data, "Rede inativa ou URL vazia");
@@ -417,6 +431,7 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
     uint8_t *result_body = NULL;
     size_t result_size = 0;
     int status_code = 0;
+    char response_content_type[128] = "";
 
     for (int redirect_hop = 0; redirect_hop < 4; redirect_hop++) {
         /* 1. Parse robusto da URL (suporta https://, http://, htts://, htps://, esquemas tolerantes e urls sem esquema) */
@@ -614,6 +629,7 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
             uint32_t hdr_window = 0;
             bool headers_done = false;
             int content_length = -1;
+            char content_type[128] = "";
 
             while (1) {
                 int rlen = tls_read(tls, chunk, HTTP_TLS_CHUNK_SIZE, 8000);
@@ -626,7 +642,9 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
                         if (feed_header_byte(b, scratch, &scratch_len,
                                              &hdr_window, &status_code,
                                              &content_length, location,
-                                             sizeof(location), &is_chunked)) {
+                                             sizeof(location), &is_chunked,
+                                             content_type,
+                                             sizeof(content_type))) {
                             headers_done = true;
                             break;
                         }
@@ -692,6 +710,10 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
             kfree(scratch);
             kfree(chunk);
             tls_close(tls);
+
+            strncpy(response_content_type, content_type,
+                    sizeof(response_content_type) - 1);
+            response_content_type[sizeof(response_content_type) - 1] = '\0';
 
             if (incomplete_body) {
                 serial_printf("[HTTP] Resposta incompleta: recebido=%u esperado=%u read_diag=0x%x\n",
@@ -839,6 +861,9 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
             is_chunked = ctx.is_chunked;
             strncpy(location, ctx.location, sizeof(location) - 1);
             location[sizeof(location) - 1] = '\0';
+            strncpy(response_content_type, ctx.content_type,
+                    sizeof(response_content_type) - 1);
+            response_content_type[sizeof(response_content_type) - 1] = '\0';
             kfree(ctx.scratch);
 
             if (result_body && result_size > 0 && is_chunked) {
@@ -877,6 +902,12 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
 
     if (out_status) {
         *out_status = status_code;
+    }
+    if (meta) {
+        memset(meta, 0, sizeof(*meta));
+        strncpy(meta->content_type, response_content_type,
+                sizeof(meta->content_type) - 1);
+        meta->content_type[sizeof(meta->content_type) - 1] = '\0';
     }
 
     if (status_code != 200 && status_code != 0) {
@@ -949,12 +980,15 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
 
 int http_download_file(const char *url, const char *dest_path,
                        http_output_fn output_cb, void *user_data) {
-    return http_perform_request(url, NULL, NULL, NULL, dest_path ? dest_path : "", output_cb, user_data, NULL, NULL, 0);
+    return http_perform_request(url, NULL, NULL, NULL,
+                                dest_path ? dest_path : "", output_cb,
+                                user_data, NULL, NULL, NULL, 0);
 }
 
 int http_get_mem(const char *url, uint8_t **out_body, size_t *out_size, int *out_status,
                  http_output_fn output_cb, void *user_data) {
-    return http_perform_request(url, out_body, out_size, out_status, NULL, output_cb, user_data, NULL, NULL, 0);
+    return http_perform_request(url, out_body, out_size, out_status, NULL,
+                                output_cb, user_data, NULL, NULL, NULL, 0);
 }
 
 int http_get_mem_progress(const char *url, uint8_t **out_body, size_t *out_size,
@@ -962,7 +996,8 @@ int http_get_mem_progress(const char *url, uint8_t **out_body, size_t *out_size,
                           void *user_data, http_progress_fn progress_cb,
                           void *progress_data) {
     return http_perform_request(url, out_body, out_size, out_status, NULL,
-                                output_cb, user_data, progress_cb, progress_data, 0);
+                                output_cb, user_data, progress_cb, progress_data,
+                                NULL, 0);
 }
 
 int http_get_mem_progress_limit(const char *url, uint8_t **out_body,
@@ -973,5 +1008,18 @@ int http_get_mem_progress_limit(const char *url, uint8_t **out_body,
     if (!max_body_size) return -1;
     return http_perform_request(url, out_body, out_size, out_status, NULL,
                                 output_cb, user_data, progress_cb, progress_data,
-                                max_body_size);
+                                NULL, max_body_size);
+}
+
+int http_get_mem_progress_limit_meta(const char *url, uint8_t **out_body,
+                                     size_t *out_size, int *out_status,
+                                     http_output_fn output_cb, void *user_data,
+                                     http_progress_fn progress_cb,
+                                     void *progress_data,
+                                     http_response_meta_t *meta,
+                                     size_t max_body_size) {
+    if (!max_body_size) return -1;
+    return http_perform_request(url, out_body, out_size, out_status, NULL,
+                                output_cb, user_data, progress_cb, progress_data,
+                                meta, max_body_size);
 }

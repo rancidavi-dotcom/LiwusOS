@@ -5,7 +5,7 @@
 #include <liwus/string.h>
 #include <liwus/syscall.h>
 
-#define OUTPUT_LIMIT 8192U
+#define OUTPUT_LIMIT 16384U
 
 static int contains(const char *text, size_t length, const char *needle) {
     size_t needle_length = strlen(needle);
@@ -62,7 +62,9 @@ int main(void) {
         !contains(output, used, "mutated &lt;&amp;</p>") ||
         !contains(output, used,
                   "id=\"advanced\">DOM_ADVANCED_PASS|WEB_API_PASS|MODULE_PASS</p>") ||
-        !contains(output, used, "old &amp; text")) return 13;
+        !contains(output, used, "old &amp; text")) {
+        return 13;
+    }
 
     static const char pass[] = "QJS_PIPE_DOM_PASS\n";
     if (liw_write_all(1, pass, sizeof(pass) - 1) < 0) return 14;

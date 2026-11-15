@@ -209,9 +209,9 @@ static int qjs_install_fetch(JSContext *ctx) {
         return -1;
     }
     static const char response_factory[] =
-        "globalThis.__liwusMakeResponse=function(status,body){"
-        "if(globalThis.Response)return new globalThis.Response(body,{status:status});"
-        "return {status:status,ok:status>=200&&status<300,body:body,"
+        "globalThis.__liwusMakeResponse=function(status,body,url,headers){"
+        "if(globalThis.Response)return new globalThis.Response(body,{status:status,url:url||'',headers:headers||{}});"
+        "return {status:status,ok:status>=200&&status<300,url:url||'',body:body,headers:new Headers(headers||{}),"
         "text:function(){return Promise.resolve(body)},"
         "json:function(){return Promise.resolve(JSON.parse(body))}}};";
     JSValue result = JS_Eval(ctx, response_factory,
@@ -503,7 +503,10 @@ static const char qjs_web_env_bootstrap[] =
     "      },\n"
     "      configurable: true\n"
     "    });\n"
+    "    if (!document.fonts) document.fonts = { status: 'loaded', ready: Promise.resolve(), onloading: null, onloadingdone: null, onloadingerror: null, check: function() { return true; }, load: function() { return Promise.resolve([]); }, addEventListener: function() {}, removeEventListener: function() {} };\n"
     "  }\n"
+    "  if (!g.Image) g.Image = function(width, height) { var image = document.createElement('img'); if (width !== undefined) image.width = width; if (height !== undefined) image.height = height; return image; };\n"
+    "  if (!g.Audio) g.Audio = function(src) { var audio = document.createElement('audio'); if (src !== undefined) audio.src = src; audio.play = function() { return Promise.resolve(); }; audio.pause = function() {}; return audio; };\n"
     "\n"
     "  class HTMLElement {\n"
     "    constructor() {\n"
@@ -637,6 +640,61 @@ static const char qjs_web_env_bootstrap[] =
     "        enumerable: true\n"
     "      });\n"
     "    }\n"
+    "\n"
+    "    /* High-use DOM traversal and mutation APIs used by modern component code. */\n"
+    "    if (!proto.matches) {\n"
+    "      proto.matches = function(selector) {\n"
+    "        selector = String(selector);\n"
+    "        var root = this.parentNode || document;\n"
+    "        if (!root || !root.querySelectorAll) return false;\n"
+    "        var list = root.querySelectorAll(selector);\n"
+    "        for (var i = 0; i < list.length; i++) if (list[i] === this) return true;\n"
+    "        return false;\n"
+    "      };\n"
+    "    }\n"
+    "    if (!proto.closest) {\n"
+    "      proto.closest = function(selector) {\n"
+    "        var node = this;\n"
+    "        while (node) {\n"
+    "          if (node.matches && node.matches(selector)) return node;\n"
+    "          node = node.parentElement || node.parentNode;\n"
+    "        }\n"
+    "        return null;\n"
+    "      };\n"
+    "    }\n"
+    "    if (!Object.getOwnPropertyDescriptor(proto, 'parentElement')) {\n"
+    "      Object.defineProperty(proto, 'parentElement', { get: function() { var p = this.parentNode; return p && p.nodeType === 1 ? p : null; }, configurable: true });\n"
+    "    }\n"
+    "    if (!Object.getOwnPropertyDescriptor(proto, 'children')) {\n"
+    "      Object.defineProperty(proto, 'children', {\n"
+    "        get: function() { var out = [], nodes = this.childNodes || []; for (var i = 0; i < nodes.length; i++) if (nodes[i] && nodes[i].nodeType === 1) out.push(nodes[i]); return out; },\n"
+    "        configurable: true\n"
+    "      });\n"
+    "    }\n"
+    "    if (!Object.getOwnPropertyDescriptor(proto, 'childElementCount')) Object.defineProperty(proto, 'childElementCount', { get: function() { return this.children.length; }, configurable: true });\n"
+    "    if (!Object.getOwnPropertyDescriptor(proto, 'firstElementChild')) Object.defineProperty(proto, 'firstElementChild', { get: function() { var c = this.children; return c.length ? c[0] : null; }, configurable: true });\n"
+    "    if (!Object.getOwnPropertyDescriptor(proto, 'lastElementChild')) Object.defineProperty(proto, 'lastElementChild', { get: function() { var c = this.children; return c.length ? c[c.length - 1] : null; }, configurable: true });\n"
+    "    if (!Object.getOwnPropertyDescriptor(proto, 'nextElementSibling')) Object.defineProperty(proto, 'nextElementSibling', { get: function() { var n = this.nextSibling; while (n && n.nodeType !== 1) n = n.nextSibling; return n || null; }, configurable: true });\n"
+    "    if (!Object.getOwnPropertyDescriptor(proto, 'previousElementSibling')) Object.defineProperty(proto, 'previousElementSibling', { get: function() { var n = this.previousSibling; while (n && n.nodeType !== 1) n = n.previousSibling; return n || null; }, configurable: true });\n"
+    "    if (!Object.getOwnPropertyDescriptor(proto, 'className')) Object.defineProperty(proto, 'className', { get: function() { return this.getAttribute('class') || ''; }, set: function(v) { this.setAttribute('class', String(v)); }, configurable: true });\n"
+    "    if (!proto.getAttributeNames) proto.getAttributeNames = function() { var names = [], attrs = this.attributes || []; for (var i = 0; i < attrs.length; i++) if (attrs[i] && attrs[i].name) names.push(String(attrs[i].name)); return names; };\n"
+    "    if (!proto.toggleAttribute) proto.toggleAttribute = function(name, force) { name = String(name); var present = this.hasAttribute(name); var next = force === undefined ? !present : Boolean(force); if (next) this.setAttribute(name, ''); else this.removeAttribute(name); return next; };\n"
+    "    if (!proto.replaceChildren) proto.replaceChildren = function() { while (this.firstChild) this.removeChild(this.firstChild); for (var i = 0; i < arguments.length; i++) { var child = arguments[i]; if (typeof child === 'string') child = document.createTextNode(child); if (child) this.appendChild(child); } };\n"
+    "    if (!proto.remove) proto.remove = function() { if (this.parentNode) this.parentNode.removeChild(this); };\n"
+    "    if (!proto.before) proto.before = function() { if (!this.parentNode) return; for (var i = 0; i < arguments.length; i++) { var n = arguments[i]; if (typeof n === 'string') n = document.createTextNode(n); if (n) this.parentNode.insertBefore(n, this); } };\n"
+    "    if (!proto.after) proto.after = function() { if (!this.parentNode) return; var ref = this.nextSibling; for (var i = 0; i < arguments.length; i++) { var n = arguments[i]; if (typeof n === 'string') n = document.createTextNode(n); if (n) this.parentNode.insertBefore(n, ref); } };\n"
+    "    if (!Object.getOwnPropertyDescriptor(proto, 'innerText')) Object.defineProperty(proto, 'innerText', { get: function() { return this.textContent || ''; }, set: function(v) { this.textContent = String(v); }, configurable: true });\n"
+    "    if (!proto.submit) proto.submit = function() { if (String(this.tagName || '').toUpperCase() !== 'FORM') return; this.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); };\n"
+    "    if (!proto.requestSubmit) proto.requestSubmit = function(submitter) { if (submitter && submitter.form && submitter.form !== this) throw new DOMException('Not a form control', 'NotFoundError'); this.submit(); };\n"
+    "    if (!proto.checkValidity) proto.checkValidity = function() { return true; };\n"
+    "    if (!proto.reportValidity) proto.reportValidity = function() { return this.checkValidity(); };\n"
+    "    if (!proto.animate) proto.animate = function(keyframes, options) {\n"
+    "      var animation = { id: '', effect: { target: this, getKeyframes: function() { return keyframes || []; } }, playState: 'finished', currentTime: 0, pending: false, onfinish: null, oncancel: null,\n"
+    "        play: function() { this.playState = 'running'; this.playState = 'finished'; if (this.onfinish) this.onfinish(new Event('finish')); },\n"
+    "        pause: function() { this.playState = 'paused'; }, cancel: function() { this.playState = 'idle'; if (this.oncancel) this.oncancel(new Event('cancel')); },\n"
+    "        finish: function() { this.playState = 'finished'; if (this.onfinish) this.onfinish(new Event('finish')); }, reverse: function() {}, commitStyles: function() {}, persist: function() {}, finished: Promise.resolve(), ready: Promise.resolve() };\n"
+    "      if (options && options.autoplay === false) animation.playState = 'idle'; else animation.play(); return animation;\n"
+    "    };\n"
     "\n"
     "    var origCLDesc = Object.getOwnPropertyDescriptor(proto, 'classList');\n"
     "    if (origCLDesc && origCLDesc.get) {\n"
@@ -835,6 +893,11 @@ static const char qjs_web_env_bootstrap[] =
     "      proto.replaceChild = function(child, old) { var r = __liwusReplaceChild.call(this, child, old); __liwusMutationNotify(this, { type: 'childList', target: this, addedNodes: [child], removedNodes: [old], previousSibling: null, nextSibling: null }); return r; };\n"
     "      proto.setAttribute = function(name, value) { var old = this.getAttribute(name); var r = __liwusSetAttribute.call(this, name, value); __liwusMutationNotify(this, { type: 'attributes', target: this, attributeName: String(name), oldValue: old }); return r; };\n"
     "      proto.removeAttribute = function(name) { var old = this.getAttribute(name); var r = __liwusRemoveAttribute.call(this, name); __liwusMutationNotify(this, { type: 'attributes', target: this, attributeName: String(name), oldValue: old }); return r; };\n"
+    "      var __liwusTextDesc = Object.getOwnPropertyDescriptor(proto, 'textContent');\n"
+    "      if (__liwusTextDesc && __liwusTextDesc.set && !proto.__liwusTextWrapped) {\n"
+    "        proto.__liwusTextWrapped = true;\n"
+    "        Object.defineProperty(proto, 'textContent', { configurable: true, get: __liwusTextDesc.get, set: function(value) { var old = __liwusTextDesc.get ? __liwusTextDesc.get.call(this) : ''; __liwusTextDesc.set.call(this, value); __liwusMutationNotify(this, { type: 'characterData', target: this, oldValue: old }); } });\n"
+    "      }\n"
     "    }\n"
     "  }\n"
     "\n"
@@ -969,6 +1032,7 @@ static const char qjs_web_env_bootstrap[] =
     "\n"
     "  g.requestAnimationFrame = function(cb) { return setTimeout(function() { cb(Date.now()); }, 16); };\n"
     "  g.cancelAnimationFrame = function(id) { clearTimeout(id); };\n"
+    "  if (typeof Promise.withResolvers !== 'function') Promise.withResolvers = function() { var resolve, reject; var promise = new Promise(function(r, j) { resolve = r; reject = j; }); return { promise: promise, resolve: resolve, reject: reject }; };\n"
     "  if (!g.requestIdleCallback) {\n"
     "    g.requestIdleCallback = function(cb) {\n"
     "      return setTimeout(function() {\n"
@@ -986,6 +1050,8 @@ static const char qjs_web_env_bootstrap[] =
     "  g.alert = function(m) { console.log('[Alert] ' + m); };\n"
     "  g.confirm = function(m) { console.log('[Confirm] ' + m); return true; };\n"
     "  g.prompt = function(m, d) { return d || ''; };\n"
+    "  if (!g.open) g.open = function(url, target, features) { var w = { closed: false, location: { href: String(url || 'about:blank') }, close: function() { this.closed = true; }, focus: function() {}, blur: function() {} }; return w; };\n"
+    "  if (!g.getSelection) g.getSelection = function() { return { anchorNode: null, focusNode: null, isCollapsed: true, rangeCount: 0, toString: function() { return ''; }, removeAllRanges: function() {}, addRange: function() {} }; };\n"
     "\n"
     "  class Storage {\n"
     "    constructor() { this._d = Object.create(null); }\n"
@@ -1172,14 +1238,28 @@ static const char qjs_web_env_bootstrap[] =
     "      var full = String(u);\n"
     "      if (b && full.indexOf('://') < 0) {\n"
     "        var bs = String(b);\n"
-    "        if (full.charAt(0) === '/') {\n"
-    "          var sIdx = bs.indexOf('://');\n"
-    "          var hSlash = sIdx >= 0 ? bs.indexOf('/', sIdx + 3) : -1;\n"
-    "          full = (hSlash >= 0 ? bs.substring(0, hSlash) : bs) + full;\n"
+    "        var bEnd = bs.search(/[?#]/); if (bEnd >= 0) bs = bs.substring(0, bEnd);\n"
+    "        var schemeEnd = bs.indexOf('://');\n"
+    "        var baseOrigin = schemeEnd >= 0 ? bs.substring(0, bs.indexOf('/', schemeEnd + 3) >= 0 ? bs.indexOf('/', schemeEnd + 3) : bs.length) : '';\n"
+    "        if (full.indexOf('//') === 0) {\n"
+    "          full = (schemeEnd >= 0 ? bs.substring(0, schemeEnd + 1) : 'https:') + full;\n"
+    "        } else if (full.charAt(0) === '?') {\n"
+    "          full = bs + full;\n"
+    "        } else if (full.charAt(0) === '#') {\n"
+    "          full = bs + full;\n"
+    "        } else if (full.charAt(0) === '/') {\n"
+    "          full = baseOrigin + full;\n"
     "        } else {\n"
     "          var lSlash = bs.lastIndexOf('/');\n"
     "          full = (lSlash >= 0 ? bs.substring(0, lSlash + 1) : (bs + '/')) + full;\n"
     "        }\n"
+    "      }\n"
+    "      var urlPrefix = full.match(/^([a-zA-Z][a-zA-Z0-9+.-]*:\\/\\/[^/]*)(.*)$/);\n"
+    "      if (urlPrefix && urlPrefix[2]) {\n"
+    "        var pathPart = urlPrefix[2], suffixAt = pathPart.search(/[?#]/), suffix = suffixAt >= 0 ? pathPart.substring(suffixAt) : '';\n"
+    "        var pathOnly = suffixAt >= 0 ? pathPart.substring(0, suffixAt) : pathPart, parts = pathOnly.split('/'), stack = [];\n"
+    "        for (var pi = 0; pi < parts.length; pi++) { var part = parts[pi]; if (!part || part === '.') continue; if (part === '..') { if (stack.length) stack.pop(); } else stack.push(part); }\n"
+    "        full = urlPrefix[1] + '/' + stack.join('/') + suffix;\n"
     "      }\n"
     "      this._parse(full);\n"
     "    }\n"
@@ -1255,11 +1335,12 @@ static const char qjs_web_env_bootstrap[] =
     "      this.type = init.type || 'basic';\n"
     "      this.bodyUsed = false;\n"
     "    }\n"
-    "    text() { this.bodyUsed = true; return Promise.resolve(this._b); }\n"
-    "    json() { this.bodyUsed = true; return Promise.resolve(JSON.parse(this._b)); }\n"
-    "    blob() { this.bodyUsed = true; return Promise.resolve(new Blob([this._b], { type: this.headers.get('content-type') || 'text/plain' })); }\n"
-    "    arrayBuffer() { this.bodyUsed = true; return Promise.resolve((new TextEncoder()).encode(this._b).buffer); }\n"
-    "    formData() { this.bodyUsed = true; return Promise.resolve(new FormData()); }\n"
+    "    _consume() { if (this.bodyUsed) return Promise.reject(new TypeError('Body has already been consumed')); this.bodyUsed = true; return Promise.resolve(this._b); }\n"
+    "    text() { return this._consume(); }\n"
+    "    json() { var self = this; return this._consume().then(function(body) { return JSON.parse(body); }); }\n"
+    "    blob() { var self = this; return this._consume().then(function(body) { return new Blob([body], { type: self.headers.get('content-type') || 'text/plain' }); }); }\n"
+    "    arrayBuffer() { var self = this; return this._consume().then(function(body) { return (new TextEncoder()).encode(body).buffer; }); }\n"
+    "    formData() { return this._consume().then(function() { return new FormData(); }); }\n"
     "    clone() { if (this.bodyUsed) throw new TypeError('Body has already been consumed'); return new Response(this._b, { status: this.status, statusText: this.statusText, headers: this.headers, url: this.url, redirected: this.redirected, type: this.type }); }\n"
     "  }\n"
     "  g.Response = Response;\n"
@@ -1279,6 +1360,12 @@ static const char qjs_web_env_bootstrap[] =
     "      this.signal = init.signal || (input.signal || new AbortSignal());\n"
     "      this.bodyUsed = false;\n"
     "    }\n"
+    "    _consume() { if (this.bodyUsed) return Promise.reject(new TypeError('Body has already been consumed')); this.bodyUsed = true; return Promise.resolve(this.body == null ? '' : String(this.body)); }\n"
+    "    text() { return this._consume(); }\n"
+    "    json() { return this._consume().then(function(body) { return JSON.parse(body); }); }\n"
+    "    arrayBuffer() { return this._consume().then(function(body) { return (new TextEncoder()).encode(body).buffer; }); }\n"
+    "    blob() { return this._consume().then(function(body) { return new Blob([body]); }); }\n"
+    "    formData() { return this._consume().then(function() { return new FormData(); }); }\n"
     "    clone() { if (this.bodyUsed) throw new TypeError('Body has already been consumed'); return new Request(this.url, { method: this.method, headers: this.headers, body: this.body, cache: this.cache, credentials: this.credentials, mode: this.mode, redirect: this.redirect, referrer: this.referrer, signal: this.signal }); }\n"
     "  }\n"
     "  g.Request = Request;\n"
@@ -1418,6 +1505,40 @@ static const char qjs_web_env_bootstrap[] =
     "  }\n"
     "  g.XMLHttpRequest = XMLHttpRequest;\n"
     "\n"
+    "  if (!g.WebSocket) {\n"
+    "    class WebSocket extends EventTarget {\n"
+    "      constructor(url, protocols) {\n"
+    "        super(); this.url = String(url); this.protocol = ''; this.readyState = 3;\n"
+    "        this.bufferedAmount = 0; this.extensions = ''; this.binaryType = 'blob';\n"
+    "        this.onopen = null; this.onmessage = null; this.onerror = null; this.onclose = null;\n"
+    "        var self = this; queueMicrotask(function() {\n"
+    "          var ev = new Event('error'); if (self.onerror) self.onerror(ev); self.dispatchEvent(ev);\n"
+    "          var close = new Event('close'); if (self.onclose) self.onclose(close); self.dispatchEvent(close);\n"
+    "        });\n"
+    "      }\n"
+    "      send() { throw new Error('WebSocket transport is not available in LiwusWeb'); }\n"
+    "      close(code, reason) { this.readyState = 3; var ev = new Event('close'); ev.code = code || 1000; ev.reason = reason || ''; this.dispatchEvent(ev); }\n"
+    "    }\n"
+    "    WebSocket.CONNECTING = 0; WebSocket.OPEN = 1; WebSocket.CLOSING = 2; WebSocket.CLOSED = 3;\n"
+    "    g.WebSocket = WebSocket;\n"
+    "  }\n"
+    "  if (!g.EventSource) {\n"
+    "    class EventSource extends EventTarget {\n"
+    "      constructor(url) { super(); this.url = String(url); this.readyState = 2; this.withCredentials = false; this.onopen = null; this.onmessage = null; this.onerror = null; }\n"
+    "      close() { this.readyState = 2; }\n"
+    "    }\n"
+    "    EventSource.CONNECTING = 0; EventSource.OPEN = 1; EventSource.CLOSED = 2; g.EventSource = EventSource;\n"
+    "  }\n"
+    "  if (!g.BroadcastChannel) {\n"
+    "    var __liwusChannels = Object.create(null);\n"
+    "    class BroadcastChannel extends EventTarget {\n"
+    "      constructor(name) { super(); this.name = String(name); this.onmessage = null; ( __liwusChannels[this.name] || (__liwusChannels[this.name] = []) ).push(this); }\n"
+    "      postMessage(value) { var list = __liwusChannels[this.name] || []; for (var i = 0; i < list.length; i++) if (list[i] !== this) { var ev = new Event('message'); ev.data = value; if (list[i].onmessage) list[i].onmessage(ev); list[i].dispatchEvent(ev); } }\n"
+    "      close() { var list = __liwusChannels[this.name] || []; var i = list.indexOf(this); if (i >= 0) list.splice(i, 1); }\n"
+    "    }\n"
+    "    g.BroadcastChannel = BroadcastChannel;\n"
+    "  }\n"
+    "\n"
     "  if (typeof Intl === 'undefined') g.Intl = {};\n"
     "  if (!Intl.DateTimeFormat) {\n"
     "    Intl.DateTimeFormat = function() {\n"
@@ -1451,6 +1572,15 @@ static const char qjs_web_env_bootstrap[] =
     "        resolvedOptions: function() { return { locale: 'en-US' }; }\n"
     "      };\n"
     "    };\n"
+    "  }\n"
+    "  if (!Intl.PluralRules) {\n"
+    "    Intl.PluralRules = function() { return { select: function(n) { return Number(n) === 1 ? 'one' : 'other'; }, selectRange: function(a, b) { return Number(a) === 1 && Number(b) === 1 ? 'one' : 'other'; }, resolvedOptions: function() { return { locale: 'en-US', type: 'cardinal' }; } }; };\n"
+    "  }\n"
+    "  if (!Intl.ListFormat) {\n"
+    "    Intl.ListFormat = function(locale, options) { options = options || {}; var conjunction = options.type === 'disjunction' ? 'or' : 'and'; return { format: function(items) { var a = Array.from(items || []).map(String); if (a.length < 2) return a.join(''); if (a.length === 2) return a[0] + ' ' + conjunction + ' ' + a[1]; return a.slice(0, -1).join(', ') + ', ' + conjunction + ' ' + a[a.length - 1]; }, formatToParts: function(items) { return [{ type: 'literal', value: this.format(items) }]; }, resolvedOptions: function() { return { locale: 'en-US', type: options.type || 'conjunction', style: options.style || 'long' }; } }; };\n"
+    "  }\n"
+    "  if (!Intl.Collator) {\n"
+    "    Intl.Collator = function() { return { compare: function(a, b) { a = String(a); b = String(b); return a < b ? -1 : (a > b ? 1 : 0); }, resolvedOptions: function() { return { locale: 'en-US' }; } }; };\n"
     "  }\n"
     "\n"
     "  g.CustomEvent = function CustomEvent(t, init) { init = init || {}; var e = new Event(t, init); e.detail = init.detail !== undefined ? init.detail : null; return e; };\n"
@@ -2000,11 +2130,19 @@ static int qjs_resolve_fetch_response(JSContext *ctx, char *line) {
     char *third = strchr(second, ' ');
     if (!third) return 0;
     *third++ = '\0';
+    char *content_type = strchr(third, ' ');
+    if (content_type) {
+        *content_type++ = '\0';
+    } else {
+        content_type = "";
+    }
     uint32_t generation = (uint32_t)strtoul(line, NULL, 10);
     uint32_t id = (uint32_t)strtoul(first, NULL, 10);
     int status = atoi(second);
     char *path_end = strpbrk(third, "\r\n");
     if (path_end) *path_end = '\0';
+    char *type_end = strpbrk(content_type, "\r\n");
+    if (type_end) *type_end = '\0';
     if (generation != qjs_fetch_generation) return 0;
     qjs_fetch_t *fetch = NULL;
     for (size_t i = 0; i < QJS_MAX_PENDING_FETCHES; ++i) {
@@ -2037,10 +2175,18 @@ static int qjs_resolve_fetch_response(JSContext *ctx, char *line) {
             JSValue global = JS_GetGlobalObject(ctx);
             JSValue factory = JS_GetPropertyStr(ctx, global,
                                                  "__liwusMakeResponse");
-            JSValue args[2] = {JS_NewInt32(ctx, status), body_value};
-            settlement = JS_Call(ctx, factory, global, 2, args);
+            JSValue headers = JS_NewObject(ctx);
+            if (content_type[0]) {
+                JS_SetPropertyStr(ctx, headers, "content-type",
+                                  JS_NewString(ctx, content_type));
+            }
+            JSValue args[4] = {JS_NewInt32(ctx, status), body_value,
+                               JS_NewString(ctx, fetch->url), headers};
+            settlement = JS_Call(ctx, factory, global, 4, args);
             JS_FreeValue(ctx, args[0]);
             JS_FreeValue(ctx, body_value);
+            JS_FreeValue(ctx, args[2]);
+            JS_FreeValue(ctx, headers);
             JS_FreeValue(ctx, factory);
             JS_FreeValue(ctx, global);
             if (JS_IsException(settlement)) {

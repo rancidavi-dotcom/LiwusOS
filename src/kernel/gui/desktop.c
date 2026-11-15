@@ -2755,6 +2755,8 @@ static void browser_run_js_fetch(const char *request) {
     uint8_t *body = NULL;
     size_t body_size = 0;
     int status = 0;
+    http_response_meta_t meta;
+    memset(&meta, 0, sizeof(meta));
     bool module_fetch = request_id >= BROWSER_QJS_MODULE_FETCH_ID_BASE;
     unsigned max_attempts = module_fetch ? 2U : 1U;
     int result = -1;
@@ -2765,10 +2767,11 @@ static void browser_run_js_fetch(const char *request) {
         }
         body_size = 0;
         status = 0;
+        memset(&meta, 0, sizeof(meta));
         result = url_valid
-            ? http_get_mem_progress_limit(url, &body, &body_size, &status,
-                                          NULL, NULL, NULL, NULL,
-                                          1024U * 1024U)
+            ? http_get_mem_progress_limit_meta(url, &body, &body_size, &status,
+                                               NULL, NULL, NULL, NULL, &meta,
+                                               1024U * 1024U)
             : -1;
         /* A failed DNS/TLS connection has no HTTP status. Give imported
          * modules one bounded retry so a transient lookup failure does not
@@ -2789,13 +2792,26 @@ static void browser_run_js_fetch(const char *request) {
     if (file) vfs_node_put(file);
     if (body) kfree(body);
 
-    char response[160];
+    /* O protocolo de resposta usa tokens separados por espaco. O MIME
+     * normalizado preserva o valor util para Headers sem ampliar o IPC. */
+    char content_type[128];
+    size_t content_type_len = 0;
+    for (size_t i = 0; meta.content_type[i] &&
+                      content_type_len + 1 < sizeof(content_type); ++i) {
+        char c = meta.content_type[i];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+        content_type[content_type_len++] = c;
+    }
+    content_type[content_type_len] = '\0';
+
+    char response[320];
     if (generation != g_web_runtime_generation) {
         (void)vfs_unlink(path);
         return;
     }
-    int length = lv_snprintf(response, sizeof(response), "%u %u %d %s\n",
-                             generation, request_id, status, path);
+    int length = lv_snprintf(response, sizeof(response), "%u %u %d %s %s\n",
+                             generation, request_id, status, path,
+                             content_type);
     if (length > 0 && (size_t)length < sizeof(response))
         (void)write_fs(g_web_runtime_fetch_responses, 0, (uint32_t)length,
                        (uint8_t *)response);
