@@ -135,9 +135,11 @@ execute; their presence does not imply standards-complete browser behavior:
     component code; custom-element constructors do not create native renderer
     nodes beyond the existing DOM bridge.
   - Streams: bounded `ReadableStream`, `WritableStream`, `TransformStream`,
-    `TextEncoderStream`, and `TextDecoderStream` surfaces. `Response.body`
-    exposes a one-shot in-memory stream over the already-buffered response;
-    network transport remains non-streaming.
+    `TextEncoderStream`, and `TextDecoderStream` surfaces. `ReadableStream`
+    exposes `values()`/`Symbol.asyncIterator` and a resolving `reader.closed`
+    promise for common async-consumer code. `Response.body` exposes a one-shot
+    in-memory stream over the already-buffered response; network transport
+    remains non-streaming.
   - Viewport & History: `window.screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `devicePixelRatio`, `scrollX`, `scrollY`, `scrollTo`, `scrollBy`, bounded `visualViewport`, and `history` (`pushState`, `replaceState`, `back`, `forward`, `go`, `state`, `length`).
   - Animation: `requestAnimationFrame`, `cancelAnimationFrame`, and a bounded
     `Element.animate()` object for code that expects the Web Animations surface.
