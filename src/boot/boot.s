@@ -25,13 +25,13 @@ mb2_tags_start:
   .long 15     /* ACPI new RSDP */
   .long 8      /* framebuffer information */
 
-  /* Framebuffer tag (Type 5): solicita resolucao padrao 1366x768 */
+  /* Framebuffer tag (Type 5): solicita framebuffer ao GRUB preservando modo ativo */
   .align 8
   .word 5      /* type = 5 */
   .word 1      /* framebuffer opcional para preservar fallback de texto */
   .long 20     /* size = 20 */
-  .long 1366   /* width = 1366 */
-  .long 768    /* height = 768 */
+  .long 0      /* width: 0 para o GRUB manter o gfxmode selecionado */
+  .long 0      /* height: 0 */
   .long 32     /* depth (32-bit ARGB) */
 
   .align 8

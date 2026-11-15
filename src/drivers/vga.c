@@ -261,84 +261,83 @@ void vga_display_init(void) {
     } else {
         serial_print("[display] no PCI display adapter found\n");
     }
-    if (!gpu || gpu->vendor_id != 0x1234 || gpu->device_id != 0x1111) {
-        serial_print("[display] EDID/VBE backend unavailable: unsupported GPU\n");
-        return;
-    }
 
-    uint16_t command = (uint16_t)pci_read_config(gpu->bus, gpu->device, gpu->function, 0x04);
-    pci_write_config(gpu->bus, gpu->device, gpu->function, 0x04, command | 0x0003);
-    uint32_t bar_low = pci_read_config(gpu->bus, gpu->device, gpu->function, 0x18);
-    if ((bar_low & 1) || (bar_low & 6) != 0) {
-        serial_print("[display] VGA EDID BAR is not a 32-bit MMIO region\n");
-        return;
-    }
-    uint64_t edid_phys = (uint64_t)(bar_low & ~0xFULL);
-    if (bar_low & 4) edid_phys |= (uint64_t)pci_read_config(gpu->bus, gpu->device, gpu->function, 0x1C) << 32;
-    if (!edid_phys || edid_phys > DIRECT_MAP_SIZE - 4096) {
-        serial_print("[display] VGA EDID BAR address is invalid\n");
-        return;
-    }
-    vmm_map_framebuffer(edid_phys, 4096);
-    volatile const uint8_t *mmio = (volatile const uint8_t *)phys_to_virt(edid_phys);
-    static uint8_t edid[4 * 128];
-    for (size_t i = 0; i < sizeof(edid); i++) edid[i] = mmio[i];
-    static const uint8_t signature[8] = {0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00};
-    if (memcmp(edid, signature, sizeof(signature)) || !edid_checksum_valid(edid)) {
-        serial_print("[display] VGA EDID signature/checksum invalid\n");
-        return;
-    }
-
-    uint16_t enable = vbe_read(VBE_ENABLE);
+    /* 1. Testa portas I/O Bochs/VBE DISPI (0x1CE / 0x1CF) presentes em QEMU, VirtualBox, Bochs */
     uint16_t id = vbe_read(VBE_ID);
-    if (id < 0xB0C0 || id > 0xB0C5) {
-        serial_print("[display] Bochs VBE DISPI registers not detected\n");
-        return;
-    }
-    vbe_write(VBE_ENABLE, VBE_GETCAPS);
-    display_max_x = vbe_read(VBE_XRES);
-    display_max_y = vbe_read(VBE_YRES);
-    uint16_t max_bpp = vbe_read(VBE_BPP);
-    display_vram_kb = (uint16_t)(vbe_read(VBE_VIDEO_MEM) * 64U);
-    if (!display_vram_kb) {
-        display_vram_kb = 16384; /* Fallback: pelo menos 16 MB para QEMU/Bochs VBE */
-    }
-    vbe_write(VBE_ENABLE, enable);
+    if (id >= 0xB0C0 && id <= 0xB0C5) {
+        uint16_t enable = vbe_read(VBE_ENABLE);
+        vbe_write(VBE_ENABLE, VBE_GETCAPS);
+        display_max_x = vbe_read(VBE_XRES);
+        display_max_y = vbe_read(VBE_YRES);
+        uint16_t max_bpp = vbe_read(VBE_BPP);
+        display_vram_kb = (uint16_t)(vbe_read(VBE_VIDEO_MEM) * 64U);
+        if (!display_vram_kb) {
+            display_vram_kb = 16384; /* Fallback: pelo menos 16 MB para QEMU/VirtualBox */
+        }
+        vbe_write(VBE_ENABLE, enable);
 
-    uint32_t bar0 = pci_read_config(gpu->bus, gpu->device, gpu->function, 0x10);
-    uint64_t gpu_fb_phys = (uint64_t)(bar0 & ~0xFULL);
-    if (!vga_fb_addr && gpu_fb_phys) {
-        vga_fb_addr = gpu_fb_phys;
-    }
-    if (max_bpp < 32 || !display_max_x || !display_max_y || !display_vram_kb) {
-        serial_print("[display] VBE reports no usable 32-bit mode\n");
-        return;
+        if (gpu) {
+            uint32_t bar0 = pci_read_config(gpu->bus, gpu->device, gpu->function, 0x10);
+            uint64_t gpu_fb_phys = (uint64_t)(bar0 & ~0xFULL);
+            if (!vga_fb_addr && gpu_fb_phys) {
+                vga_fb_addr = gpu_fb_phys;
+            }
+        }
+
+        if (max_bpp >= 32 && display_max_x >= 640 && display_max_y >= 480) {
+            display_backend_ready = true;
+            serial_print("[display] Bochs/VBE DISPI ativo (ID=0x");
+            serial_print_hex(id);
+            serial_print(")\n");
+        }
     }
 
-    display_backend_ready = true;
-    edid_parse_base(edid);
-    uint8_t extensions = edid[126];
-    if (extensions > 3) extensions = 3;
-    for (uint8_t i = 1; i <= extensions; i++) {
-        const uint8_t *block = edid + (size_t)i * 128;
-        if (edid_checksum_valid(block) && block[0] == 0x02) edid_parse_cta(block);
+    /* 2. Se a GPU for QEMU (0x1234:0x1111) com MMIO BAR2, le os modos anunciados no EDID */
+    if (gpu && gpu->vendor_id == 0x1234 && gpu->device_id == 0x1111) {
+        uint16_t command = (uint16_t)pci_read_config(gpu->bus, gpu->device, gpu->function, 0x04);
+        pci_write_config(gpu->bus, gpu->device, gpu->function, 0x04, command | 0x0003);
+        uint32_t bar_low = pci_read_config(gpu->bus, gpu->device, gpu->function, 0x18);
+        if (!(bar_low & 1) && (bar_low & 6) == 0) {
+            uint64_t edid_phys = (uint64_t)(bar_low & ~0xFULL);
+            if (bar_low & 4) edid_phys |= (uint64_t)pci_read_config(gpu->bus, gpu->device, gpu->function, 0x1C) << 32;
+            if (edid_phys && edid_phys <= DIRECT_MAP_SIZE - 4096) {
+                vmm_map_framebuffer(edid_phys, 4096);
+                volatile const uint8_t *mmio = (volatile const uint8_t *)phys_to_virt(edid_phys);
+                static uint8_t edid[4 * 128];
+                for (size_t i = 0; i < sizeof(edid); i++) edid[i] = mmio[i];
+                static const uint8_t signature[8] = {0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00};
+                if (!memcmp(edid, signature, sizeof(signature)) && edid_checksum_valid(edid)) {
+                    edid_parse_base(edid);
+                    uint8_t extensions = edid[126];
+                    if (extensions > 3) extensions = 3;
+                    for (uint8_t i = 1; i <= extensions; i++) {
+                        const uint8_t *block = edid + (size_t)i * 128;
+                        if (edid_checksum_valid(block) && block[0] == 0x02) edid_parse_cta(block);
+                    }
+                }
+            }
+        }
     }
-    display_add_mode(1366, 768);
-    display_add_mode(1360, 768);
-    display_add_mode(1280, 720);
-    display_add_mode(1024, 768);
-    display_add_mode(800, 600);
-    display_add_mode(640, 480);
-    display_add_mode((uint16_t)vga_fb_width, (uint16_t)vga_fb_height);
+
+    if (display_backend_ready) {
+        display_add_mode(1366, 768);
+        display_add_mode(1360, 768);
+        display_add_mode(1920, 1080);
+        display_add_mode(1600, 900);
+        display_add_mode(1280, 720);
+        display_add_mode(1024, 768);
+        display_add_mode(800, 600);
+        display_add_mode(640, 480);
+        display_add_mode((uint16_t)vga_fb_width, (uint16_t)vga_fb_height);
+    }
     if (!display_mode_count) {
         display_backend_ready = false;
-        serial_print("[display] monitor EDID contains no usable modes\n");
+        serial_print("[display] backend VBE indisponivel; mantendo resolucao nativa do GRUB\n");
         return;
     }
-    serial_print("[display] QEMU VBE + EDID modes=");
+    serial_print("[display] Modos graficos disponiveis: ");
     char count_buf[16]; itoa((int)display_mode_count, count_buf, 10); serial_print(count_buf);
-    serial_print(" max="); itoa(display_max_x, count_buf, 10); serial_print(count_buf);
-    serial_print("x"); itoa(display_max_y, count_buf, 10); serial_print(count_buf); serial_print("\n");
+    serial_print(" modos\n");
 }
 
 // Fallback text mode buffer
@@ -698,6 +697,16 @@ void vga_init(void) {
     is_framebuffer = false;
     max_cols = 80;
     max_rows = 25;
+
+    /* Se o GRUB reportar 32bpp sem preencher a mascara, define layout ARGB padrao */
+    if (vga_fb_bpp == 32 && vga_fb_red_size == 0 && vga_fb_blue_size == 0) {
+        vga_fb_red_pos = 16;
+        vga_fb_red_size = 8;
+        vga_fb_green_pos = 8;
+        vga_fb_green_size = 8;
+        vga_fb_blue_pos = 0;
+        vga_fb_blue_size = 8;
+    }
 
     /* UEFI machines commonly have no usable VGA text memory. Render the
      * console into GRUB's RGB framebuffer when its layout is supported. */
