@@ -165,6 +165,8 @@ int test_ring3_processes(void) {
         static char page[] =
             "<!doctype html><html><head><title>Old title</title><script>"
             "const output=document.getElementById('out');"
+            "document.addEventListener('DOMContentLoaded',function(){output.setAttribute('data-dom-ready','yes');});"
+            "addEventListener('load',function(){output.setAttribute('data-window-load','yes');});"
             "if(window!==globalThis||self!==globalThis||"
             "navigator.platform!=='LIWUS'||navigator.onLine!==true||"
             "location.href!=='about:blank'||location.protocol!=='about:'||"

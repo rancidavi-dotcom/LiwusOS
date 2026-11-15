@@ -58,6 +58,8 @@ int main(void) {
     if (!contains(output, used, "<title>Script title</title>") ||
         !contains(output, used, "data-label=\"A &amp; B\"") ||
         !contains(output, used, "data-extra=\"dataset-ok\"") ||
+        !contains(output, used, "data-dom-ready=\"yes\"") ||
+        !contains(output, used, "data-window-load=\"yes\"") ||
         !contains(output, used, "style=\"background-color: rgb(1, 2, 3)\"") ||
         !contains(output, used, "mutated &lt;&amp;</p>") ||
         !contains(output, used,

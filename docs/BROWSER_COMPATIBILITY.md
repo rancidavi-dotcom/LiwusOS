@@ -142,6 +142,8 @@ execute; their presence does not imply standards-complete browser behavior:
   - Form and window compatibility: `submit()`, `requestSubmit()`,
     `checkValidity()`, `reportValidity()`, `Promise.withResolvers()`,
     `window.open()`, and `getSelection()` are available as bounded shims.
+    Page lifecycle listeners receive bounded `DOMContentLoaded` and `load`
+    dispatch after inline/module scripts complete.
   - `WebSocket`, `EventSource`, and `BroadcastChannel` are exposed so feature
     detection and teardown paths do not crash. WebSocket/EventSource transport
     is intentionally not implemented yet; connections close with an explicit

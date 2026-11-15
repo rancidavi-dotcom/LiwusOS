@@ -5876,6 +5876,15 @@ static int qjs_run_inline_scripts(JSContext *ctx) {
     qjs_load_page_import_maps(ctx);
     if (qjs_run_inline_script_pass(ctx, 0, &total_source) != 0) return 1;
     if (qjs_run_inline_script_pass(ctx, 1, &total_source) != 0) return 1;
+    static const char lifecycle[] =
+        "if(typeof document!=='undefined'&&document.dispatchEvent)"
+        "document.dispatchEvent(new Event('DOMContentLoaded'));"
+        "if(typeof dispatchEvent==='function')dispatchEvent(new Event('load'));";
+    JSValue lifecycle_result = JS_Eval(ctx, lifecycle, sizeof(lifecycle) - 1,
+                                       "<liwus-lifecycle>", JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(lifecycle_result)) print_exception(ctx);
+    JS_FreeValue(ctx, lifecycle_result);
+    qjs_drain_microtasks(ctx);
     if (!qjs_persistent_page) qjs_run_bootstrap_timers(ctx);
     return 0;
 }
