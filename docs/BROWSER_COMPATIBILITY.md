@@ -95,7 +95,8 @@ execute; their presence does not imply standards-complete browser behavior:
   - Traversal and mutation helpers: `matches()`, `closest()`, `parentElement`,
     `children`, `childElementCount`, element-sibling accessors, `className`,
     `getAttributeNames()`, `attributes`/`NamedNodeMap` snapshots with
-    `item()`/`getNamedItem()`/bounded mutation helpers, `toggleAttribute()`, `replaceChildren()`,
+    `item()`/`getNamedItem()`/bounded mutation helpers, `getAttributeNode()`/
+    `setAttributeNode()`, `toggleAttribute()`, `replaceChildren()`,
     `before()`, `after()`, `remove()`, and `innerText`.
   - Collection compatibility: bounded snapshot results from `querySelectorAll()`
     are branded as `NodeList`, while `getElementsByTagName()` and

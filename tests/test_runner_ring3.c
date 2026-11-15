@@ -244,6 +244,8 @@ int test_ring3_processes(void) {
             "output.getAttribute('data-label')!=='A & B')"
             "throw new Error('HTML entities were not decoded in the DOM');"
             "const attrs=output.attributes;if(!(attrs instanceof NamedNodeMap)||attrs.getNamedItem('data-label').value!=='A & B'||attrs.item(0)===null)throw new Error('NamedNodeMap failed');"
+            "const attrNode=output.getAttributeNode('data-label');if(!attrNode||attrNode.value!=='A & B'||output.getAttributeNodeNS(null,'data-label').value!=='A & B')throw new Error('Attr node failed');"
+            "let pathSeen=false;output.addEventListener('path',function(ev){const path=ev.composedPath();pathSeen=path[0]===output;});output.dispatchEvent(new Event('path',{bubbles:true}));if(!pathSeen)throw new Error('Event composedPath failed');"
             "document.title='Script title';"
             "output.textContent='mutated <&';"
             "if(output.textContent!=='mutated <&')"
