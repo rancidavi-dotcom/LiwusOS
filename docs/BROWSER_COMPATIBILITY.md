@@ -319,6 +319,11 @@ execute; their presence does not imply standards-complete browser behavior:
     `Intl.Collator`, and `Intl.Segmenter` when the QuickJS build does not
     provide them. Segmenter output is limited to word/grapheme boundaries and
     does not claim full locale-specific dictionary segmentation.
+  - Modern ECMAScript collection helpers: guarded fallbacks for `Array.prototype.at`,
+    `findLast`, `findLastIndex`, `toReversed`, `toSorted`, `toSpliced`, `with`,
+    `String.prototype.replaceAll`, `isWellFormed`, `toWellFormed`, `Object.hasOwn`,
+    `AggregateError`, and `Promise.any`. These are page-local polyfills and do not
+    change the QuickJS engine or provide a general JavaScript conformance claim.
 - Supports inline scripts and bounded external classic/module scripts. External
   module scripts retain their absolute URL and can resolve a bounded static
   import graph over the browser worker bridge. Import maps support the first
