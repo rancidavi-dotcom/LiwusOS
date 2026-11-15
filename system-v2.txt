@@ -1,10 +1,10 @@
-VERSION=2.2.28
+VERSION=2.2.29
 DATE=2026-11-15
 PACKAGES=kilo,c_demo,neofetch,sysbench
-NOTES=LiwusOS: suporte universal a VBE DISPI (VirtualBox e QEMU), correcao de fallback e resolucao 1366x768 / 1360x768
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.28
-BOOT_IMAGE_SIZE=5310464
-BOOT_IMAGE_CRC32=b7b9e31e
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.28
+NOTES=Resolucao 1366x768/1360x768 no hardware real: gfxpayload pos-multiboot2 no GRUB e suporte a framebuffer 24/32-bpp
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.29
+BOOT_IMAGE_SIZE=5312512
+BOOT_IMAGE_CRC32=f10523ff
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.29
 SYSTEM_ARCHIVE_SIZE=14704640
 SYSTEM_ARCHIVE_CRC32=0fb88c6b
