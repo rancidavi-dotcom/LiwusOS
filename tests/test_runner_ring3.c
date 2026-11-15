@@ -252,6 +252,7 @@ int test_ring3_processes(void) {
             "let cloneRejected=false;try{consumed.clone();}catch(e){cloneRejected=true;}if(!cloneRejected)throw new Error('Response clone guard failed');"
             "const requestBody=new Request('/body',{method:'POST',body:'x'});requestBody.text();"
             "if(!requestBody.bodyUsed)throw new Error('Request bodyUsed failed');"
+            "const binaryRequest=new Request('/binary',{method:'POST',body:new Uint8Array([0x61,0xc3,0xa9])});binaryRequest.bytes().then(function(bytes){if(bytes.length!==3||bytes[0]!==0x61||bytes[2]!==0xa9)throw new Error('Request binary body failed');});"
             "const ws=new WebSocket('wss://example.invalid');const es=new EventSource('/events');"
             "if(ws.readyState!==WebSocket.CLOSED||es.readyState!==EventSource.CLOSED)"
             "throw new Error('network event shims failed');ws.close();es.close();"
