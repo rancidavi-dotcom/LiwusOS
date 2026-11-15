@@ -76,6 +76,7 @@ case "$cmd" in
         trap 'kill "$viewer_pid" 2>/dev/null || true; wait "$viewer_pid" 2>/dev/null || true' EXIT
         echo "Abrindo VNC automaticamente. Pressione Ctrl+A X para sair do QEMU."
         qemu-system-x86_64 -machine q35 -m 2048 -no-reboot \
+            -vga std -global VGA.vgamem_mb=64 \
             -drive file=liwus_disk.img,format=raw,if=none,id=disk \
             -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 \
             -cdrom liwusos.iso -vnc 127.0.0.1:1 -serial mon:stdio
