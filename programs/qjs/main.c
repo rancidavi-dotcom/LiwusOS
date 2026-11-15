@@ -97,8 +97,10 @@ typedef struct {
     liw_web_node_id_t node;
     char type[QJS_DOM_MAX_EVENT_TYPE + 1];
     JSValue callback;
+    JSValue signal;
     int capture;
     int once;
+    int object_listener;
     int active;
 } qjs_dom_listener_t;
 
@@ -344,21 +346,31 @@ static const char qjs_web_env_bootstrap[] =
     "  class EventTarget {\n"
     "    constructor() { this._l = {}; }\n"
     "    addEventListener(t, cb, opts) {\n"
-    "      if (typeof cb !== 'function') return;\n"
-    "      if (!this._l[t]) this._l[t] = [];\n"
-    "      this._l[t].push({ cb: cb, once: Boolean(opts && opts.once) });\n"
+    "      if (!cb || (typeof cb !== 'function' && typeof cb.handleEvent !== 'function')) return;\n"
+    "      t = String(t); if (!this._l[t]) this._l[t] = [];\n"
+    "      opts = (opts && typeof opts === 'object') ? opts : {};\n"
+    "      if (opts.signal && opts.signal.aborted) return;\n"
+    "      var entry = { cb: cb, once: Boolean(opts.once), capture: Boolean(opts.capture), passive: Boolean(opts.passive), removed: false };\n"
+    "      if (opts.signal && opts.signal.addEventListener) {\n"
+    "        var self = this; entry.signal = opts.signal; entry.abort = function() { entry.removed = true; self._l[t] = (self._l[t] || []).filter(function(x) { return x !== entry; }); };\n"
+    "        opts.signal.addEventListener('abort', entry.abort, { once: true });\n"
+    "      }\n"
+    "      this._l[t].push(entry);\n"
     "    }\n"
-    "    removeEventListener(t, cb) {\n"
-    "      if (!this._l[t]) return;\n"
-    "      this._l[t] = this._l[t].filter(function(x) { return x.cb !== cb; });\n"
+    "    removeEventListener(t, cb, opts) {\n"
+    "      t = String(t); if (!this._l[t]) return;\n"
+    "      var capture = Boolean(opts && typeof opts === 'object' ? opts.capture : opts);\n"
+    "      this._l[t] = this._l[t].filter(function(x) { if (x.cb === cb && x.capture === capture) { x.removed = true; return false; } return true; });\n"
     "    }\n"
     "    dispatchEvent(e) {\n"
     "      if (!e || !e.type) return true;\n"
-    "      var list = (this._l[e.type] || []).slice();\n"
+    "      var type = String(e.type), list = (this._l[type] || []).slice();\n"
+    "      try { if (!e.target) e.target = this; } catch (err) {}\n"
+    "      try { e.currentTarget = this; } catch (err) {}\n"
     "      for (var i = 0; i < list.length; i++) {\n"
-    "        var entry = list[i];\n"
-    "        if (entry.once) this.removeEventListener(e.type, entry.cb);\n"
-    "        try { entry.cb.call(this, e); } catch (err) { console.error(err); }\n"
+    "        var entry = list[i]; if (entry.removed) continue;\n"
+    "        if (entry.once) this.removeEventListener(type, entry.cb, { capture: entry.capture });\n"
+    "        try { if (typeof entry.cb === 'function') entry.cb.call(this, e); else entry.cb.handleEvent(e); } catch (err) { console.error(err); }\n"
     "      }\n"
     "      return !e.defaultPrevented;\n"
     "    }\n"
@@ -4376,11 +4388,19 @@ static JSValue qjs_dom_add_event_listener(JSContext *ctx,
                                           JSValueConst *argv) {
     liw_web_node_id_t node_id = qjs_dom_receiver_node(ctx, this_value);
     if (node_id == LIW_WEBDOM_NODE_NONE) return JS_EXCEPTION;
-    if (argc < 2 || !JS_IsFunction(ctx, argv[1]))
-        return JS_ThrowTypeError(ctx, "addEventListener requires type and function");
+    if (argc < 2 || (!JS_IsFunction(ctx, argv[1]) && !JS_IsObject(argv[1])))
+        return JS_ThrowTypeError(ctx, "addEventListener requires type and listener");
+    if (argc >= 2 && JS_IsObject(argv[1]) && !JS_IsFunction(ctx, argv[1])) {
+        JSValue handle_event = JS_GetPropertyStr(ctx, argv[1], "handleEvent");
+        if (JS_IsException(handle_event)) return handle_event;
+        int valid = JS_IsFunction(ctx, handle_event);
+        JS_FreeValue(ctx, handle_event);
+        if (!valid) return JS_ThrowTypeError(ctx, "listener object requires handleEvent()");
+    }
     char type[QJS_DOM_MAX_EVENT_TYPE + 1];
     if (qjs_event_type_from_value(ctx, argv[0], type) < 0) return JS_EXCEPTION;
     int capture = 0, once = 0;
+    JSValue signal = JS_UNDEFINED;
     if (argc >= 3 && !JS_IsUndefined(argv[2])) {
         if (JS_IsObject(argv[2])) {
             JSValue option = JS_GetPropertyStr(ctx, argv[2], "capture");
@@ -4393,6 +4413,28 @@ static JSValue qjs_dom_add_event_listener(JSContext *ctx,
             once = JS_ToBool(ctx, option);
             JS_FreeValue(ctx, option);
             if (once < 0) return JS_EXCEPTION;
+            signal = JS_GetPropertyStr(ctx, argv[2], "signal");
+            if (JS_IsException(signal)) return signal;
+            if (!JS_IsObject(signal)) {
+                JS_FreeValue(ctx, signal);
+                signal = JS_UNDEFINED;
+            } else {
+                JSValue aborted = JS_GetPropertyStr(ctx, signal, "aborted");
+                if (JS_IsException(aborted)) {
+                    JS_FreeValue(ctx, signal);
+                    return aborted;
+                }
+                int already_aborted = JS_ToBool(ctx, aborted);
+                JS_FreeValue(ctx, aborted);
+                if (already_aborted < 0) {
+                    JS_FreeValue(ctx, signal);
+                    return JS_EXCEPTION;
+                }
+                if (already_aborted) {
+                    JS_FreeValue(ctx, signal);
+                    return JS_UNDEFINED;
+                }
+            }
         } else {
             capture = JS_ToBool(ctx, argv[2]);
             if (capture < 0) return JS_EXCEPTION;
@@ -4404,10 +4446,14 @@ static JSValue qjs_dom_add_event_listener(JSContext *ctx,
         if (!listener->active) { if (free_slot == QJS_DOM_MAX_EVENT_LISTENERS) free_slot = i; continue; }
         if (listener->node == node_id && listener->capture == capture &&
             strcmp(listener->type, type) == 0 &&
-            JS_StrictEq(ctx, listener->callback, argv[1]))
+            JS_StrictEq(ctx, listener->callback, argv[1])) {
+            JS_FreeValue(ctx, signal);
             return JS_UNDEFINED;
+        }
     }
     if (free_slot == QJS_DOM_MAX_EVENT_LISTENERS) {
+        if (qjs_dom_listener_count == QJS_DOM_MAX_EVENT_LISTENERS)
+            JS_FreeValue(ctx, signal);
         if (qjs_dom_listener_count == QJS_DOM_MAX_EVENT_LISTENERS)
             return JS_ThrowRangeError(ctx, "event listener limit reached");
         free_slot = qjs_dom_listener_count++;
@@ -4416,8 +4462,10 @@ static JSValue qjs_dom_add_event_listener(JSContext *ctx,
     listener->node = node_id;
     strcpy(listener->type, type);
     listener->callback = JS_DupValue(ctx, argv[1]);
+    listener->signal = signal;
     listener->capture = capture;
     listener->once = once;
+    listener->object_listener = JS_IsObject(argv[1]) && !JS_IsFunction(ctx, argv[1]);
     listener->active = 1;
     return JS_UNDEFINED;
 }
@@ -4447,7 +4495,9 @@ static JSValue qjs_dom_remove_event_listener(JSContext *ctx,
             strcmp(listener->type, type) == 0 &&
             JS_StrictEq(ctx, listener->callback, argv[1])) {
             JS_FreeValue(ctx, listener->callback);
+            JS_FreeValue(ctx, listener->signal);
             listener->callback = JS_UNDEFINED;
+            listener->signal = JS_UNDEFINED;
             listener->active = 0;
             break;
         }
@@ -4467,6 +4517,19 @@ static JSValue qjs_dom_dispatch_at(JSContext *ctx, liw_web_node_id_t node,
     size_t count = 0;
     for (size_t i = 0; i < qjs_dom_listener_count; ++i) {
         qjs_dom_listener_t *listener = &qjs_dom_listeners[i];
+        if (listener->active && !JS_IsUndefined(listener->signal)) {
+            JSValue aborted = JS_GetPropertyStr(ctx, listener->signal, "aborted");
+            if (!JS_IsException(aborted) && JS_ToBool(ctx, aborted) == 1) {
+                JS_FreeValue(ctx, listener->callback);
+                JS_FreeValue(ctx, listener->signal);
+                listener->callback = JS_UNDEFINED;
+                listener->signal = JS_UNDEFINED;
+                listener->active = 0;
+                JS_FreeValue(ctx, aborted);
+                continue;
+            }
+            JS_FreeValue(ctx, aborted);
+        }
         if (listener->active && listener->node == node &&
             listener->capture == capture && strcmp(listener->type, event->type) == 0) {
             callback_ids[count] = i;
@@ -4479,10 +4542,25 @@ static JSValue qjs_dom_dispatch_at(JSContext *ctx, liw_web_node_id_t node,
         if (listener->once && listener->active) {
             listener->active = 0;
             JS_FreeValue(ctx, listener->callback);
+            JS_FreeValue(ctx, listener->signal);
             listener->callback = JS_UNDEFINED;
+            listener->signal = JS_UNDEFINED;
         }
         JSValue args[1] = { event_value };
-        JSValue result = JS_Call(ctx, callbacks[i], current_object, 1, args);
+        JSValue result;
+        if (listener->object_listener) {
+            JSValue handle_event = JS_GetPropertyStr(ctx, callbacks[i], "handleEvent");
+            if (JS_IsException(handle_event)) {
+                JS_FreeValue(ctx, callbacks[i]);
+                for (++i; i < count; ++i) JS_FreeValue(ctx, callbacks[i]);
+                status = handle_event;
+                break;
+            }
+            result = JS_Call(ctx, handle_event, callbacks[i], 1, args);
+            JS_FreeValue(ctx, handle_event);
+        } else {
+            result = JS_Call(ctx, callbacks[i], current_object, 1, args);
+        }
         JS_FreeValue(ctx, callbacks[i]);
         if (JS_IsException(result)) {
             for (++i; i < count; ++i) JS_FreeValue(ctx, callbacks[i]);
@@ -4581,8 +4659,11 @@ static void qjs_dom_clear_event_listeners(JSContext *ctx) {
     for (size_t i = 0; i < qjs_dom_listener_count; ++i) {
         if (qjs_dom_listeners[i].active)
             JS_FreeValue(ctx, qjs_dom_listeners[i].callback);
+        if (qjs_dom_listeners[i].active)
+            JS_FreeValue(ctx, qjs_dom_listeners[i].signal);
         qjs_dom_listeners[i].active = 0;
         qjs_dom_listeners[i].callback = JS_UNDEFINED;
+        qjs_dom_listeners[i].signal = JS_UNDEFINED;
     }
     qjs_dom_listener_count = 0;
 }

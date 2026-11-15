@@ -75,7 +75,7 @@ execute; their presence does not imply standards-complete browser behavior:
 - **Global Environment & Aliases**:
   - `window`, `self`, `top`, `parent`, `globalThis`.
   - Comprehensive `console` (`log`, `info`, `warn`, `error`, `debug`, `trace`, `dir`, `table`).
-  - Full `EventTarget` interface on `window` and DOM elements (`addEventListener`, `removeEventListener`, `dispatchEvent`).
+  - Full bounded `EventTarget` interface on `window` and DOM elements (`addEventListener`, `removeEventListener`, `dispatchEvent`), including `once`, `capture`, `passive`, `AbortSignal` removal, and object listeners with `handleEvent()`.
   - Standard event constructors: `Event`, `CustomEvent`, `UIEvent`, `FocusEvent`,
     `MouseEvent`, `PointerEvent`, `KeyboardEvent`, `InputEvent`, `SubmitEvent`,
     `MessageEvent`, `ProgressEvent`, `ErrorEvent`, `CloseEvent`, `PopStateEvent`,
