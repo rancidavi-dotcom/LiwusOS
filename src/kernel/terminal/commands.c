@@ -18,6 +18,7 @@
 #include "pci.h"
 #include "http_client.h"
 #include "screenshot.h"
+#include "gui/browser_url.h"
 
 extern char *itoa(int value, char *str, int base);
 extern int atoi(const char *nptr);
@@ -1323,5 +1324,76 @@ void cmd_curl(int argc, char **argv) {
     }
     vga_puts("\n");
     kfree(body);
+}
+
+void cmd_search(int argc, char **argv) {
+    if (argc < 2 || !argv[1]) {
+        vga_puts("Uso: search [google|ddg|bing|wiki] <termo de pesquisa>\n");
+        vga_puts("Exemplos:\n");
+        vga_puts("  search linux kernel\n");
+        vga_puts("  search google sistemas operacionais\n");
+        vga_puts("  search ddg rust programming\n");
+        vga_puts("  search wiki alan turing\n");
+        return;
+    }
+
+    browser_search_engine_t eng = browser_url_get_search_engine();
+    int arg_start = 1;
+
+    if (strcmp(argv[1], "google") == 0 || strcmp(argv[1], "g") == 0) {
+        eng = BROWSER_SEARCH_GOOGLE;
+        arg_start = 2;
+    } else if (strcmp(argv[1], "ddg") == 0 || strcmp(argv[1], "duck") == 0) {
+        eng = BROWSER_SEARCH_DUCKDUCKGO;
+        arg_start = 2;
+    } else if (strcmp(argv[1], "bing") == 0 || strcmp(argv[1], "b") == 0) {
+        eng = BROWSER_SEARCH_BING;
+        arg_start = 2;
+    } else if (strcmp(argv[1], "wiki") == 0 || strcmp(argv[1], "w") == 0) {
+        eng = BROWSER_SEARCH_WIKIPEDIA;
+        arg_start = 2;
+    }
+
+    if (arg_start >= argc) {
+        vga_puts("Informe o termo que deseja pesquisar.\n");
+        return;
+    }
+
+    char query[256];
+    query[0] = '\0';
+    for (int i = arg_start; i < argc; i++) {
+        if (i > arg_start) strcat(query, " ");
+        strncat(query, argv[i], sizeof(query) - strlen(query) - 1);
+    }
+
+    char search_url[512];
+    if (!browser_url_build_search(eng, query, strlen(query), search_url, sizeof(search_url))) {
+        vga_puts("search: Erro ao construir URL de pesquisa.\n");
+        return;
+    }
+
+    vga_puts("[Mecanismo de Pesquisa Pronto]\n");
+    vga_puts("Motor: ");
+    vga_puts(browser_url_get_search_engine_name(eng));
+    vga_puts("\nConsulta: ");
+    vga_puts(query);
+    vga_puts("\nURL: ");
+    vga_puts(search_url);
+    vga_puts("\nPara visualizar a pagina completa com resultados, use o LiwusWeb no desktop.\n");
+}
+
+void cmd_google(int argc, char **argv) {
+    if (argc < 2 || !argv[1]) {
+        vga_puts("Uso: google <termo de pesquisa>\n");
+        return;
+    }
+    char *new_argv[20];
+    if (argc + 1 >= 20) return;
+    new_argv[0] = "search";
+    new_argv[1] = "google";
+    for (int i = 1; i < argc; i++) {
+        new_argv[i + 1] = argv[i];
+    }
+    cmd_search(argc + 1, new_argv);
 }
 

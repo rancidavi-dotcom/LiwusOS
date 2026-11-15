@@ -50,6 +50,8 @@ void cmd_screenshot(int argc, char **argv);
 void cmd_lspci(int argc, char **argv);
 void cmd_wget(int argc, char **argv);
 void cmd_curl(int argc, char **argv);
+void cmd_search(int argc, char **argv);
+void cmd_google(int argc, char **argv);
 void cmd_lpkg(int argc, char **argv);
 
 // Command structure

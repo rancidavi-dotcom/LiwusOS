@@ -626,6 +626,7 @@ static char g_browser_url[BROWSER_URL_MAX] = "http://liwus.local/";
 static lv_obj_t *ta_browser_url = NULL;
 static lv_obj_t *obj_browser_view = NULL;
 static lv_obj_t *lbl_browser_win_title = NULL;
+static lv_obj_t *dd_browser_engine = NULL;
 static lv_obj_t *btn_browser_back = NULL;
 static lv_obj_t *btn_browser_fwd = NULL;
 static bool g_browser_url_focused = false;
@@ -758,6 +759,7 @@ static void create_terminal_window(void);
 static void create_sysmon_window(void);
 static void create_calc_window(void);
 static void create_browser_window(void);
+static void browser_load_home_page(void);
 static void create_pkgmgr_window(void);
 static void create_installer_window(void);
 static void create_about_window(void);
@@ -1095,6 +1097,17 @@ static void dock_browser_cb(lv_event_t *e) {
     set_pkg_input_focus(false);
     set_inst_host_focus(false);
     set_browser_url_focus(true);
+}
+
+static void dock_search_cb(lv_event_t *e) {
+    (void)e;
+    if (!win_browser) create_browser_window();
+    lv_obj_clear_flag(win_browser, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(win_browser);
+    set_pkg_input_focus(false);
+    set_inst_host_focus(false);
+    set_browser_url_focus(true);
+    browser_load_home_page();
 }
 
 static void dock_pkgmgr_cb(lv_event_t *e) {
@@ -1597,12 +1610,31 @@ static bool browser_unwrap_bing_result(const char *href, char *out, size_t out_s
     return true;
 }
 
+static bool browser_unwrap_search_redirect(const char *href, char *out, size_t out_sz) {
+    if (!href || !out || out_sz == 0) return false;
+    if (browser_unwrap_bing_result(href, out, out_sz)) return true;
+    const char *gq = strstr(href, "/url?q=");
+    if (gq) {
+        gq += 7;
+        size_t i = 0;
+        while (gq[i] && gq[i] != '&' && i + 1 < out_sz) {
+            out[i] = gq[i];
+            i++;
+        }
+        out[i] = '\0';
+        if (strncmp(out, "http://", 7) == 0 || strncmp(out, "https://", 8) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void browser_on_link_click(const char *href, void *user_data) {
     (void)user_data;
     if (!href || !href[0]) return;
     char direct_url[BROWSER_URL_MAX];
     const char *navigate_to = href;
-    if (browser_unwrap_bing_result(href, direct_url, sizeof(direct_url))) {
+    if (browser_unwrap_search_redirect(href, direct_url, sizeof(direct_url))) {
         navigate_to = direct_url;
     }
     size_t len = strlen(navigate_to);
@@ -2386,9 +2418,135 @@ static void browser_fetch_poll(void) {
     vga_flip();
 }
 
+static const char BROWSER_HOME_HTML[] =
+    "<!doctype html>"
+    "<html>"
+    "<head>"
+    "<title>LiwusWeb - Pesquisa na Web</title>"
+    "<style>"
+    "body { margin: 0; padding: 24px; font-family: sans-serif; background-color: #f8fafc; color: #1e293b; text-align: center; }"
+    ".container { max-width: 620px; margin: 24px auto; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 24px; }"
+    ".logo { font-size: 28px; font-weight: bold; color: #0284c7; margin-bottom: 6px; }"
+    ".subtitle { font-size: 13px; color: #64748b; margin-bottom: 20px; }"
+    ".search-form { display: flex; justify-content: center; align-items: center; gap: 8px; margin: 16px 0 24px 0; }"
+    "input.search-txt { width: 70%; height: 32px; padding: 4px 10px; font-size: 14px; border: 1px solid #94a3b8; border-radius: 4px; }"
+    "button.search-btn { height: 32px; padding: 0 16px; background-color: #0284c7; color: #ffffff; border: 1px solid #0284c7; border-radius: 4px; font-weight: bold; cursor: pointer; }"
+    ".section-title { font-size: 12px; font-weight: bold; color: #475569; margin-bottom: 12px; text-transform: uppercase; }"
+    ".portal-list { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }"
+    ".portal-btn { display: inline-block; padding: 8px 14px; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; color: #0284c7; text-decoration: none; font-size: 13px; font-weight: 500; }"
+    ".tips { font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 14px; margin-top: 12px; }"
+    "</style>"
+    "</head>"
+    "<body>"
+    "<div class=\"container\">"
+    "<div class=\"logo\">Mecanismo de Pesquisa</div>"
+    "<div class=\"subtitle\">Pesquisa pronta integrada &mdash; Google, DuckDuckGo, Bing e Wikipedia</div>"
+    "<form action=\"https://www.google.com/search\" method=\"get\" class=\"search-form\">"
+    "<input type=\"text\" class=\"search-txt\" name=\"q\" placeholder=\"Digite aqui o que deseja pesquisar...\">"
+    "<button type=\"submit\" class=\"search-btn\">Buscar</button>"
+    "</form>"
+    "<div class=\"section-title\">Mecanismos Prontos</div>"
+    "<div class=\"portal-list\">"
+    "<a class=\"portal-btn\" href=\"https://www.google.com\">Google</a>"
+    "<a class=\"portal-btn\" href=\"https://duckduckgo.com\">DuckDuckGo</a>"
+    "<a class=\"portal-btn\" href=\"https://www.bing.com\">Bing</a>"
+    "<a class=\"portal-btn\" href=\"https://pt.wikipedia.org\">Wikipedia</a>"
+    "<a class=\"portal-btn\" href=\"https://github.com\">GitHub</a>"
+    "</div>"
+    "<div class=\"tips\">"
+    "Atalhos rapidos na barra de endereco: "
+    "<strong>g:</strong> Google &bull; <strong>ddg:</strong> DuckDuckGo &bull; "
+    "<strong>b:</strong> Bing &bull; <strong>wiki:</strong> Wikipedia"
+    "</div>"
+    "</div>"
+    "</body>"
+    "</html>";
+
+static void browser_load_home_page(void) {
+    if (!obj_browser_view) return;
+    browser_stop_runtime();
+    g_web_runtime_generation++;
+    if (!g_web_runtime_generation) g_web_runtime_generation++;
+    strncpy(g_browser_url, "liwus:home", sizeof(g_browser_url) - 1);
+    g_browser_url[sizeof(g_browser_url) - 1] = '\0';
+    if (ta_browser_url) {
+        lv_textarea_set_text(ta_browser_url, "");
+        lv_textarea_set_placeholder_text(ta_browser_url, "Pesquisar ou digitar endereco...");
+    }
+    browser_update_window_title("LiwusWeb - Pesquisa na Web");
+
+    int vw = (int)lv_obj_get_width(obj_browser_view);
+    if (vw <= 0) {
+        uint32_t sw = vga_get_fb_width();
+        if (sw == 0) sw = 1024;
+        vw = (sw >= 920) ? ((int)sw - 24) : ((int)sw - 40);
+        vw -= 24;
+    }
+    int vh = (int)lv_obj_get_height(obj_browser_view);
+    if (vh <= 0) vh = 500;
+
+    html_view_opts_t opts;
+    memset(&opts, 0, sizeof(opts));
+    opts.on_link = browser_on_link_click;
+    opts.fetch_resource = browser_fetch_resource;
+    opts.on_input_focus = browser_on_input_focus;
+    opts.on_dom_event = browser_on_dom_event;
+    opts.on_status = browser_render_status_cb;
+    opts.viewport_w = vw;
+    opts.viewport_h = vh;
+    opts.user_data = NULL;
+
+    char page_title[128] = "LiwusWeb - Pesquisa na Web";
+    html_view_render(obj_browser_view, BROWSER_HOME_HTML, strlen(BROWSER_HOME_HTML),
+                     "https://www.google.com", page_title, sizeof(page_title), &opts);
+    browser_update_window_title(page_title);
+    lv_refr_now(NULL);
+    vga_flip();
+}
+
+static void browser_engine_changed_cb(lv_event_t *e) {
+    lv_obj_t *dropdown = lv_event_get_target(e);
+    uint16_t sel = lv_dropdown_get_selected(dropdown);
+    if (sel < BROWSER_SEARCH_COUNT) {
+        browser_url_set_search_engine((browser_search_engine_t)sel);
+    }
+}
+
+static void browser_search_cb(lv_event_t *e) {
+    (void)e;
+    if (!ta_browser_url) return;
+    const char *raw = lv_textarea_get_text(ta_browser_url);
+    browser_search_engine_t eng = browser_url_get_search_engine();
+
+    if (!raw || !raw[0] || strcmp(raw, "liwus:home") == 0) {
+        const char *home = browser_url_get_search_engine_home(eng);
+        lv_textarea_set_text(ta_browser_url, home);
+        browser_load_current_url(true);
+        return;
+    }
+
+    char url[BROWSER_URL_MAX];
+    if (browser_url_build_search(eng, raw, strlen(raw), url, sizeof(url))) {
+        lv_textarea_set_text(ta_browser_url, url);
+        browser_load_current_url(true);
+    } else {
+        browser_load_current_url(true);
+    }
+}
+
+static void browser_home_cb(lv_event_t *e) {
+    (void)e;
+    browser_load_home_page();
+}
+
 static void browser_load_current_url(bool push_history) {
     if (!ta_browser_url || !obj_browser_view) return;
     const char *raw_url = lv_textarea_get_text(ta_browser_url);
+    if (!raw_url || !raw_url[0] || strcmp(raw_url, "liwus:home") == 0 ||
+        strcmp(raw_url, "about:home") == 0 || strcmp(raw_url, "about:blank") == 0) {
+        browser_load_home_page();
+        return;
+    }
     char url[BROWSER_URL_MAX];
     browser_url_normalize_input(raw_url, url, sizeof(url));
     if (url[0] == '\0') return;
@@ -2511,6 +2669,15 @@ static void create_browser_window(void) {
     lv_obj_center(lbl_reload);
     lv_obj_add_event_cb(btn_reload, browser_reload_cb, LV_EVENT_CLICKED, NULL);
 
+    lv_obj_t *btn_home = lv_btn_create(bar);
+    lv_obj_set_size(btn_home, 32, 32);
+    bz_style_button(btn_home);
+    lv_obj_t *lbl_home = lv_label_create(btn_home);
+    lv_label_set_text(lbl_home, LV_SYMBOL_HOME);
+    lv_obj_center(lbl_home);
+    lv_obj_add_event_cb(btn_home, win_focus_event_cb, LV_EVENT_PRESSED, win_browser);
+    lv_obj_add_event_cb(btn_home, browser_home_cb, LV_EVENT_CLICKED, NULL);
+
     browser_update_nav_buttons();
 
     ta_browser_url = lv_textarea_create(bar);
@@ -2518,7 +2685,8 @@ static void create_browser_window(void) {
     lv_obj_set_flex_grow(ta_browser_url, 1);
     lv_textarea_set_one_line(ta_browser_url, true);
     lv_textarea_set_max_length(ta_browser_url, sizeof(g_browser_url) - 1);
-    lv_textarea_set_text(ta_browser_url, g_browser_url);
+    lv_textarea_set_text(ta_browser_url, "");
+    lv_textarea_set_placeholder_text(ta_browser_url, "Pesquisar ou digitar endereco...");
     lv_obj_set_style_text_font(ta_browser_url, &g_html_font_14, 0);
     lv_obj_set_style_radius(ta_browser_url, 3, 0);
     lv_obj_set_style_pad_ver(ta_browser_url, 6, 0);
@@ -2542,14 +2710,23 @@ static void create_browser_window(void) {
     lv_obj_add_event_cb(btn_go, win_focus_event_cb, LV_EVENT_PRESSED, win_browser);
     lv_obj_add_event_cb(btn_go, browser_go_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t *btn_wiki = lv_btn_create(bar);
-    lv_obj_set_height(btn_wiki, 32);
-    bz_style_button(btn_wiki);
-    lv_obj_t *lbl_wiki = lv_label_create(btn_wiki);
-    lv_label_set_text(lbl_wiki, "Wiki");
-    lv_obj_center(lbl_wiki);
-    lv_obj_add_event_cb(btn_wiki, win_focus_event_cb, LV_EVENT_PRESSED, win_browser);
-    lv_obj_add_event_cb(btn_wiki, browser_wiki_cb, LV_EVENT_CLICKED, NULL);
+    dd_browser_engine = lv_dropdown_create(bar);
+    lv_dropdown_set_options(dd_browser_engine, "Google\nDuckDuckGo\nBing\nWikipedia");
+    lv_dropdown_set_selected(dd_browser_engine, (uint16_t)browser_url_get_search_engine());
+    lv_obj_set_height(dd_browser_engine, 32);
+    lv_obj_set_width(dd_browser_engine, 115);
+    lv_obj_set_style_text_font(dd_browser_engine, &g_html_font_14, 0);
+    lv_obj_add_event_cb(dd_browser_engine, win_focus_event_cb, LV_EVENT_PRESSED, win_browser);
+    lv_obj_add_event_cb(dd_browser_engine, browser_engine_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *btn_search = lv_btn_create(bar);
+    lv_obj_set_height(btn_search, 32);
+    bz_style_button(btn_search);
+    lv_obj_t *lbl_search = lv_label_create(btn_search);
+    lv_label_set_text(lbl_search, "Buscar");
+    lv_obj_center(lbl_search);
+    lv_obj_add_event_cb(btn_search, win_focus_event_cb, LV_EVENT_PRESSED, win_browser);
+    lv_obj_add_event_cb(btn_search, browser_search_cb, LV_EVENT_CLICKED, NULL);
 
     obj_browser_view = lv_obj_create(content);
     lv_obj_set_width(obj_browser_view, lv_pct(100));
@@ -2567,11 +2744,7 @@ static void create_browser_window(void) {
     lv_obj_add_flag(obj_browser_view, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(obj_browser_view, win_focus_event_cb, LV_EVENT_PRESSED, win_browser);
 
-    html_view_show_message(obj_browser_view,
-        "Bem-vindo ao LiwusWeb!",
-        "Digite um endereco ou um termo para pesquisar no DuckDuckGo.\n"
-        "Atalho Wikipedia: 'wiki: assunto'. Exemplo: https://pt.wikipedia.org/wiki/Brasil",
-        lv_color_hex(0x0b57d0));
+    browser_load_home_page();
 
     lv_obj_add_flag(win_browser, LV_OBJ_FLAG_HIDDEN);
 }
@@ -4306,6 +4479,7 @@ static void create_start_menu(void) {
     }
     menu_add_entry(list, LV_SYMBOL_KEYBOARD, "Konsole", "Terminal do sistema", menu_item_cb, (void *)dock_term_cb);
     menu_add_entry(list, LV_SYMBOL_EYE_OPEN, "LiwusWeb", "Navegador de internet", menu_item_cb, (void *)dock_browser_cb);
+    menu_add_entry(list, LV_SYMBOL_EYE_OPEN, "Pesquisar na Web", "Google, DuckDuckGo, Bing e Wikipedia", menu_item_cb, (void *)dock_search_cb);
     menu_add_entry(list, LV_SYMBOL_DOWNLOAD, "Central de Pacotes", "Baixar apps e atualizar sistema (lpkg)", menu_item_cb, (void *)dock_pkgmgr_cb);
     menu_add_entry(list, LV_SYMBOL_SETTINGS, "Monitor do Sistema", "Memoria, tarefas e uptime", menu_item_cb, (void *)dock_sysmon_cb);
     menu_add_entry(list, LV_SYMBOL_PLUS, "Calculadora", "Operacoes basicas", menu_item_cb, (void *)dock_calc_cb);
