@@ -1271,7 +1271,7 @@ static const char qjs_web_env_bootstrap[] =
     "      if (record.type === 'characterData' && !ob._options.characterData) continue;\n"
     "      if (ob._options.attributeFilter && record.attributeName &&\n"
     "          ob._options.attributeFilter.indexOf(record.attributeName) < 0) continue;\n"
-    "      ob._records.push(record);\n"
+    "      ob._records.push(g.MutationRecord ? new g.MutationRecord(record) : record);\n"
     "      if (!ob._queued) {\n"
     "        ob._queued = true;\n"
     "        (function(o) { queueMicrotask(function() {\n"
