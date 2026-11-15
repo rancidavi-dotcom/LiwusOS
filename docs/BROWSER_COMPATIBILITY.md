@@ -94,7 +94,7 @@ execute; their presence does not imply standards-complete browser behavior:
     `children`, `childElementCount`, element-sibling accessors, `className`,
     `getAttributeNames()`, `toggleAttribute()`, `replaceChildren()`,
     `before()`, `after()`, `remove()`, and `innerText`.
-  - Geometry & Interaction: `getBoundingClientRect()`, `getClientRects()`, `scrollIntoView()`, `focus()`, `blur()`, `click()`.
+  - Geometry & Interaction: `getBoundingClientRect()`, `getClientRects()`, `scrollIntoView()`, `focus()`, `blur()`, `click()`, plus bounded `DOMRect`, `DOMRectReadOnly`, `DOMPoint`, `DOMMatrix`, and `visualViewport` primitives for layout/observer feature detection.
   - DOM Tree Mutation: `insertAdjacentHTML()`, `insertAdjacentElement()`, `append()`, `prepend()`.
   - Document & View: `window.getComputedStyle()`, `window.matchMedia()`, `document.cookie`, `document.defaultView`, `document.readyState`, `document.compatMode`, `document.doctype`, `document.scripts`, `document.getElementsByName()`, `document.createRange()`, `document.createElementNS()`.
   - Media and fonts: bounded `document.fonts` readiness/load checks plus
