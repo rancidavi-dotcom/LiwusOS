@@ -15,8 +15,8 @@ static void expect(const char *input, const char *wanted) {
 }
 
 int main(void) {
-    /* 1. Verificação com o mecanismo padrão inicial (Google) */
-    browser_url_set_search_engine(BROWSER_SEARCH_GOOGLE);
+    /* 1. Verificação com o mecanismo padrão inicial (Bing) */
+    assert(browser_url_get_search_engine() == BROWSER_SEARCH_BING);
     expect("github.com", "https://github.com");
     expect("www.github.com/org/repo", "https://www.github.com/org/repo");
     expect("192.168.0.1/path", "https://192.168.0.1/path");
@@ -24,14 +24,14 @@ int main(void) {
     expect("http://localhost:8080", "http://localhost:8080");
     expect("  example.org/path  ", "https://example.org/path");
 
-    /* Pesquisa simples no motor padrão (Google) */
-    expect("github status", "https://www.google.com/search?q=github+status");
+    /* Pesquisa simples no motor padrão (Bing) */
+    expect("github status", "https://www.bing.com/search?q=github+status");
 
     /* 2. Troca dinâmica de mecanismos prontos */
-    browser_url_set_search_engine(BROWSER_SEARCH_BING);
-    assert(browser_url_get_search_engine() == BROWSER_SEARCH_BING);
-    assert(strcmp(browser_url_get_search_engine_name(BROWSER_SEARCH_BING), "Bing") == 0);
-    expect("github status", "https://www.bing.com/search?q=github+status");
+    browser_url_set_search_engine(BROWSER_SEARCH_GOOGLE);
+    assert(browser_url_get_search_engine() == BROWSER_SEARCH_GOOGLE);
+    assert(strcmp(browser_url_get_search_engine_name(BROWSER_SEARCH_GOOGLE), "Google") == 0);
+    expect("github status", "https://www.google.com/search?q=github+status");
 
     browser_url_set_search_engine(BROWSER_SEARCH_DUCKDUCKGO);
     assert(browser_url_get_search_engine() == BROWSER_SEARCH_DUCKDUCKGO);

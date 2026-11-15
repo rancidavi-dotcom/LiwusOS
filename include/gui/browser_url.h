@@ -5,9 +5,9 @@
 #include <stddef.h>
 
 typedef enum {
-    BROWSER_SEARCH_GOOGLE = 0,
-    BROWSER_SEARCH_DUCKDUCKGO = 1,
-    BROWSER_SEARCH_BING = 2,
+    BROWSER_SEARCH_BING = 0,
+    BROWSER_SEARCH_GOOGLE = 1,
+    BROWSER_SEARCH_DUCKDUCKGO = 2,
     BROWSER_SEARCH_WIKIPEDIA = 3,
     BROWSER_SEARCH_COUNT
 } browser_search_engine_t;

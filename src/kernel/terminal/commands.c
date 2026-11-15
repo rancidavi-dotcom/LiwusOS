@@ -1397,3 +1397,18 @@ void cmd_google(int argc, char **argv) {
     cmd_search(argc + 1, new_argv);
 }
 
+void cmd_bing(int argc, char **argv) {
+    if (argc < 2 || !argv[1]) {
+        vga_puts("Uso: bing <termo de pesquisa>\n");
+        return;
+    }
+    char *new_argv[20];
+    if (argc + 1 >= 20) return;
+    new_argv[0] = "search";
+    new_argv[1] = "bing";
+    for (int i = 1; i < argc; i++) {
+        new_argv[i + 1] = argv[i];
+    }
+    cmd_search(argc + 1, new_argv);
+}
+

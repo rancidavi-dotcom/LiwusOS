@@ -2346,6 +2346,96 @@ static void browser_start_fetch(void) {
     }
 }
 
+static bool browser_is_search_antibot(const char *url, const uint8_t *body, size_t size) {
+    if (!url || !body || size < 80) return false;
+    const char *b = (const char *)body;
+    if (strstr(url, "google.") != NULL) {
+        if (strstr(b, "yvlrue") != NULL ||
+            strstr(b, "closureDynamicButton") != NULL ||
+            strstr(b, "enablejs") != NULL ||
+            (strstr(b, "display:none") != NULL && strstr(b, "support.google.com") != NULL)) {
+            return true;
+        }
+    }
+    if (strstr(url, "duckduckgo.com") != NULL) {
+        if (strstr(b, "anomaly-modal") != NULL ||
+            strstr(b, "bots use DuckDuckGo") != NULL) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint8_t *browser_build_antibot_fallback_page(const char *url, size_t *out_len) {
+    const char *engine_name = "Google";
+    if (url && strstr(url, "duckduckgo.com")) engine_name = "DuckDuckGo";
+
+    char query[128] = "";
+    if (url) {
+        const char *q = strstr(url, "q=");
+        if (!q) q = strstr(url, "query=");
+        if (!q) q = strstr(url, "search=");
+        if (q) {
+            q += (q[1] == '=') ? 2 : (q[0] == 's' ? 7 : 6);
+            size_t qi = 0;
+            while (*q && *q != '&' && *q != '#' && qi + 1 < sizeof(query)) {
+                query[qi++] = *q++;
+            }
+            query[qi] = '\0';
+        }
+    }
+
+    char display_query[128] = "";
+    if (query[0]) {
+        size_t di = 0;
+        for (const char *p = query; *p && di + 1 < sizeof(display_query); p++) {
+            if (*p == '+') display_query[di++] = ' ';
+            else display_query[di++] = *p;
+        }
+        display_query[di] = '\0';
+    } else {
+        strncpy(display_query, "sua pesquisa", sizeof(display_query) - 1);
+    }
+
+    char page[2048];
+    int n = lv_snprintf(page, sizeof(page),
+        "<!doctype html>"
+        "<html><head><title>Pesquisa na Web &mdash; %s</title>"
+        "<style>"
+        "body { font-family: sans-serif; background: #f8fafc; color: #1e293b; padding: 24px; text-align: center; margin: 0; }"
+        ".card { max-width: 620px; margin: 24px auto; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 24px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }"
+        "h2 { color: #dc2626; font-size: 20px; margin-top: 0; margin-bottom: 8px; }"
+        "p { font-size: 14px; line-height: 1.5; color: #475569; margin: 8px 0; }"
+        ".query-box { background: #f1f5f9; padding: 8px 14px; border-radius: 6px; font-weight: bold; color: #0f172a; display: inline-block; margin: 8px 0 16px 0; }"
+        ".actions { margin: 16px 0; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }"
+        ".btn { display: inline-block; padding: 10px 18px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 14px; }"
+        ".btn-primary { background: #0284c7; color: #ffffff; }"
+        ".btn-secondary { background: #e2e8f0; color: #334155; }"
+        ".tips { font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 14px; margin-top: 18px; }"
+        "</style></head><body>"
+        "<div class=\"card\">"
+        "<h2>Bloqueio Antibot do %s</h2>"
+        "<p>O %s retornou uma tela antibot que oculta os resultados via CSS (display: none) para navegadores sem Chromium completo.</p>"
+        "<div class=\"query-box\">Termo: %s</div>"
+        "<p>Para visualizar resultados completos e instantaneos da web sem bloqueios, utilize o <strong>Bing</strong> (mecanismo aberto padrao) ou <strong>Wikipedia</strong>:</p>"
+        "<div class=\"actions\">"
+        "<a class=\"btn btn-primary\" href=\"https://www.bing.com/search?q=%s\">Pesquisar no Bing</a>"
+        "<a class=\"btn btn-secondary\" href=\"https://pt.wikipedia.org/w/index.php?search=%s\">Wikipedia</a>"
+        "</div>"
+        "<div class=\"tips\">Dica: No seletor ao lado da barra de enderecos, selecione <strong>Bing</strong> para buscas diretas sem travas antibot.</div>"
+        "</div></body></html>",
+        engine_name, engine_name, engine_name, display_query,
+        query, query);
+
+    if (n <= 0) return NULL;
+    size_t sz = (size_t)n;
+    uint8_t *copy = (uint8_t *)kmalloc(sz + 1);
+    if (!copy) return NULL;
+    memcpy(copy, page, sz + 1);
+    if (out_len) *out_len = sz;
+    return copy;
+}
+
 static void browser_fetch_poll(void) {
     uint64_t flags = task_scheduler_lock();
     int state = g_browser_fetch_state;
@@ -2384,6 +2474,20 @@ static void browser_fetch_poll(void) {
     }
 
     if (body && size) {
+        if (browser_is_search_antibot(g_browser_url, body, size)) {
+            size_t fallback_len = 0;
+            uint8_t *fallback = browser_build_antibot_fallback_page(g_browser_url, &fallback_len);
+            if (fallback) {
+                kfree(body);
+                body = fallback;
+                size = fallback_len;
+                browser_render_document(body, size);
+                serial_printf("[WEB] Fallback antibot renderizado: %s\n", g_browser_url);
+                kfree(body);
+                return;
+            }
+        }
+
         /* Paint the server HTML/CSS first. Fetching a page's external script
          * graph can take many network round trips; keep the browser visibly
          * useful while the isolated ring-3 JavaScript runtime is prepared. */
@@ -2440,23 +2544,23 @@ static const char BROWSER_HOME_HTML[] =
     "<body>"
     "<div class=\"container\">"
     "<div class=\"logo\">Mecanismo de Pesquisa</div>"
-    "<div class=\"subtitle\">Pesquisa pronta integrada &mdash; Google, DuckDuckGo, Bing e Wikipedia</div>"
-    "<form action=\"https://www.google.com/search\" method=\"get\" class=\"search-form\">"
+    "<div class=\"subtitle\">Pesquisa pronta integrada &mdash; Bing (Padrao), Wikipedia, Google e DuckDuckGo</div>"
+    "<form action=\"https://www.bing.com/search\" method=\"get\" class=\"search-form\">"
     "<input type=\"text\" class=\"search-txt\" name=\"q\" placeholder=\"Digite aqui o que deseja pesquisar...\">"
     "<button type=\"submit\" class=\"search-btn\">Buscar</button>"
     "</form>"
     "<div class=\"section-title\">Mecanismos Prontos</div>"
     "<div class=\"portal-list\">"
+    "<a class=\"portal-btn\" href=\"https://www.bing.com\">Bing (Padrao)</a>"
+    "<a class=\"portal-btn\" href=\"https://pt.wikipedia.org\">Wikipedia</a>"
     "<a class=\"portal-btn\" href=\"https://www.google.com\">Google</a>"
     "<a class=\"portal-btn\" href=\"https://duckduckgo.com\">DuckDuckGo</a>"
-    "<a class=\"portal-btn\" href=\"https://www.bing.com\">Bing</a>"
-    "<a class=\"portal-btn\" href=\"https://pt.wikipedia.org\">Wikipedia</a>"
     "<a class=\"portal-btn\" href=\"https://github.com\">GitHub</a>"
     "</div>"
     "<div class=\"tips\">"
     "Atalhos rapidos na barra de endereco: "
-    "<strong>g:</strong> Google &bull; <strong>ddg:</strong> DuckDuckGo &bull; "
-    "<strong>b:</strong> Bing &bull; <strong>wiki:</strong> Wikipedia"
+    "<strong>b:</strong> Bing &bull; <strong>wiki:</strong> Wikipedia &bull; "
+    "<strong>g:</strong> Google &bull; <strong>ddg:</strong> DuckDuckGo"
     "</div>"
     "</div>"
     "</body>"
@@ -2498,7 +2602,7 @@ static void browser_load_home_page(void) {
 
     char page_title[128] = "LiwusWeb - Pesquisa na Web";
     html_view_render(obj_browser_view, BROWSER_HOME_HTML, strlen(BROWSER_HOME_HTML),
-                     "https://www.google.com", page_title, sizeof(page_title), &opts);
+                     "https://www.bing.com", page_title, sizeof(page_title), &opts);
     browser_update_window_title(page_title);
     lv_refr_now(NULL);
     vga_flip();
@@ -2711,7 +2815,7 @@ static void create_browser_window(void) {
     lv_obj_add_event_cb(btn_go, browser_go_cb, LV_EVENT_CLICKED, NULL);
 
     dd_browser_engine = lv_dropdown_create(bar);
-    lv_dropdown_set_options(dd_browser_engine, "Google\nDuckDuckGo\nBing\nWikipedia");
+    lv_dropdown_set_options(dd_browser_engine, "Bing\nGoogle\nDuckDuckGo\nWikipedia");
     lv_dropdown_set_selected(dd_browser_engine, (uint16_t)browser_url_get_search_engine());
     lv_obj_set_height(dd_browser_engine, 32);
     lv_obj_set_width(dd_browser_engine, 115);
@@ -4479,7 +4583,7 @@ static void create_start_menu(void) {
     }
     menu_add_entry(list, LV_SYMBOL_KEYBOARD, "Konsole", "Terminal do sistema", menu_item_cb, (void *)dock_term_cb);
     menu_add_entry(list, LV_SYMBOL_EYE_OPEN, "LiwusWeb", "Navegador de internet", menu_item_cb, (void *)dock_browser_cb);
-    menu_add_entry(list, LV_SYMBOL_EYE_OPEN, "Pesquisar na Web", "Google, DuckDuckGo, Bing e Wikipedia", menu_item_cb, (void *)dock_search_cb);
+    menu_add_entry(list, LV_SYMBOL_EYE_OPEN, "Pesquisar na Web", "Bing (padrao), Wikipedia, Google e DuckDuckGo", menu_item_cb, (void *)dock_search_cb);
     menu_add_entry(list, LV_SYMBOL_DOWNLOAD, "Central de Pacotes", "Baixar apps e atualizar sistema (lpkg)", menu_item_cb, (void *)dock_pkgmgr_cb);
     menu_add_entry(list, LV_SYMBOL_SETTINGS, "Monitor do Sistema", "Memoria, tarefas e uptime", menu_item_cb, (void *)dock_sysmon_cb);
     menu_add_entry(list, LV_SYMBOL_PLUS, "Calculadora", "Operacoes basicas", menu_item_cb, (void *)dock_calc_cb);

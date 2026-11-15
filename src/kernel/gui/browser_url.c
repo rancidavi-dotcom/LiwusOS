@@ -11,6 +11,11 @@ typedef struct {
 } search_engine_info_t;
 
 static const search_engine_info_t g_engines[BROWSER_SEARCH_COUNT] = {
+    [BROWSER_SEARCH_BING] = {
+        .name = "Bing",
+        .search_prefix = "https://www.bing.com/search?q=",
+        .home_url = "https://www.bing.com"
+    },
     [BROWSER_SEARCH_GOOGLE] = {
         .name = "Google",
         .search_prefix = "https://www.google.com/search?q=",
@@ -21,11 +26,6 @@ static const search_engine_info_t g_engines[BROWSER_SEARCH_COUNT] = {
         .search_prefix = "https://duckduckgo.com/?q=",
         .home_url = "https://duckduckgo.com"
     },
-    [BROWSER_SEARCH_BING] = {
-        .name = "Bing",
-        .search_prefix = "https://www.bing.com/search?q=",
-        .home_url = "https://www.bing.com"
-    },
     [BROWSER_SEARCH_WIKIPEDIA] = {
         .name = "Wikipedia",
         .search_prefix = "https://pt.wikipedia.org/w/index.php?search=",
@@ -33,7 +33,7 @@ static const search_engine_info_t g_engines[BROWSER_SEARCH_COUNT] = {
     }
 };
 
-static browser_search_engine_t g_active_engine = BROWSER_SEARCH_GOOGLE;
+static browser_search_engine_t g_active_engine = BROWSER_SEARCH_BING;
 
 void browser_url_set_search_engine(browser_search_engine_t engine) {
     if (engine < BROWSER_SEARCH_COUNT) {
@@ -46,23 +46,23 @@ browser_search_engine_t browser_url_get_search_engine(void) {
 }
 
 const char *browser_url_get_search_engine_name(browser_search_engine_t engine) {
-    if (engine >= BROWSER_SEARCH_COUNT) engine = BROWSER_SEARCH_GOOGLE;
+    if (engine >= BROWSER_SEARCH_COUNT) engine = BROWSER_SEARCH_BING;
     return g_engines[engine].name;
 }
 
 const char *browser_url_get_search_engine_home(browser_search_engine_t engine) {
-    if (engine >= BROWSER_SEARCH_COUNT) engine = BROWSER_SEARCH_GOOGLE;
+    if (engine >= BROWSER_SEARCH_COUNT) engine = BROWSER_SEARCH_BING;
     return g_engines[engine].home_url;
 }
 
 const char *browser_url_get_search_engine_prefix(browser_search_engine_t engine) {
-    if (engine >= BROWSER_SEARCH_COUNT) engine = BROWSER_SEARCH_GOOGLE;
+    if (engine >= BROWSER_SEARCH_COUNT) engine = BROWSER_SEARCH_BING;
     return g_engines[engine].search_prefix;
 }
 
 bool browser_url_build_search(browser_search_engine_t engine, const char *query,
                               size_t query_len, char *out, size_t out_sz) {
-    if (engine >= BROWSER_SEARCH_COUNT) engine = BROWSER_SEARCH_GOOGLE;
+    if (engine >= BROWSER_SEARCH_COUNT) engine = BROWSER_SEARCH_BING;
     const char *prefix = g_engines[engine].search_prefix;
     static const char hex[] = "0123456789ABCDEF";
     size_t pos = strlen(prefix);

@@ -250,8 +250,9 @@ static const terminal_command_t commands[] = {
     {"lspci", cmd_lspci, "Lista todos os dispositivos PCI do sistema"},
     {"wget", cmd_wget, "Baixa arquivo via HTTP/HTTPS e salva no disco SDFS"},
     {"curl", cmd_curl, "Obtem conteudo de URL via HTTP/HTTPS e exibe no terminal"},
-    {"search", cmd_search, "Pesquisa termos na Web (Google, DuckDuckGo, Bing, Wikipedia)"},
-    {"google", cmd_google, "Pesquisa termos diretamente no Google"},
+    {"search", cmd_search, "Pesquisa termos na Web (Bing, Google, DuckDuckGo, Wikipedia)"},
+    {"bing", cmd_bing, "Pesquisa termos diretamente no Bing (resultados completos)"},
+    {"google", cmd_google, "Pesquisa termos no Google (requer JS no navegador)"},
     {"lpkg", cmd_lpkg, "Gerenciador de pacotes LiwusOS (list, install, remove, repo)"},
     {"pkg", cmd_lpkg, "Gerenciador de pacotes LiwusOS (alias para lpkg)"},
 };
