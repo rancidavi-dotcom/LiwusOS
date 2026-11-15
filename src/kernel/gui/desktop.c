@@ -5893,9 +5893,9 @@ static void desktop_resize_for_display(void) {
         int visible = 0;
         for (int i = 0; i < TASK_ITEM_COUNT; i++)
             if (!g_task_items[i].live_only || is_live_mode) visible++;
-        int task_w = visible ? ((int)sw - 390) / visible : 80;
-        if (task_w > 96) task_w = 96;
-        if (task_w < 40) task_w = 40;
+        int task_w = visible ? ((int)sw - 420) / visible : 82;
+        if (task_w > 86) task_w = 86;
+        if (task_w < 36) task_w = 36;
         for (int i = 0; i < TASK_ITEM_COUNT; i++) {
             task_item_t *it = &g_task_items[i];
             if (!it->btn) continue;
@@ -6039,9 +6039,9 @@ static void create_taskbar(void) {
     int visible = 0;
     for (int i = 0; i < TASK_ITEM_COUNT; i++)
         if (!g_task_items[i].live_only || is_live_mode) visible++;
-    int task_w = visible ? ((int)sw - 390) / visible : 80;
-    if (task_w > 96) task_w = 96;
-    if (task_w < 40) task_w = 40;
+    int task_w = visible ? ((int)sw - 420) / visible : 82;
+    if (task_w > 86) task_w = 86;
+    if (task_w < 36) task_w = 36;
     lv_coord_t btn_w = (lv_coord_t)task_w;
     for (int i = 0; i < TASK_ITEM_COUNT; i++) {
         task_item_t *it = &g_task_items[i];
@@ -6113,7 +6113,7 @@ static void create_taskbar(void) {
     lv_obj_add_flag(lbl_taskbar_user, LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_text_color(lbl_taskbar_user, lv_color_hex(BZ_TEXT), 0);
     lv_label_set_text(lbl_taskbar_user, "davi");
-    lv_obj_align(lbl_taskbar_user, LV_ALIGN_RIGHT_MID, -350, 0);
+    lv_obj_align(lbl_taskbar_user, LV_ALIGN_RIGHT_MID, -295, 0);
     lv_obj_add_event_cb(lbl_taskbar_user, dock_settings_cb, LV_EVENT_CLICKED, NULL);
 }
 
