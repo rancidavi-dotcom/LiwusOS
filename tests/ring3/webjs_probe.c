@@ -60,6 +60,7 @@ int main(void) {
         !contains(output, used, "data-extra=\"dataset-ok\"") ||
         !contains(output, used, "data-dom-ready=\"yes\"") ||
         !contains(output, used, "data-window-load=\"yes\"") ||
+        !contains(output, used, "data-timer=\"7\"") ||
         !contains(output, used, "style=\"background-color: rgb(1, 2, 3)\"") ||
         !contains(output, used, "mutated &lt;&amp;</p>") ||
         !contains(output, used,

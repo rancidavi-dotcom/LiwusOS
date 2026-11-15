@@ -17,6 +17,7 @@
 #define QJS_DOM_MAX_EVENT_TYPE 127u
 #define QJS_MICROTASK_CHECKPOINT_LIMIT 1024u
 #define QJS_MAX_TIMERS 256u
+#define QJS_TIMER_MAX_ARGS 8u
 #define QJS_TIMER_CALLBACK_LIMIT 128u
 #define QJS_TIMER_BOOTSTRAP_WINDOW_TICKS 50u
 #define QJS_MAX_PENDING_FETCHES 32u
@@ -58,6 +59,8 @@ typedef struct {
     uint64_t due_ticks;
     uint64_t interval_ticks;
     JSValue callback;
+    JSValue args[QJS_TIMER_MAX_ARGS];
+    size_t arg_count;
     int active;
 } qjs_timer_t;
 
@@ -2826,8 +2829,21 @@ static JSValue qjs_set_timer(JSContext *ctx, JSValueConst this_value,
     timer->due_ticks = liw_timer_ticks() + delay_ticks;
     timer->interval_ticks = interval_ticks;
     timer->callback = JS_DupValue(ctx, argv[0]);
+    timer->arg_count = 0;
+    for (int arg = 2; arg < argc && timer->arg_count < QJS_TIMER_MAX_ARGS; ++arg)
+        timer->args[timer->arg_count++] = JS_DupValue(ctx, argv[arg]);
     timer->active = 1;
     return JS_NewUint32(ctx, id);
+}
+
+static void qjs_release_timer(JSContext *ctx, qjs_timer_t *timer) {
+    if (!timer || !timer->active) return;
+    JS_FreeValue(ctx, timer->callback);
+    timer->callback = JS_UNDEFINED;
+    for (size_t i = 0; i < timer->arg_count; ++i)
+        JS_FreeValue(ctx, timer->args[i]);
+    timer->arg_count = 0;
+    timer->active = 0;
 }
 
 static JSValue qjs_set_timeout(JSContext *ctx, JSValueConst this_value,
@@ -2849,9 +2865,7 @@ static JSValue qjs_clear_timer(JSContext *ctx, JSValueConst this_value,
     for (size_t i = 0; i < QJS_MAX_TIMERS; ++i) {
         qjs_timer_t *timer = &qjs_timers[i];
         if (!timer->active || timer->id != id) continue;
-        JS_FreeValue(ctx, timer->callback);
-        timer->callback = JS_UNDEFINED;
-        timer->active = 0;
+        qjs_release_timer(ctx, timer);
         break;
     }
     return JS_UNDEFINED;
@@ -2898,14 +2912,19 @@ static void qjs_run_bootstrap_timers(JSContext *ctx) {
 
         qjs_timer_t *timer = &qjs_timers[selected];
         JSValue callback = JS_DupValue(ctx, timer->callback);
+        JSValue callback_args[QJS_TIMER_MAX_ARGS];
+        int callback_argc = (int)timer->arg_count;
+        for (int arg = 0; arg < callback_argc; ++arg)
+            callback_args[arg] = JS_DupValue(ctx, timer->args[arg]);
         if (timer->interval_ticks) {
             timer->due_ticks = now + timer->interval_ticks;
         } else {
-            JS_FreeValue(ctx, timer->callback);
-            timer->callback = JS_UNDEFINED;
-            timer->active = 0;
+            qjs_release_timer(ctx, timer);
         }
-        JSValue result = JS_Call(ctx, callback, JS_UNDEFINED, 0, NULL);
+        JSValue result = JS_Call(ctx, callback, JS_UNDEFINED,
+                                 callback_argc, callback_args);
+        for (int arg = 0; arg < callback_argc; ++arg)
+            JS_FreeValue(ctx, callback_args[arg]);
         JS_FreeValue(ctx, callback);
         if (JS_IsException(result)) print_exception(ctx);
         JS_FreeValue(ctx, result);
@@ -2919,9 +2938,7 @@ static void qjs_run_bootstrap_timers(JSContext *ctx) {
 static void qjs_clear_all_timers(JSContext *ctx) {
     for (size_t i = 0; i < QJS_MAX_TIMERS; ++i) {
         if (!qjs_timers[i].active) continue;
-        JS_FreeValue(ctx, qjs_timers[i].callback);
-        qjs_timers[i].callback = JS_UNDEFINED;
-        qjs_timers[i].active = 0;
+        qjs_release_timer(ctx, &qjs_timers[i]);
     }
 }
 
@@ -2940,14 +2957,19 @@ static int qjs_run_due_timer(JSContext *ctx) {
 
     qjs_timer_t *timer = &qjs_timers[selected];
     JSValue callback = JS_DupValue(ctx, timer->callback);
+    JSValue callback_args[QJS_TIMER_MAX_ARGS];
+    int callback_argc = (int)timer->arg_count;
+    for (int arg = 0; arg < callback_argc; ++arg)
+        callback_args[arg] = JS_DupValue(ctx, timer->args[arg]);
     if (timer->interval_ticks) {
         timer->due_ticks = now + timer->interval_ticks;
     } else {
-        JS_FreeValue(ctx, timer->callback);
-        timer->callback = JS_UNDEFINED;
-        timer->active = 0;
+        qjs_release_timer(ctx, timer);
     }
-    JSValue result = JS_Call(ctx, callback, JS_UNDEFINED, 0, NULL);
+    JSValue result = JS_Call(ctx, callback, JS_UNDEFINED,
+                             callback_argc, callback_args);
+    for (int arg = 0; arg < callback_argc; ++arg)
+        JS_FreeValue(ctx, callback_args[arg]);
     JS_FreeValue(ctx, callback);
     if (JS_IsException(result)) print_exception(ctx);
     JS_FreeValue(ctx, result);

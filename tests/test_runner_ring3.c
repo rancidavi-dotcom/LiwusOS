@@ -429,6 +429,7 @@ int test_ring3_processes(void) {
             "const advanced=document.createElement('p');"
             "advanced.id='advanced';advanced.textContent='DOM_ADVANCED_PASS|WEB_API_PASS';"
             "document.body.appendChild(advanced);"
+            "setTimeout(function(a,b){document.documentElement.setAttribute('data-timer',String(a+b));},1,3,4);"
             "console.log('QJS_SCRIPT_RUNTIME_OK');"
             "</script><script type=\"module\">"
             "document.getElementById('advanced').textContent+='|MODULE_PASS';"

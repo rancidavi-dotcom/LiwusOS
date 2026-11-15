@@ -607,8 +607,8 @@ increment alone is not a security sign-off for logins or sensitive sessions.
    services timers and microtasks between IPC polls, and publishes updated DOM
    snapshots to the kernel renderer. The first snapshot is delivered before
    the page is rendered; later snapshots are acknowledged by the desktop before
-   the worker publishes another one. Timers are capped at 64 active entries.
-   Timer callback arguments are not yet supported.
+   the worker publishes another one. Timers are capped at 64 active entries and
+   preserve up to eight callback arguments per timer.
    This is a practical DOM subset, not full WHATWG DOM conformance. Selectors
    support tag, `*`, `#id`, `.class`, attribute presence/equality/token/dash,
    prefix/suffix/substring operators and the `i` value modifier, compound
