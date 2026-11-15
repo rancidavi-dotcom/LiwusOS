@@ -189,9 +189,10 @@ execute; their presence does not imply standards-complete browser behavior:
     not create a separate top-layer compositor surface.
   - Streams: bounded `ReadableStream`, `WritableStream`, `TransformStream`,
     `TextEncoderStream`, and `TextDecoderStream` surfaces. `ReadableStream`
-    exposes `values()`/`Symbol.asyncIterator` and a resolving `reader.closed`
-    promise for common async-consumer code. `Response.body` exposes a one-shot
-    in-memory stream over the already-buffered response; network transport
+    supports pull-based sources, `values()`/`Symbol.asyncIterator`, and a
+    resolving `reader.closed` promise for common async-consumer code.
+    `Response.body` exposes a one-shot in-memory stream over the already-
+    buffered response and updates `bodyUsed` when read; network transport
     remains non-streaming.
   - Structured cloning: the page-local `structuredClone()` fallback preserves
     `Date`, `ArrayBuffer`, typed arrays, arrays, and plain objects for
