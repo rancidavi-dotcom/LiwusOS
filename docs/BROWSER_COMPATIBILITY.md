@@ -331,6 +331,10 @@ execute; their presence does not imply standards-complete browser behavior:
     `AggregateError`, `Promise.any`, `Promise.try`, `Array.fromAsync`,
     `Object.groupBy`, and `Map.groupBy`. These are page-local polyfills and do not
     change the QuickJS engine or provide a general JavaScript conformance claim.
+  - CSSOM inspection: `document.styleSheets` now exposes bounded sheets for
+    `<style>` nodes, including `ownerNode`, `cssRules`, `replaceSync()`, and
+    rule insertion/deletion. These mutations remain page-local and do not create
+    a second native stylesheet pipeline.
 - Supports inline scripts and bounded external classic/module scripts. External
   module scripts retain their absolute URL and can resolve a bounded static
   import graph over the browser worker bridge. Import maps support the first

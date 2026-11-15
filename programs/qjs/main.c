@@ -725,7 +725,7 @@ static const char qjs_web_env_bootstrap[] =
     "        configurable: true\n"
     "      });\n"
     "    }\n"
-    "    if (!document.styleSheets) { var __liwusStyleSheets = []; __liwusStyleSheets.item = function(i) { return this[i] || null; }; document.styleSheets = __liwusStyleSheets; }\n"
+    "    if (!document.styleSheets) { Object.defineProperty(document, 'styleSheets', { configurable: true, get: function() { var list = []; list.item = function(i) { return this[i] || null; }; var styles = document.getElementsByTagName ? document.getElementsByTagName('style') : []; for (var si = 0; si < styles.length; si++) { var node = styles[si], sheet = node.__liwusStyleSheet; if (!sheet && g.CSSStyleSheet) { sheet = new g.CSSStyleSheet(); sheet.ownerNode = node; sheet.parentStyleSheet = null; sheet.replaceSync(node.textContent || ''); node.__liwusStyleSheet = sheet; } if (sheet) list.push(sheet); } return list; } }); }\n"
     "    if (!document.forms) {\n"
     "      Object.defineProperty(document, 'forms', {\n"
     "        get: function() { return document.getElementsByTagName('form'); },\n"
