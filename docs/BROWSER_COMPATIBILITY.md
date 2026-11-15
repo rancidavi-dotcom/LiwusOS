@@ -322,8 +322,9 @@ execute; their presence does not imply standards-complete browser behavior:
     calls now add bounded `resource` entries with fetch/response timestamps,
     status and byte-size fields. The timeline is bounded to the page lifetime
     and does not expose kernel profiling or browser-network internals.
-  - Locale helpers: bounded fallbacks for `Intl.PluralRules`, `Intl.ListFormat`,
-    `Intl.Collator`, and `Intl.Segmenter` when the QuickJS build does not
+  - Locale helpers: bounded fallbacks for `Intl.DateTimeFormat`,
+    `Intl.RelativeTimeFormat`, `Intl.NumberFormat`, `Intl.PluralRules`,
+    `Intl.ListFormat`, `Intl.Collator`, and `Intl.Segmenter` when the QuickJS build does not
     provide them. Segmenter output is limited to word/grapheme boundaries and
     does not claim full locale-specific dictionary segmentation.
   - Modern ECMAScript collection helpers: guarded fallbacks for `Array.prototype.at`,
