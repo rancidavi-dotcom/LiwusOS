@@ -23,7 +23,6 @@
 #include "ata.h"
 #include "ahci.h"
 #include "gui/html_view.h"
-#include "gui/html_img.h"
 #include "gui/html_font.h"
 #include "gui/browser_url.h"
 #include "kernel/users.h"
@@ -87,6 +86,59 @@ static uint32_t desktop_screen_h(void) {
 static lv_img_dsc_t *g_desktop_logo_dsc;
 static lv_obj_t *g_desktop_logo;
 
+static uint16_t desktop_logo_le16(const uint8_t *p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t desktop_logo_le32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static lv_img_dsc_t *desktop_decode_bmp_logo(const uint8_t *raw, uint32_t len) {
+    if (!raw || len < 54 || raw[0] != 'B' || raw[1] != 'M') return NULL;
+    uint32_t data_offset = desktop_logo_le32(raw + 10);
+    int32_t width = (int32_t)desktop_logo_le32(raw + 18);
+    int32_t height = (int32_t)desktop_logo_le32(raw + 22);
+    uint16_t planes = desktop_logo_le16(raw + 26);
+    uint16_t bpp = desktop_logo_le16(raw + 28);
+    uint32_t compression = desktop_logo_le32(raw + 30);
+    if (width <= 0 || height == 0 || planes != 1 || bpp != 24 || compression != 0) return NULL;
+
+    uint32_t w = (uint32_t)width;
+    uint32_t h = height < 0 ? (uint32_t)(-height) : (uint32_t)height;
+    if (w > 1024 || h > 1024 || (uint64_t)w * h > (1024U * 1024U)) return NULL;
+    uint32_t row_bytes = (w * 3U + 3U) & ~3U;
+    if (data_offset > len || (uint64_t)data_offset + (uint64_t)row_bytes * h > len) return NULL;
+
+    uint8_t *pixels = (uint8_t *)kmalloc((size_t)w * h * 4U);
+    if (!pixels) return NULL;
+    for (uint32_t y = 0; y < h; y++) {
+        uint32_t src_y = height > 0 ? h - 1U - y : y;
+        const uint8_t *src = raw + data_offset + (size_t)src_y * row_bytes;
+        uint8_t *dst = pixels + (size_t)y * w * 4U;
+        for (uint32_t x = 0; x < w; x++) {
+            dst[x * 4U + 0] = src[x * 3U + 0];
+            dst[x * 4U + 1] = src[x * 3U + 1];
+            dst[x * 4U + 2] = src[x * 3U + 2];
+            dst[x * 4U + 3] = 0xFF;
+        }
+    }
+
+    lv_img_dsc_t *dsc = (lv_img_dsc_t *)kmalloc(sizeof(*dsc));
+    if (!dsc) {
+        kfree(pixels);
+        return NULL;
+    }
+    memset(dsc, 0, sizeof(*dsc));
+    dsc->header.cf = LV_IMG_CF_TRUE_COLOR_ALPHA;
+    dsc->header.w = (lv_coord_t)w;
+    dsc->header.h = (lv_coord_t)h;
+    dsc->data_size = w * h * 4U;
+    dsc->data = pixels;
+    return dsc;
+}
+
 static void desktop_logo_round_mask(lv_img_dsc_t *dsc) {
     if (!dsc || !dsc->data || dsc->header.w <= 0 || dsc->header.h <= 0) return;
 
@@ -98,8 +150,8 @@ static void desktop_logo_round_mask(lv_img_dsc_t *dsc) {
     if (radius > 3U) radius -= 3U;
     uint64_t radius_sq = (uint64_t)radius * radius;
 
-    /* html_img_decode returns BGRA32.  Remove only the outside corners; the
-     * circular artwork and its internal dark gradient remain untouched. */
+    /* The BMP decoder above produces BGRA32.  Remove only the outside
+     * corners so the pixel-art mark sits cleanly on the wallpaper. */
     uint8_t *pixels = (uint8_t *)(uintptr_t)dsc->data;
     for (uint32_t y = 0; y < h; y++) {
         for (uint32_t x = 0; x < w; x++) {
@@ -112,18 +164,16 @@ static void desktop_logo_round_mask(lv_img_dsc_t *dsc) {
     }
 }
 
-/* The desktop watermark is loaded from the same initrd asset shipped with the
- * system, so the branding is identical in Live USB and installed boots.  It
- * lives below windows and the top panel, and its reduced opacity keeps it from
- * competing with application content. */
+/* The desktop watermark is loaded from the pixel-art lince asset shipped in
+ * the initrd, so the branding is identical in Live USB and installed boots. */
 static void desktop_create_logo(lv_obj_t *scr) {
     if (!scr || g_desktop_logo) return;
 
     uint32_t raw_size = 0;
-    const uint8_t *raw = (const uint8_t *)initrd_get_file("LiwusOSlogo.png", &raw_size);
+    const uint8_t *raw = (const uint8_t *)initrd_get_file("liwus_logo.bmp", &raw_size);
     if (!raw || raw_size == 0) return;
 
-    g_desktop_logo_dsc = html_img_decode(raw, raw_size, 300, 300);
+    g_desktop_logo_dsc = desktop_decode_bmp_logo(raw, raw_size);
     if (!g_desktop_logo_dsc) {
         serial_print("[desktop] logo decode failed\n");
         return;
