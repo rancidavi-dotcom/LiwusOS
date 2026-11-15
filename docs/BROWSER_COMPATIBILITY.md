@@ -164,6 +164,9 @@ execute; their presence does not imply standards-complete browser behavior:
   - Form and window compatibility: `submit()`, `requestSubmit()`,
     `checkValidity()`, `reportValidity()`, `Promise.withResolvers()`,
     `window.open()`, and `getSelection()` are available as bounded shims.
+    Common `on*` DOM handler properties (`onclick`, `oninput`, `onchange`,
+    `onsubmit`, focus/keyboard/pointer and clipboard handlers) are wired to the
+    native bounded event dispatcher.
     Page lifecycle listeners receive bounded `DOMContentLoaded` and `load`
     dispatch after inline/module scripts complete.
   - `WebSocket`, `EventSource`, and `BroadcastChannel` are exposed so feature

@@ -181,6 +181,7 @@ int test_ring3_processes(void) {
             "output.style.backgroundColor!=='rgb(1, 2, 3)'||"
             "output.getAttribute('style')!=='background-color: rgb(1, 2, 3)')"
             "throw new Error('style or dataset bridge failed');"
+            "let clickSeen=false;output.onclick=function(ev){clickSeen=ev.type==='click'&&this===output;};output.click();if(!clickSeen)throw new Error('on* event handler bridge failed');output.onclick=null;"
             "output.style.setProperty('margin-left','4px','important');"
             "if(output.style.getPropertyValue('marginLeft')!=='4px !important'||"
             "output.style.getPropertyPriority('margin-left')!=='important'||"
