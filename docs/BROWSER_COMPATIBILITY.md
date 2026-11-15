@@ -118,7 +118,7 @@ execute; their presence does not imply standards-complete browser behavior:
     `Response.headers.get('content-type')` (whitespace is normalized for the
     bounded IPC record). Other response headers are still intentionally not
     exposed.
-  - `XMLHttpRequest`: partial multi-state polyfill (`UNSENT`, `OPENED`, `HEADERS_RECEIVED`, `LOADING`, `DONE`) backed by `fetch`.
+  - `XMLHttpRequest`: partial multi-state polyfill (`UNSENT`, `OPENED`, `HEADERS_RECEIVED`, `LOADING`, `DONE`) backed by `fetch`, with request/response headers, `responseURL`, typed JSON responses, abort/error/load events, and the standard static `Response.json/error/redirect` helpers.
   - Storage: `window.localStorage` and `window.sessionStorage` with standard Web Storage API and dynamic property access.
   - Web Crypto: `crypto.getRandomValues(typedArray)`, `crypto.randomUUID()`, and `crypto.subtle.digest()`.
   - Encoding & Codecs: `btoa()`, `atob()`, `TextEncoder`, `TextDecoder`.
