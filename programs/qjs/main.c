@@ -1180,7 +1180,7 @@ static const char qjs_web_env_bootstrap[] =
     "    });\n"
     "    if (!Object.getOwnPropertyDescriptor(proto, 'form')) Object.defineProperty(proto, 'form', { get: function() { var formId = this.getAttribute && this.getAttribute('form'); if (formId && document && document.getElementById) { var linked = document.getElementById(formId); if (linked && String(linked.tagName || '').toUpperCase() === 'FORM') return linked; } var node = this.parentNode; while (node) { if (String(node.tagName || '').toUpperCase() === 'FORM') return node; node = node.parentNode; } return null; }, configurable: true });\n"
     "\n"
-    "    var boolAttrs = ['disabled', 'checked', 'hidden', 'required', 'readOnly', 'multiple', 'selected', 'open', 'async', 'defer', 'noModule', 'controls', 'autoplay', 'loop', 'muted'];\n"
+    "    var boolAttrs = ['disabled', 'checked', 'hidden', 'required', 'readOnly', 'multiple', 'selected', 'open', 'async', 'defer', 'noModule', 'controls', 'autoplay', 'loop', 'muted', 'autofocus', 'inert'];\n"
     "    boolAttrs.forEach(function(prop) {\n"
     "      var attr = prop.toLowerCase();\n"
     "      if (!Object.getOwnPropertyDescriptor(proto, prop)) {\n"

@@ -108,7 +108,9 @@ execute; their presence does not imply standards-complete browser behavior:
     `before()`, `after()`, `remove()`, and `innerText`. Common ARIA IDL
     reflections (`ariaLabel`, `ariaCurrent`, `ariaExpanded`, `ariaControls`,
     `ariaSelected`, `ariaPressed`, `ariaDescribedby`, and related state names)
-    round-trip through their `aria-*` attributes.
+    round-trip through their `aria-*` attributes. Common boolean state
+    properties such as `hidden`, `inert`, `autofocus`, `async`, and `defer`
+    are also reflected through their HTML attributes.
   - Collection compatibility: bounded snapshot results from `querySelectorAll()`
     are branded as `NodeList`, while `getElementsByTagName()` and
     `getElementsByClassName()` use `HTMLCollection`; `children` and `childNodes`
