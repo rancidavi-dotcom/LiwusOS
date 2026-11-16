@@ -378,7 +378,10 @@ return pid;
 #define LIWUS_LINUX_AF_UNIX 1
 #define LIWUS_LINUX_SOCK_STREAM 1
 #define LIWUS_LINUX_SOCKET_PATH_MAX 108
-#define LIWUS_LINUX_SOCKET_RX_CAP 65536
+/* X11 GetImage replies can exceed 2 MiB at 1024x768x24.  Keep enough
+ * per-endpoint buffering for one complete desktop frame; returning a short
+ * write for a large X11 reply makes the server drop the client connection. */
+#define LIWUS_LINUX_SOCKET_RX_CAP (4U * 1024U * 1024U)
 
 #define PIPE_BUF_SIZE 4096
 
