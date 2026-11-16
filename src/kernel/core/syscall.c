@@ -372,6 +372,7 @@ return pid;
 #define FD_TYPE_FILE 1
 #define FD_TYPE_SOCKET 2
 #define FD_TYPE_PIPE 3
+#define FD_TYPE_EPOLL 4
 #define KERNEL_ESPIPE 29
 
 #define PIPE_BUF_SIZE 4096
@@ -435,6 +436,8 @@ void sys_fd_put(kfile_t *file) {
       kfree(p);
       if (live_pipe_objects) live_pipe_objects--;
     }
+  } else if (file->type == FD_TYPE_EPOLL && file->socket_ptr) {
+    kfree(file->socket_ptr);
   } else if (file->type == FD_TYPE_FILE && file->socket_ptr) {
     /* Compatibility for kernel-created file entries without a description. */
     vfs_node_put((fs_node_t *)file->socket_ptr);

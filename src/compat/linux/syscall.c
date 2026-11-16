@@ -105,6 +105,7 @@
                               LINUX_CLONE_THREAD)
 #define LIWUS_FD_TYPE_FILE 1
 #define LIWUS_FD_TYPE_PIPE 3
+#define LIWUS_FD_TYPE_EPOLL 4
 #define LIWUS_FD_ACCESS_READ 0x01
 #define LIWUS_FD_ACCESS_WRITE 0x02
 #define LINUX_MAP_SHARED          0x000001ULL
@@ -121,6 +122,37 @@
 /* Serialize Linux VM mutations with each other and with fork's VM snapshot.
  * The file read may block in the VFS, so this must be a sleepable lock. */
 static sleep_mutex_t linux_vm_lock = SLEEP_MUTEX_INITIALIZER;
+
+typedef struct {
+  uint32_t watched;
+} linux_epoll_instance_t;
+
+static int linux_epoll_create_fd(void) {
+  if (!current_task || !current_task->process) return -LINUX_EMFILE;
+  int fd = -1;
+  for (int i = 3; i < 32; i++) {
+    if (current_task->process->file_descriptors[i].type == 0) {
+      fd = i;
+      break;
+    }
+  }
+  if (fd < 0) return -LINUX_EMFILE;
+  linux_epoll_instance_t *instance = (linux_epoll_instance_t *)kmalloc(
+      sizeof(linux_epoll_instance_t));
+  if (!instance) return -LINUX_ENOMEM;
+  instance->watched = 0;
+  kfile_t *file = &current_task->process->file_descriptors[fd];
+  memset(file, 0, sizeof(*file));
+  file->type = LIWUS_FD_TYPE_EPOLL;
+  file->socket_ptr = instance;
+  return fd;
+}
+
+static int linux_epoll_fd_valid(int fd) {
+  return current_task && current_task->process && fd >= 0 && fd < 32 &&
+         current_task->process->file_descriptors[fd].type ==
+             LIWUS_FD_TYPE_EPOLL;
+}
 
 extern int sys_read(int fd, void *buf, uint32_t count);
 extern int sys_write(int fd, const void *buf, uint32_t count);
@@ -1299,6 +1331,16 @@ void linux_syscall_handler(registers_t *regs) {
       regs->rax = (uint64_t)(int64_t)rc;
       break;
     }
+    case 86: { /* link: X servers use this to publish the display lock file */
+      /* SDFS has no hard-link primitive yet.  A same-filesystem rename gives
+       * the lock-file protocol the required atomic publication semantics for
+       * the single-process Linux compatibility environment. */
+      int rc = sys_rename((const char *)regs->rdi,
+                          (const char *)regs->rsi);
+      regs->rax = rc == -1 ? (uint64_t)-(int64_t)LINUX_ENOENT
+                           : (uint64_t)(int64_t)rc;
+      break;
+    }
     case 264: { /* renameat: translate both directory-fd path bases */
       int olddirfd = (int)regs->rdi;
       int newdirfd = (int)regs->rdx;
@@ -1800,6 +1842,57 @@ void linux_syscall_handler(registers_t *regs) {
     case 39: /* getpid */
       regs->rax = (uint64_t)sys_getpid();
       break;
+    case 7: { /* poll: the current descriptor set has no readiness backend */
+      uint64_t nfds = regs->rsi;
+      if (nfds > 1024 || (nfds && !regs->rdi) ||
+          (nfds && validate_user_write((void *)regs->rdi,
+                                       nfds * 8ULL) < 0)) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+        break;
+      }
+      int timeout = (int)regs->rdx;
+      if (timeout > 0) task_sleep_ms((uint32_t)(timeout > 100 ? 100 : timeout));
+      else if (timeout < 0) task_sleep_ms(100);
+      regs->rax = 0;
+      break;
+    }
+    case 213: /* epoll_create: allocate an inert event queue for probes */
+      if (regs->rdi == 0) {
+        regs->rax = (uint64_t)(int64_t)linux_epoll_create_fd();
+      } else {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+      }
+      break;
+    case 291: /* epoll_create1 */
+      if (regs->rdi & ~LINUX_O_CLOEXEC) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+      } else {
+        int fd = linux_epoll_create_fd();
+        if (fd >= 0 && (regs->rdi & LINUX_O_CLOEXEC))
+          current_task->process->file_descriptors[fd].descriptor_flags =
+              KFILE_FLAG_CLOEXEC;
+        regs->rax = (uint64_t)(int64_t)fd;
+      }
+      break;
+    case 233: /* epoll_ctl: accept watches until a real event backend exists */
+      if (!linux_epoll_fd_valid((int)regs->rdi)) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EBADF;
+      } else {
+        regs->rax = 0;
+      }
+      break;
+    case 232: /* epoll_wait */
+    case 281: { /* epoll_pwait */
+      if (!linux_epoll_fd_valid((int)regs->rdi) || regs->rdx == 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+        break;
+      }
+      int timeout = (int)regs->r10;
+      if (timeout > 0) task_sleep_ms((uint32_t)(timeout > 100 ? 100 : timeout));
+      else if (timeout < 0) task_sleep_ms(100);
+      regs->rax = 0;
+      break;
+    }
     case 41: /* socket: network sockets are not exposed to Linux guests yet */
       /* Returning the Linux error for an unsupported address family is
        * important here: SDL/Unity audio and discovery libraries probe for

@@ -141,11 +141,13 @@ The source-side compile gate is passed. The LiwusOS runtime gate is not:
 | Load the Vita build in LiwusOS | Not compatible | Vita ARM32 IL2CPP/SUPRX output and Vita APIs |
 | Start the Linux player's ELF interpreter | Passed in QEMU | The original Granny executable reaches glibc's shared library loader |
 | Load shared libraries | Passed for the staged Unity build in QEMU | glibc transfers control to Unity, which loads Mono with `dlopen` |
-| Initialize Mono | In progress | `/proc` (`maps`, `stat`, `readlink`), signal masks, `getrlimit(RLIMIT_STACK)`, JIT `MAP_32BIT`/RWX, futexes, TLS, POSIX scheduling and socket-probe errors now let Mono create its worker pool; the player then reaches SDL bootstrap and reports `Display 0 '0': 1024x768` |
+| Initialize Mono | In progress | `/proc` (`maps`, `stat`, `readlink`), signal masks, `getrlimit(RLIMIT_STACK)`, JIT `MAP_32BIT`/RWX, futexes, TLS, POSIX scheduling, `poll`/`epoll` and socket-probe errors now let Mono create its worker pool; the player then reaches SDL bootstrap and reports `Display 0 '0': 1024x768` |
 | Run Unity graphics/input/audio on LiwusOS | Pending | The Linux player still needs an X11-compatible window/display path (or an SDL framebuffer backend), plus GL/input/audio services |
 | Package a functional Granny `.lxe` | Pending | The original player has not reached Unity's menu on LiwusOS; no screenshot or package is claimed |
 
-The current route reuses the Linux Unity player and its Mono runtime. A probe
+The current route reuses the Linux Unity player and its Mono runtime. The Linux
+compatibility layer now includes inert `poll`/`epoll` queues and display-lock
+file publication so an Xvfb probe advances to its Unix-socket listener. A probe
 with `SDL_VIDEODRIVER=dummy` and `SDL_AUDIODRIVER=dummy` reaches Unity's display
 enumeration but produces no frame, so it is not a menu screenshot. The next
 checkpoint is still the windowing backend: no Unity menu is visible until Liwus
