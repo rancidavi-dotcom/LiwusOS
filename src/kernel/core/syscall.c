@@ -411,6 +411,10 @@ typedef struct liwus_linux_socket {
   uint32_t rx_read;
   uint32_t rx_write;
   uint32_t rx_count;
+  uint32_t references;
+  int epoll_fd;
+  uint32_t epoll_events;
+  uint64_t epoll_data;
 } liwus_linux_socket_t;
 
 static liwus_linux_socket_t *linux_unix_sockets;
@@ -441,6 +445,7 @@ int liwus_linux_socket_create(int domain, int type, int protocol) {
   socket->domain = domain;
   socket->type = type;
   socket->protocol = protocol;
+  socket->references = 1;
   kfile_t *file = &get_fd_table()[fd];
   memset(file, 0, sizeof(*file));
   file->type = FD_TYPE_SOCKET;
@@ -455,6 +460,18 @@ static int linux_socket_copy_path(const void *user_addr, uint32_t length,
   if (copy_from_user(address, user_addr, length) < 0) return -14;
   uint16_t family = (uint16_t)address[0] | ((uint16_t)address[1] << 8);
   if (family != LIWUS_LINUX_AF_UNIX) return -97;
+  /* Linux's X11 transport first tries the abstract namespace.  SDFS has no
+   * socket inodes, so represent an abstract address with an internal '@'
+   * prefix and match it through the same in-kernel endpoint table. */
+  if (address[2] == '\0') {
+    uint32_t abstract_len = length > 3 ? length - 3 : 0;
+    if (abstract_len >= LIWUS_LINUX_SOCKET_PATH_MAX - 1)
+      abstract_len = LIWUS_LINUX_SOCKET_PATH_MAX - 2;
+    path[0] = '@';
+    memcpy(path + 1, address + 3, abstract_len);
+    path[abstract_len + 1] = '\0';
+    return abstract_len ? 0 : -22;
+  }
   uint32_t path_len = length - 2;
   if (path_len >= LIWUS_LINUX_SOCKET_PATH_MAX)
     path_len = LIWUS_LINUX_SOCKET_PATH_MAX - 1;
@@ -498,13 +515,16 @@ int liwus_linux_socket_connect(int fd, const void *user_addr, uint32_t length) {
       server = it;
       break;
     }
-  if (!server) return -111; /* ECONNREFUSED */
+  if (!server) return -111;
   liwus_linux_socket_t *accepted = (liwus_linux_socket_t *)kmalloc(sizeof(*accepted));
   if (!accepted) return -12;
   memset(accepted, 0, sizeof(*accepted));
   accepted->domain = server->domain;
   accepted->type = server->type;
   accepted->protocol = server->protocol;
+  strncpy(accepted->path, server->path, sizeof(accepted->path) - 1);
+  accepted->path[sizeof(accepted->path) - 1] = '\0';
+  accepted->references = 1; /* pending queue owns the initial reference */
   accepted->connected = true;
   accepted->peer = client;
   client->connected = true;
@@ -588,9 +608,73 @@ int liwus_linux_socket_readable(int fd) {
          socket->peer_closed;
 }
 
+int liwus_linux_socket_epoll_config(int fd, int epfd, uint32_t events,
+                                    uint64_t data, int enable) {
+  liwus_linux_socket_t *socket = linux_socket_from_fd(fd);
+  if (!socket) return -9;
+  if (enable) {
+    socket->epoll_fd = epfd;
+    socket->epoll_events = events;
+    socket->epoll_data = data;
+  } else if (socket->epoll_fd == epfd) {
+    socket->epoll_fd = 0;
+    socket->epoll_events = 0;
+    socket->epoll_data = 0;
+  }
+  return 0;
+}
+
+int liwus_linux_socket_epoll_event(int fd, int epfd, uint32_t *events,
+                                   uint64_t *data) {
+  liwus_linux_socket_t *socket = linux_socket_from_fd(fd);
+  if (!socket || socket->epoll_fd != epfd) {
+    return 0;
+  }
+  if (events) *events = socket->epoll_events;
+  if (data) *data = socket->epoll_data;
+  return 1;
+}
+
+int liwus_linux_socket_name(int fd, void *user_addr, uint32_t *user_len,
+                            int peer) {
+  liwus_linux_socket_t *socket = linux_socket_from_fd(fd);
+  if (!socket || !user_len) return -9;
+  uint32_t supplied = 0;
+  if (copy_from_user(&supplied, user_len, sizeof(supplied)) < 0)
+    return -14;
+  if (!user_addr && supplied) return -14;
+  liwus_linux_socket_t *named = peer && socket->peer ? socket->peer : socket;
+  uint8_t address[128];
+  memset(address, 0, sizeof(address));
+  address[0] = LIWUS_LINUX_AF_UNIX;
+  uint32_t required = 2;
+  if (named->path[0]) {
+    if (named->path[0] == '@') {
+      uint32_t n = (uint32_t)strlen(named->path + 1);
+      if (n > sizeof(address) - 3) n = sizeof(address) - 3;
+      memcpy(address + 3, named->path + 1, n);
+      required += n + 1;
+    } else {
+      uint32_t n = (uint32_t)strlen(named->path);
+      if (n > sizeof(address) - 3) n = sizeof(address) - 3;
+      memcpy(address + 2, named->path, n);
+      required += n + 1;
+    }
+  }
+  uint32_t copied = supplied < required ? supplied : required;
+  if ((copied && copy_to_user(user_addr, address, copied) < 0) ||
+      copy_to_user(user_len, &required, sizeof(required)) < 0)
+    return -14;
+  return 0;
+}
+
 void liwus_linux_socket_release(void *ptr) {
   liwus_linux_socket_t *socket = (liwus_linux_socket_t *)ptr;
   if (!socket) return;
+  if (socket->references > 1) {
+    socket->references--;
+    return;
+  }
   if (socket->bound) {
     liwus_linux_socket_t **link = &linux_unix_sockets;
     while (*link && *link != socket) link = &(*link)->next_global;
@@ -628,6 +712,9 @@ void sys_fd_get(kfile_t *file) {
     if (file->base_addr == 1) p->readers++;
     else if (file->base_addr == 2) p->writers++;
     task_scheduler_unlock(flags);
+  } else if (file->type == FD_TYPE_SOCKET && file->socket_ptr) {
+    liwus_linux_socket_t *socket = (liwus_linux_socket_t *)file->socket_ptr;
+    socket->references++;
   }
 }
 
@@ -658,7 +745,7 @@ void sys_fd_put(kfile_t *file) {
       if (live_pipe_objects) live_pipe_objects--;
     }
   } else if (file->type == FD_TYPE_EPOLL && file->socket_ptr) {
-    kfree(file->socket_ptr);
+    /* Linux epoll compatibility state is kept in a fixed kernel pool. */
   } else if (file->type == FD_TYPE_SOCKET && file->socket_ptr) {
     liwus_linux_socket_release(file->socket_ptr);
   } else if (file->type == FD_TYPE_FILE && file->socket_ptr) {

@@ -1348,7 +1348,7 @@ void move_to_user_mode() {
          ");
 }
 
-int fork_process(registers_t *regs) {
+int fork_process_with_stack(registers_t *regs, uint64_t user_stack) {
 
   task_t *parent = (task_t *)current_task;
   if (!parent || !regs) return -ENOMEM;
@@ -1409,6 +1409,7 @@ int fork_process(registers_t *regs) {
 
   registers_t *new_regs = (registers_t *)(uint64_t)new_stack_ptr;
   new_regs->rax = 0;
+  if (user_stack) new_regs->rsp = user_stack;
   new_task->stack_top = new_stack_ptr;
 
   // Copy heap limits and cwd
@@ -1451,6 +1452,10 @@ int fork_process(registers_t *regs) {
 
   asm volatile("sti");
   return child_process->pid;
+}
+
+int fork_process(registers_t *regs) {
+  return fork_process_with_stack(regs, 0);
 }
 
 int task_clone_thread(registers_t *regs, uint64_t user_stack,

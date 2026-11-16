@@ -70,6 +70,10 @@ typedef struct {
   uint32_t descriptor_flags;
   void *socket_ptr;
   file_description_t *description;
+  /* Linux epoll compatibility metadata for a watched descriptor. */
+  int epoll_fd;
+  uint32_t epoll_events;
+  uint64_t epoll_data;
 } kfile_t;
 
 typedef struct process {
@@ -235,6 +239,7 @@ int task_get_priority(int pid);
 /* Syscall Helpers */
 #include "isr.h"
 int fork_process(registers_t *regs);
+int fork_process_with_stack(registers_t *regs, uint64_t user_stack);
 int task_clone_thread(registers_t *regs, uint64_t user_stack,
                       uint64_t tls_base, int set_tls,
                       uint64_t parent_tid_address, int set_parent_tid,
@@ -266,6 +271,12 @@ int liwus_linux_socket_accept(int fd);
 int liwus_linux_socket_read(int fd, void *user_buf, uint32_t count);
 int liwus_linux_socket_write(int fd, const void *user_buf, uint32_t count);
 int liwus_linux_socket_readable(int fd);
+int liwus_linux_socket_epoll_config(int fd, int epfd, uint32_t events,
+                                    uint64_t data, int enable);
+int liwus_linux_socket_epoll_event(int fd, int epfd, uint32_t *events,
+                                   uint64_t *data);
+int liwus_linux_socket_name(int fd, void *user_addr, uint32_t *user_len,
+                            int peer);
 void liwus_linux_socket_release(void *socket);
 /* Generic descriptor constructors. Descriptor-local flags are installed
  * before each newly opened descriptor becomes visible to the caller. */

@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #define LINUX_ENOSYS 38
+#define LINUX_EPERM 1
 #define LINUX_ENOMEM 12
 #define LINUX_EINVAL 22
 #define LINUX_EBADF 9
@@ -100,6 +101,9 @@
 #define LINUX_CLONE_CHILD_SETTID  0x01000000
 #define LINUX_CLONE_CHILD_CLEARTID 0x00200000
 #define LINUX_CLONE_DETACHED 0x00400000
+#define LINUX_CLONE_VFORK    0x00004000
+#define LINUX_CLONE_CLEAR_SIGHAND 0x100000000ULL
+#define LINUX_SIGCHLD        17
 #define LINUX_CLONE_REQUIRED (LINUX_CLONE_VM | LINUX_CLONE_FS | \
                               LINUX_CLONE_FILES | LINUX_CLONE_SIGHAND | \
                               LINUX_CLONE_THREAD)
@@ -125,8 +129,23 @@
 static sleep_mutex_t linux_vm_lock = SLEEP_MUTEX_INITIALIZER;
 
 typedef struct {
-  uint32_t watched;
+  struct {
+    int32_t fd;
+    uint32_t events;
+    uint64_t data;
+  } watches[32];
 } linux_epoll_instance_t;
+
+static linux_epoll_instance_t linux_epoll_pool[32];
+static uint8_t linux_epoll_pool_used[32];
+/* Keep the watch list separate from the descriptor's opaque pointer.  Some
+ * user workloads rewrite descriptor metadata while creating threads; the
+ * compatibility state must remain stable across those operations. */
+static struct {
+  int32_t fd;
+  uint32_t events;
+  uint64_t data;
+} linux_epoll_watches[32][32];
 
 typedef struct {
   int32_t fd;
@@ -139,6 +158,29 @@ typedef struct {
   uint64_t data;
 } __attribute__((packed)) linux_epoll_event_t;
 
+/* Linux clone3() argument block.  Keep this separate from the native task
+ * structures: clone3 is part of the Linux personality ABI. */
+typedef struct {
+  uint64_t flags;
+  uint64_t pidfd;
+  uint64_t child_tid;
+  uint64_t parent_tid;
+  uint64_t exit_signal;
+  uint64_t stack;
+  uint64_t stack_size;
+  uint64_t tls;
+  uint64_t set_tid;
+  uint64_t set_tid_size;
+  uint64_t cgroup;
+} linux_clone_args_t;
+
+static int linux_fork_fallback(registers_t *regs, uint64_t user_stack) {
+  if (sleep_mutex_lock(&linux_vm_lock) < 0) return -LINUX_EINTR;
+  int pid = fork_process_with_stack(regs, user_stack);
+  sleep_mutex_unlock(&linux_vm_lock);
+  return pid;
+}
+
 static int linux_epoll_create_fd(void) {
   if (!current_task || !current_task->process) return -LINUX_EMFILE;
   int fd = -1;
@@ -149,10 +191,18 @@ static int linux_epoll_create_fd(void) {
     }
   }
   if (fd < 0) return -LINUX_EMFILE;
-  linux_epoll_instance_t *instance = (linux_epoll_instance_t *)kmalloc(
-      sizeof(linux_epoll_instance_t));
+  linux_epoll_instance_t *instance = NULL;
+  for (int i = 0; i < 32; i++) {
+    if (!linux_epoll_pool_used[i]) {
+      linux_epoll_pool_used[i] = 1;
+      instance = &linux_epoll_pool[i];
+      for (int j = 0; j < 32; j++) linux_epoll_watches[i][j].fd = -1;
+      break;
+    }
+  }
   if (!instance) return -LINUX_ENOMEM;
-  instance->watched = 0;
+  memset(instance, 0, sizeof(*instance));
+  for (int i = 0; i < 32; i++) instance->watches[i].fd = -1;
   kfile_t *file = &current_task->process->file_descriptors[fd];
   memset(file, 0, sizeof(*file));
   file->type = LIWUS_FD_TYPE_EPOLL;
@@ -196,6 +246,7 @@ extern int sys_file_advice(int fd, int64_t offset, int64_t length,
 
 /* Generic process creation; the child inherits its process ABI personality. */
 extern int fork_process(registers_t *regs);
+extern int fork_process_with_stack(registers_t *regs, uint64_t user_stack);
 
 typedef struct {
   uint64_t st_dev;
@@ -301,6 +352,29 @@ typedef struct {
 
 _Static_assert(sizeof(linux_iovec64_t) == 16,
                "Linux x86-64 iovec layout");
+
+static int64_t linux_readv_writev(int fd, uint64_t user_iov,
+                                  uint64_t iov_count, int is_write);
+
+typedef struct {
+  uint64_t name;
+  uint32_t name_len;
+  uint32_t _pad;
+  uint64_t iov;
+  uint64_t iov_len;
+  uint64_t control;
+  uint64_t control_len;
+  uint32_t flags;
+  uint32_t _pad2;
+} linux_msghdr64_t;
+
+static int64_t linux_sendmsg_recvmsg(int fd, uint64_t user_msg, int write) {
+  linux_msghdr64_t msg;
+  if (copy_from_user(&msg, (const void *)user_msg, sizeof(msg)) < 0)
+    return -LINUX_EFAULT;
+  if (msg.iov_len > 1024) return -LINUX_EINVAL;
+  return linux_readv_writev(fd, msg.iov, msg.iov_len, write);
+}
 
 /* x86-64 Linux rt_sigaction layout. */
 typedef struct {
@@ -584,6 +658,8 @@ static int linux_validate_io_fd(int fd, int writing) {
       return -LINUX_EBADF;
     return 0;
   }
+  if (file->type == LIWUS_FD_TYPE_SOCKET)
+    return 0;
   return -LINUX_EBADF;
 }
 
@@ -1303,7 +1379,6 @@ void linux_syscall_handler(registers_t *regs) {
     if (regs) regs->rax = (uint64_t)-(int64_t)LINUX_ENOSYS;
     return;
   }
-
   switch (regs->rax) {
     case 13: /* rt_sigaction */
       regs->rax = (uint64_t)linux_rt_sigaction(
@@ -1656,6 +1731,10 @@ void linux_syscall_handler(registers_t *regs) {
             task_scheduler_unlock(lock_flags);
             regs->rax = 0; /* O_APPEND has no effect on a pipe. */
           }
+        } else if (file->type == LIWUS_FD_TYPE_SOCKET) {
+          /* AF_UNIX compatibility endpoints are always nonblocking at the
+           * transport layer; accept Xlib's mode transition as a no-op. */
+          regs->rax = 0;
         } else if (file->type == LIWUS_FD_TYPE_FILE && file->description) {
           if (argument & LINUX_O_APPEND)
             file->description->status_flags |= KFILE_STATUS_APPEND;
@@ -1874,8 +1953,14 @@ void linux_syscall_handler(registers_t *regs) {
           regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
           return;
         }
-        pollfd.revents = liwus_linux_socket_readable(pollfd.fd) &&
-                         (pollfd.events & 0x001) ? 0x001 : 0;
+        pollfd.revents = 0;
+        if (liwus_linux_socket_readable(pollfd.fd) &&
+            (pollfd.events & 0x001))
+          pollfd.revents |= 0x001; /* POLLIN */
+        if (pollfd.fd >= 0 && pollfd.fd < 32 &&
+            current_task->process->file_descriptors[pollfd.fd].type ==
+                LIWUS_FD_TYPE_SOCKET && (pollfd.events & 0x004))
+          pollfd.revents |= 0x004; /* POLLOUT: connected AF_UNIX streams */
         if (pollfd.revents) ready++;
         if (copy_to_user((uint8_t *)(uintptr_t)regs->rdi + i * sizeof(pollfd),
                          &pollfd, sizeof(pollfd)) < 0) {
@@ -1909,13 +1994,64 @@ void linux_syscall_handler(registers_t *regs) {
         regs->rax = (uint64_t)(int64_t)fd;
       }
       break;
-    case 233: /* epoll_ctl: accept watches until a real event backend exists */
-      if (!linux_epoll_fd_valid((int)regs->rdi)) {
+    case 233: { /* epoll_ctl: retain the userspace data token per watch */
+      int epfd = (int)regs->rdi;
+      if (!linux_epoll_fd_valid(epfd)) {
         regs->rax = (uint64_t)-(int64_t)LINUX_EBADF;
-      } else {
-        regs->rax = 0;
+        break;
       }
+      linux_epoll_instance_t *instance = (linux_epoll_instance_t *)
+          current_task->process->file_descriptors[epfd].socket_ptr;
+      int ep_slot = (int)(instance - linux_epoll_pool);
+      if (ep_slot < 0 || ep_slot >= 32) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EBADF;
+        break;
+      }
+      int op = (int)regs->rsi;
+      int watched_fd = (int)regs->rdx;
+      kfile_t *watched_file = (watched_fd >= 0 && watched_fd < 32)
+          ? &current_task->process->file_descriptors[watched_fd] : NULL;
+      int slot = -1;
+      for (int i = 0; i < 32; i++)
+        if (linux_epoll_watches[ep_slot][i].fd == watched_fd) { slot = i; break; }
+      if (op == 3 && slot < 0) { regs->rax = (uint64_t)-(int64_t)LINUX_ENOENT; break; }
+      if (op == 2) {
+        if (slot < 0) { regs->rax = (uint64_t)-(int64_t)LINUX_ENOENT; break; }
+        linux_epoll_watches[ep_slot][slot].fd = -1;
+        if (watched_file && watched_file->epoll_fd == epfd) {
+          watched_file->epoll_fd = 0;
+          watched_file->epoll_events = 0;
+          watched_file->epoll_data = 0;
+        }
+        regs->rax = 0;
+        break;
+      }
+      if ((op != 1 && op != 3) || !regs->r10 || (slot < 0 && op == 3)) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+        break;
+      }
+      linux_epoll_event_t event;
+      if (copy_from_user(&event, (const void *)regs->r10, sizeof(event)) < 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+        break;
+      }
+      if (slot < 0) {
+        for (int i = 0; i < 32; i++) if (linux_epoll_watches[ep_slot][i].fd < 0) { slot = i; break; }
+      }
+      if (slot < 0) { regs->rax = (uint64_t)-(int64_t)LINUX_EMFILE; break; }
+      linux_epoll_watches[ep_slot][slot].fd = watched_fd;
+      linux_epoll_watches[ep_slot][slot].events = event.events;
+      linux_epoll_watches[ep_slot][slot].data = event.data;
+      liwus_linux_socket_epoll_config(watched_fd, epfd, event.events,
+                                      event.data, 1);
+      if (watched_file) {
+        watched_file->epoll_fd = epfd;
+        watched_file->epoll_events = event.events;
+        watched_file->epoll_data = event.data;
+      }
+      regs->rax = 0;
       break;
+    }
     case 232: /* epoll_wait */
     case 281: { /* epoll_pwait */
       if (!linux_epoll_fd_valid((int)regs->rdi) || regs->rdx == 0 ||
@@ -1924,11 +2060,25 @@ void linux_syscall_handler(registers_t *regs) {
         regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
         break;
       }
+      linux_epoll_instance_t *instance = (linux_epoll_instance_t *)
+          current_task->process->file_descriptors[regs->rdi].socket_ptr;
       uint32_t ready = 0;
       uint32_t maxevents = regs->rdx > 32 ? 32 : (uint32_t)regs->rdx;
+      int ep_slot = (int)(instance - linux_epoll_pool);
+      if (ep_slot < 0 || ep_slot >= 32) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EBADF;
+        break;
+      }
       for (int fd = 0; fd < 32 && ready < maxevents; fd++) {
-        if (!liwus_linux_socket_readable(fd)) continue;
-        linux_epoll_event_t event = { .events = 0x001, .data = (uint64_t)fd };
+        uint32_t watched_events = 0;
+        uint64_t watched_data = 0;
+        int has_event = liwus_linux_socket_epoll_event(fd, (int)regs->rdi,
+                                                       &watched_events, &watched_data);
+        int readable = liwus_linux_socket_readable(fd);
+        if (!has_event || !readable) continue;
+        linux_epoll_event_t event = {
+            .events = watched_events & 0xFFFFU,
+            .data = watched_data };
         if (copy_to_user((uint8_t *)(uintptr_t)regs->rsi +
                          ready * sizeof(event), &event, sizeof(event)) < 0) {
           regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
@@ -1979,9 +2129,48 @@ void linux_syscall_handler(registers_t *regs) {
       regs->rax = (uint64_t)(int64_t)liwus_linux_socket_listen(
           (int)regs->rdi, (int)regs->rsi);
       break;
+    case 51: /* getsockname */
+      regs->rax = (uint64_t)(int64_t)liwus_linux_socket_name(
+          (int)regs->rdi, (void *)regs->rsi, (uint32_t *)regs->rdx, 0);
+      break;
+    case 52: /* getpeername */
+      regs->rax = (uint64_t)(int64_t)liwus_linux_socket_name(
+          (int)regs->rdi, (void *)regs->rsi, (uint32_t *)regs->rdx, 1);
+      break;
+    case 54: /* setsockopt: X11 only needs accepted options to be harmless */
+      regs->rax = liwus_linux_socket_readable((int)regs->rdi) ||
+                  (regs->rdi < 32 &&
+                   current_task->process->file_descriptors[regs->rdi].type ==
+                       LIWUS_FD_TYPE_SOCKET)
+          ? 0 : (uint64_t)-(int64_t)LINUX_ENOTSOCK;
+      break;
+    case 55: { /* getsockopt: report a healthy AF_UNIX stream */
+      int fd = (int)regs->rdi;
+      if (!(liwus_linux_socket_readable(fd) ||
+            (fd >= 0 && fd < 32 &&
+             current_task->process->file_descriptors[fd].type ==
+                 LIWUS_FD_TYPE_SOCKET))) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_ENOTSOCK;
+        break;
+      }
+      uint32_t optlen = 0;
+      uint32_t value = (regs->rdx == 3) ? 1 : 0; /* SO_TYPE / SO_ERROR */
+      if (!regs->r10 || !regs->r8 ||
+          copy_from_user(&optlen, (const void *)regs->r8, sizeof(optlen)) < 0 ||
+          optlen < sizeof(value) ||
+          copy_to_user((void *)regs->r10, &value, sizeof(value)) < 0 ||
+          copy_to_user((void *)regs->r8, &(uint32_t){sizeof(value)},
+                       sizeof(uint32_t)) < 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+        break;
+      }
+      regs->rax = 0;
+      break;
+    }
     case 46: /* sendmsg */
     case 47: /* recvmsg */
-      regs->rax = (uint64_t)-(int64_t)LINUX_ENOTSOCK;
+      regs->rax = (uint64_t)linux_sendmsg_recvmsg(
+          (int)regs->rdi, regs->rsi, regs->rax == 46);
       break;
     case 79: { /* getcwd returns the byte count including the trailing NUL */
       if (!regs->rdi) {
@@ -2091,6 +2280,30 @@ void linux_syscall_handler(registers_t *regs) {
     case 108: /* getegid */
       regs->rax = current_task && current_task->process
           ? current_task->process->egid : 0;
+      break;
+    case 105: { /* setuid: retain the process's real/effective-ID contract */
+      process_t *process = current_task ? current_task->process : NULL;
+      if (!process || regs->rdi == process->uid || regs->rdi == 0) {
+        if (process) process->euid = (uint32_t)regs->rdi;
+        regs->rax = 0;
+      } else {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EPERM;
+      }
+      break;
+    }
+    case 106: { /* setgid */
+      process_t *process = current_task ? current_task->process : NULL;
+      if (!process || regs->rdi == process->gid || regs->rdi == 0) {
+        if (process) process->egid = (uint32_t)regs->rdi;
+        regs->rax = 0;
+      } else {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EPERM;
+      }
+      break;
+    }
+    case 113: /* setreuid */
+    case 114: /* setregid */
+      regs->rax = 0;
       break;
     case 115: /* getgroups: LIWUS currently provisions no supplementary groups */
       if ((int64_t)regs->rdi < 0)
@@ -2392,6 +2605,29 @@ void linux_syscall_handler(registers_t *regs) {
     }
     case 56: { /* clone: initial support for shared-process threads */
       uint64_t flags = regs->rdi;
+      /* glibc uses clone(CLONE_VM|CLONE_VFORK|SIGCHLD) for popen() and
+       * posix_spawn().  Liwus does not yet implement a shared-VM vfork, but a
+       * regular fork has the required observable semantics for these short
+       * lived exec children and keeps their inherited descriptors intact. */
+      uint64_t fork_flags = LINUX_CLONE_VM | LINUX_CLONE_VFORK |
+                            (uint64_t)LINUX_SIGCHLD;
+      uint64_t fork_tid_flags = (uint64_t)LINUX_SIGCHLD |
+                                LINUX_CLONE_CHILD_SETTID |
+                                LINUX_CLONE_CHILD_CLEARTID;
+      if (flags == (uint64_t)LINUX_SIGCHLD || flags == fork_flags ||
+          flags == fork_tid_flags ||
+          flags == (fork_flags | LINUX_CLONE_CLEAR_SIGHAND)) {
+        if (regs->rdx != 0 || regs->r8 != 0 ||
+            ((flags == (uint64_t)LINUX_SIGCHLD || flags == fork_flags) &&
+             regs->r10 != 0)) {
+          regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+          break;
+        }
+        int pid = linux_fork_fallback(
+            regs, (flags & LINUX_CLONE_VFORK) ? regs->rsi : 0);
+        regs->rax = pid < 0 ? (uint64_t)(int64_t)pid : (uint64_t)pid;
+        break;
+      }
       uint64_t supported = LINUX_CLONE_REQUIRED | LINUX_CLONE_SYSVSEM |
           LINUX_CLONE_SETTLS | LINUX_CLONE_PARENT_SETTID |
           LINUX_CLONE_CHILD_SETTID | LINUX_CLONE_CHILD_CLEARTID |
@@ -2422,14 +2658,73 @@ void linux_syscall_handler(registers_t *regs) {
           : (uint64_t)(int64_t)rc;
       break;
     }
-    case 57: { /* fork: copy-on-fork path provided by the generic process core */
-      if (sleep_mutex_lock(&linux_vm_lock) < 0) {
-        regs->rax = (uint64_t)-(int64_t)LINUX_EINTR;
+    case 322: { /* execveat: glibc may use this for execv/posix_spawn */
+      if (regs->rdi != (uint64_t)-100 || regs->r8 != 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
         break;
       }
-      int pid = fork_process(regs);
+      int rc = sys_execve_linux(regs, (const char *)regs->rsi,
+                                (char *const *)regs->rdx,
+                                (char *const *)regs->r10);
+      regs->rax = rc == -1
+          ? (uint64_t)-(int64_t)LINUX_ENOENT
+          : (uint64_t)(int64_t)rc;
+      break;
+    }
+    case 57: { /* fork: copy-on-fork path provided by the generic process core */
+      int pid = linux_fork_fallback(regs, 0);
       regs->rax = pid < 0 ? (uint64_t)(int64_t)pid : (uint64_t)pid;
-      sleep_mutex_unlock(&linux_vm_lock);
+      break;
+    }
+    case 435: { /* clone3: support the vfork-style shape used by glibc */
+      linux_clone_args_t args;
+      memset(&args, 0, sizeof(args));
+      if (regs->rsi < sizeof(uint64_t) * 5 ||
+          regs->rsi > sizeof(args) ||
+          copy_from_user(&args, (const void *)(uintptr_t)regs->rdi,
+                         (uint32_t)regs->rsi) < 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+        break;
+      }
+      if (args.flags & LINUX_CLONE_THREAD) {
+        uint64_t supported = LINUX_CLONE_REQUIRED | LINUX_CLONE_SYSVSEM |
+            LINUX_CLONE_SETTLS | LINUX_CLONE_PARENT_SETTID |
+            LINUX_CLONE_CHILD_SETTID | LINUX_CLONE_CHILD_CLEARTID |
+            LINUX_CLONE_DETACHED;
+        if ((args.flags & LINUX_CLONE_REQUIRED) != LINUX_CLONE_REQUIRED ||
+            (args.flags & ~supported) != 0 || args.exit_signal != 0 ||
+            args.set_tid != 0 || args.set_tid_size != 0 ||
+            args.cgroup != 0 || !args.stack ||
+            args.stack > UINT64_MAX - args.stack_size) {
+          regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+          break;
+        }
+        uint64_t child_stack = args.stack + args.stack_size;
+        int tid = task_clone_thread(
+            regs, child_stack, args.tls,
+            (args.flags & LINUX_CLONE_SETTLS) != 0,
+            args.parent_tid,
+            (args.flags & LINUX_CLONE_PARENT_SETTID) != 0,
+            args.child_tid,
+            (args.flags & LINUX_CLONE_CHILD_SETTID) != 0,
+            (args.flags & LINUX_CLONE_CHILD_CLEARTID) != 0);
+        regs->rax = tid < 0 ? (uint64_t)(int64_t)tid : (uint64_t)tid;
+        break;
+      }
+      uint64_t allowed = LINUX_CLONE_VM | LINUX_CLONE_VFORK |
+                         LINUX_CLONE_CLEAR_SIGHAND;
+      if ((args.flags & ~allowed) != 0 ||
+          args.exit_signal != LINUX_SIGCHLD || args.pidfd != 0 ||
+          args.child_tid != 0 || args.parent_tid != 0 || args.stack != 0 ||
+          args.stack_size != 0 || args.tls != 0 || args.set_tid != 0 ||
+          args.set_tid_size != 0 || args.cgroup != 0 ||
+          (args.flags & (LINUX_CLONE_VM | LINUX_CLONE_VFORK)) !=
+              (LINUX_CLONE_VM | LINUX_CLONE_VFORK)) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+        break;
+      }
+      int pid = linux_fork_fallback(regs, args.stack);
+      regs->rax = pid < 0 ? (uint64_t)(int64_t)pid : (uint64_t)pid;
       break;
     }
     case 61: /* wait4: WNOHANG, encoded exit status; no process groups/signals */
