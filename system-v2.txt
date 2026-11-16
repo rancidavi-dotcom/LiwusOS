@@ -1,10 +1,10 @@
-VERSION=2.2.40
+VERSION=2.2.41
 DATE=2026-11-16
 PACKAGES=kilo,c_demo,neofetch,sysbench,play,tube
-NOTES=LiwusOS 2.2.40: Craft otimizado para 38+ FPS estaveis (direct blit para framebuffer, sem copias redundantes de memoria) e tela 1366x768 nativa
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.40
-BOOT_IMAGE_SIZE=5392384
-BOOT_IMAGE_CRC32=d6e90218
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.40
-SYSTEM_ARCHIVE_SIZE=16926720
-SYSTEM_ARCHIVE_CRC32=13e8c41c
+NOTES=LiwusOS 2.2.41: LiwusTube com fallback multi-instancia publico Piped + Bridge, correcao de busca e suporte a /etc/tube.conf
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.41
+BOOT_IMAGE_SIZE=5402624
+BOOT_IMAGE_CRC32=d1130588
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.41
+SYSTEM_ARCHIVE_SIZE=16936960
+SYSTEM_ARCHIVE_CRC32=d9fb4d57
