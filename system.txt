@@ -1,10 +1,10 @@
-VERSION=2.2.39
-DATE=2026-11-15
+VERSION=2.2.40
+DATE=2026-11-16
 PACKAGES=kilo,c_demo,neofetch,sysbench,play,tube
-NOTES=LiwusOS 2.2.39: Otimizacao massiva de performance do Craft (30+ FPS com pipeline 3D acelerado e upscale 2x) e resolucao nativa 1366x768 forcada para notebooks no GRUB e HD
-BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.39
-BOOT_IMAGE_SIZE=5388288
-BOOT_IMAGE_CRC32=6ed6d222
-SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.39
-SYSTEM_ARCHIVE_SIZE=16916480
-SYSTEM_ARCHIVE_CRC32=119179cf
+NOTES=LiwusOS 2.2.40: Craft otimizado para 38+ FPS estaveis (direct blit para framebuffer, sem copias redundantes de memoria) e tela 1366x768 nativa
+BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.40
+BOOT_IMAGE_SIZE=5392384
+BOOT_IMAGE_CRC32=d6e90218
+SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.40
+SYSTEM_ARCHIVE_SIZE=16926720
+SYSTEM_ARCHIVE_CRC32=13e8c41c
