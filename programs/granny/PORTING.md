@@ -146,10 +146,11 @@ The source-side compile gate is passed. The LiwusOS runtime gate is not:
 | Package a functional Granny `.lxe` | Pending | The original player has not reached Unity's menu on LiwusOS; no screenshot or package is claimed |
 
 The current route reuses the Linux Unity player and its Mono runtime. The Linux
-compatibility layer now includes `poll`/`epoll`, AF_UNIX stream sockets, and
-display-lock publication. This is enough for Xvfb to reach its XKB setup, but
-the Xvfb probe still fails while resolving the `rules/evdev` keymap inside the
-current VFS; it therefore exits before publishing a display. A probe with
+compatibility layer now includes `poll`/`epoll`, AF_UNIX stream sockets,
+`socketpair`, and display-lock publication. A raw X11 probe now completes the
+initial setup reply, `GetInputFocus`, and `QueryExtension` requests. The
+remaining X11 client failure is in the higher-level Xlib/Unity setup path, not
+the AF_UNIX handshake itself. A probe with
 `SDL_VIDEODRIVER=dummy` and `SDL_AUDIODRIVER=dummy` reaches Unity's display
 enumeration but produces no frame, so it is not a menu screenshot. The next
 checkpoint is the XKB/X11 display path, followed by GL/input/audio services.
