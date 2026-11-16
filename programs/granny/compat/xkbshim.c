@@ -18,3 +18,10 @@ Bool XkbQueryExtension(Display *display, int *opcode_rtrn, int *event_rtrn,
   (void)minor_in_out;
   return False;
 }
+
+Bool XkbUseExtension(Display *display, int *major_in_out, int *minor_in_out) {
+  (void)display;
+  (void)major_in_out;
+  (void)minor_in_out;
+  return False;
+}
