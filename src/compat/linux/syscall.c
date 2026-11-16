@@ -104,6 +104,7 @@
                               LINUX_CLONE_FILES | LINUX_CLONE_SIGHAND | \
                               LINUX_CLONE_THREAD)
 #define LIWUS_FD_TYPE_FILE 1
+#define LIWUS_FD_TYPE_SOCKET 2
 #define LIWUS_FD_TYPE_PIPE 3
 #define LIWUS_FD_TYPE_EPOLL 4
 #define LIWUS_FD_ACCESS_READ 0x01
@@ -126,6 +127,17 @@ static sleep_mutex_t linux_vm_lock = SLEEP_MUTEX_INITIALIZER;
 typedef struct {
   uint32_t watched;
 } linux_epoll_instance_t;
+
+typedef struct {
+  int32_t fd;
+  int16_t events;
+  int16_t revents;
+} __attribute__((packed)) linux_pollfd_t;
+
+typedef struct {
+  uint32_t events;
+  uint64_t data;
+} __attribute__((packed)) linux_epoll_event_t;
 
 static int linux_epoll_create_fd(void) {
   if (!current_task || !current_task->process) return -LINUX_EMFILE;
@@ -531,11 +543,11 @@ static int linux_statx(int dirfd, const char *user_path, uint32_t flags,
   out.uid = node->uid;
   out.gid = node->gid;
   if (node->flags & FS_DIRECTORY)
-    out.mode = (uint16_t)(0040000u | (node->mask & 0777u));
+    out.mode = (uint16_t)(0040000u | (node->mask & 01777u));
   else if (node->flags & FS_CHARDEVICE)
-    out.mode = (uint16_t)(0020000u | (node->mask & 0777u));
+    out.mode = (uint16_t)(0020000u | (node->mask & 01777u));
   else
-    out.mode = (uint16_t)(0100000u | (node->mask & 0777u));
+    out.mode = (uint16_t)(0100000u | (node->mask & 01777u));
   out.ino = node->inode;
   out.size = node->length;
   out.blocks = ((uint64_t)node->length + 511u) / 512u;
@@ -1762,7 +1774,10 @@ void linux_syscall_handler(registers_t *regs) {
       break;
     }
     case 262: { /* newfstatat, flags limited to zero (no symlink support) */
-      if (regs->r10 != 0) {
+      /* lstat() is implemented through newfstatat with
+       * AT_SYMLINK_NOFOLLOW.  SDFS has no symlink objects, so accepting that
+       * flag is equivalent to the regular stat path. */
+      if (regs->r10 & ~LINUX_AT_SYMLINK_NOFOLLOW) {
         regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
         break;
       }
@@ -1850,10 +1865,30 @@ void linux_syscall_handler(registers_t *regs) {
         regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
         break;
       }
+      uint32_t ready = 0;
+      for (uint64_t i = 0; i < nfds; i++) {
+        linux_pollfd_t pollfd;
+        if (copy_from_user(&pollfd,
+                           (const uint8_t *)(uintptr_t)regs->rdi + i * sizeof(pollfd),
+                           sizeof(pollfd)) < 0) {
+          regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+          return;
+        }
+        pollfd.revents = liwus_linux_socket_readable(pollfd.fd) &&
+                         (pollfd.events & 0x001) ? 0x001 : 0;
+        if (pollfd.revents) ready++;
+        if (copy_to_user((uint8_t *)(uintptr_t)regs->rdi + i * sizeof(pollfd),
+                         &pollfd, sizeof(pollfd)) < 0) {
+          regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+          return;
+        }
+      }
       int timeout = (int)regs->rdx;
-      if (timeout > 0) task_sleep_ms((uint32_t)(timeout > 100 ? 100 : timeout));
-      else if (timeout < 0) task_sleep_ms(100);
-      regs->rax = 0;
+      if (!ready && timeout > 0)
+        task_sleep_ms((uint32_t)(timeout > 100 ? 100 : timeout));
+      else if (!ready && timeout < 0)
+        task_sleep_ms(100);
+      regs->rax = ready;
       break;
     }
     case 213: /* epoll_create: allocate an inert event queue for probes */
@@ -1883,29 +1918,69 @@ void linux_syscall_handler(registers_t *regs) {
       break;
     case 232: /* epoll_wait */
     case 281: { /* epoll_pwait */
-      if (!linux_epoll_fd_valid((int)regs->rdi) || regs->rdx == 0) {
+      if (!linux_epoll_fd_valid((int)regs->rdi) || regs->rdx == 0 ||
+          !regs->rsi || validate_user_write((void *)regs->rsi,
+                                            regs->rdx * sizeof(linux_epoll_event_t)) < 0) {
         regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
         break;
       }
+      uint32_t ready = 0;
+      uint32_t maxevents = regs->rdx > 32 ? 32 : (uint32_t)regs->rdx;
+      for (int fd = 0; fd < 32 && ready < maxevents; fd++) {
+        if (!liwus_linux_socket_readable(fd)) continue;
+        linux_epoll_event_t event = { .events = 0x001, .data = (uint64_t)fd };
+        if (copy_to_user((uint8_t *)(uintptr_t)regs->rsi +
+                         ready * sizeof(event), &event, sizeof(event)) < 0) {
+          regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+          return;
+        }
+        ready++;
+      }
       int timeout = (int)regs->r10;
-      if (timeout > 0) task_sleep_ms((uint32_t)(timeout > 100 ? 100 : timeout));
-      else if (timeout < 0) task_sleep_ms(100);
-      regs->rax = 0;
+      if (!ready && timeout > 0)
+        task_sleep_ms((uint32_t)(timeout > 100 ? 100 : timeout));
+      else if (!ready && timeout < 0)
+        task_sleep_ms(100);
+      regs->rax = ready;
       break;
     }
-    case 41: /* socket: network sockets are not exposed to Linux guests yet */
-      /* Returning the Linux error for an unsupported address family is
-       * important here: SDL/Unity audio and discovery libraries probe for
-       * PulseAudio/X11 sockets and otherwise retry ENOSYS indefinitely. */
-      regs->rax = (uint64_t)-(int64_t)LINUX_EAFNOSUPPORT;
+    case 41: /* socket */
+      regs->rax = (uint64_t)(int64_t)liwus_linux_socket_create(
+          (int)regs->rdi, (int)regs->rsi, (int)regs->rdx);
       break;
     case 42: /* connect */
+      regs->rax = (uint64_t)(int64_t)liwus_linux_socket_connect(
+          (int)regs->rdi, (const void *)regs->rsi, (uint32_t)regs->rdx);
+      break;
     case 43: /* accept */
+    case 288: /* accept4: descriptor flags are not needed by X11 */
+      regs->rax = (uint64_t)(int64_t)liwus_linux_socket_accept((int)regs->rdi);
+      break;
     case 44: /* sendto */
+      regs->rax = (uint64_t)(int64_t)liwus_linux_socket_write(
+          (int)regs->rdi, (const void *)regs->rsi, (uint32_t)regs->rdx);
+      break;
     case 45: /* recvfrom */
+      regs->rax = (uint64_t)(int64_t)liwus_linux_socket_read(
+          (int)regs->rdi, (void *)regs->rsi, (uint32_t)regs->rdx);
+      break;
+    case 48: /* shutdown */
+      regs->rax = liwus_linux_socket_readable((int)regs->rdi) ||
+                  (regs->rdi < 32 &&
+                   current_task->process->file_descriptors[regs->rdi].type ==
+                       LIWUS_FD_TYPE_SOCKET)
+          ? 0 : (uint64_t)-(int64_t)LINUX_ENOTSOCK;
+      break;
+    case 49: /* bind */
+      regs->rax = (uint64_t)(int64_t)liwus_linux_socket_bind(
+          (int)regs->rdi, (const void *)regs->rsi, (uint32_t)regs->rdx);
+      break;
+    case 50: /* listen */
+      regs->rax = (uint64_t)(int64_t)liwus_linux_socket_listen(
+          (int)regs->rdi, (int)regs->rsi);
+      break;
     case 46: /* sendmsg */
     case 47: /* recvmsg */
-    case 48: /* shutdown */
       regs->rax = (uint64_t)-(int64_t)LINUX_ENOTSOCK;
       break;
     case 79: { /* getcwd returns the byte count including the trailing NUL */

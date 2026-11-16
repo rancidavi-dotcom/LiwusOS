@@ -375,6 +375,11 @@ return pid;
 #define FD_TYPE_EPOLL 4
 #define KERNEL_ESPIPE 29
 
+#define LIWUS_LINUX_AF_UNIX 1
+#define LIWUS_LINUX_SOCK_STREAM 1
+#define LIWUS_LINUX_SOCKET_PATH_MAX 108
+#define LIWUS_LINUX_SOCKET_RX_CAP 65536
+
 #define PIPE_BUF_SIZE 4096
 
 // Table de descritores de arquivos por processo.
@@ -386,6 +391,222 @@ static kfile_t fd_table[32];
 static uint64_t live_file_descriptions = 0;
 static uint64_t live_pipe_objects = 0;
 static uint64_t next_pipe_inode = 1;
+static kfile_t *get_fd_table(void);
+
+typedef struct liwus_linux_socket {
+  int domain;
+  int type;
+  int protocol;
+  bool bound;
+  bool listening;
+  bool connected;
+  bool peer_closed;
+  char path[LIWUS_LINUX_SOCKET_PATH_MAX];
+  struct liwus_linux_socket *peer;
+  struct liwus_linux_socket *next_global;
+  struct liwus_linux_socket *pending_head;
+  struct liwus_linux_socket *pending_tail;
+  struct liwus_linux_socket *next_pending;
+  uint8_t rx[LIWUS_LINUX_SOCKET_RX_CAP];
+  uint32_t rx_read;
+  uint32_t rx_write;
+  uint32_t rx_count;
+} liwus_linux_socket_t;
+
+static liwus_linux_socket_t *linux_unix_sockets;
+
+static liwus_linux_socket_t *linux_socket_from_fd(int fd) {
+  kfile_t *table = get_fd_table();
+  if (fd < 0 || fd >= 32 || table[fd].type != FD_TYPE_SOCKET)
+    return NULL;
+  return (liwus_linux_socket_t *)table[fd].socket_ptr;
+}
+
+static int linux_socket_alloc_fd(void) {
+  kfile_t *table = get_fd_table();
+  for (int i = 3; i < 32; i++)
+    if (table[i].type == FD_TYPE_FREE) return i;
+  return -24; /* EMFILE */
+}
+
+int liwus_linux_socket_create(int domain, int type, int protocol) {
+  if (domain != LIWUS_LINUX_AF_UNIX ||
+      (type & 0xf) != LIWUS_LINUX_SOCK_STREAM)
+    return -97; /* EAFNOSUPPORT */
+  int fd = linux_socket_alloc_fd();
+  if (fd < 0) return fd;
+  liwus_linux_socket_t *socket = (liwus_linux_socket_t *)kmalloc(sizeof(*socket));
+  if (!socket) return -12;
+  memset(socket, 0, sizeof(*socket));
+  socket->domain = domain;
+  socket->type = type;
+  socket->protocol = protocol;
+  kfile_t *file = &get_fd_table()[fd];
+  memset(file, 0, sizeof(*file));
+  file->type = FD_TYPE_SOCKET;
+  file->socket_ptr = socket;
+  return fd;
+}
+
+static int linux_socket_copy_path(const void *user_addr, uint32_t length,
+                                  char path[LIWUS_LINUX_SOCKET_PATH_MAX]) {
+  if (!user_addr || length < 3 || length > 128) return -22;
+  uint8_t address[128];
+  if (copy_from_user(address, user_addr, length) < 0) return -14;
+  uint16_t family = (uint16_t)address[0] | ((uint16_t)address[1] << 8);
+  if (family != LIWUS_LINUX_AF_UNIX) return -97;
+  uint32_t path_len = length - 2;
+  if (path_len >= LIWUS_LINUX_SOCKET_PATH_MAX)
+    path_len = LIWUS_LINUX_SOCKET_PATH_MAX - 1;
+  memcpy(path, address + 2, path_len);
+  path[path_len] = '\0';
+  if (!path[0]) return -22;
+  return 0;
+}
+
+int liwus_linux_socket_bind(int fd, const void *user_addr, uint32_t length) {
+  liwus_linux_socket_t *socket = linux_socket_from_fd(fd);
+  if (!socket) return -9;
+  if (socket->bound) return -22;
+  int rc = linux_socket_copy_path(user_addr, length, socket->path);
+  if (rc < 0) return rc;
+  for (liwus_linux_socket_t *it = linux_unix_sockets; it; it = it->next_global)
+    if (it != socket && it->bound && strcmp(it->path, socket->path) == 0)
+      return -98; /* EADDRINUSE */
+  socket->bound = true;
+  socket->next_global = linux_unix_sockets;
+  linux_unix_sockets = socket;
+  return 0;
+}
+
+int liwus_linux_socket_listen(int fd, int backlog) {
+  liwus_linux_socket_t *socket = linux_socket_from_fd(fd);
+  if (!socket || !socket->bound || backlog < 0) return -9;
+  socket->listening = true;
+  return 0;
+}
+
+int liwus_linux_socket_connect(int fd, const void *user_addr, uint32_t length) {
+  liwus_linux_socket_t *client = linux_socket_from_fd(fd);
+  if (!client) return -9;
+  char path[LIWUS_LINUX_SOCKET_PATH_MAX];
+  int rc = linux_socket_copy_path(user_addr, length, path);
+  if (rc < 0) return rc;
+  liwus_linux_socket_t *server = NULL;
+  for (liwus_linux_socket_t *it = linux_unix_sockets; it; it = it->next_global)
+    if (it->bound && it->listening && strcmp(it->path, path) == 0) {
+      server = it;
+      break;
+    }
+  if (!server) return -111; /* ECONNREFUSED */
+  liwus_linux_socket_t *accepted = (liwus_linux_socket_t *)kmalloc(sizeof(*accepted));
+  if (!accepted) return -12;
+  memset(accepted, 0, sizeof(*accepted));
+  accepted->domain = server->domain;
+  accepted->type = server->type;
+  accepted->protocol = server->protocol;
+  accepted->connected = true;
+  accepted->peer = client;
+  client->connected = true;
+  client->peer = accepted;
+  accepted->next_pending = NULL;
+  if (server->pending_tail) server->pending_tail->next_pending = accepted;
+  else server->pending_head = accepted;
+  server->pending_tail = accepted;
+  return 0;
+}
+
+int liwus_linux_socket_accept(int fd) {
+  liwus_linux_socket_t *server = linux_socket_from_fd(fd);
+  if (!server || !server->listening) return -9;
+  liwus_linux_socket_t *accepted = server->pending_head;
+  if (!accepted) return -11;
+  server->pending_head = accepted->next_pending;
+  if (!server->pending_head) server->pending_tail = NULL;
+  accepted->next_pending = NULL;
+  int newfd = linux_socket_alloc_fd();
+  if (newfd < 0) { kfree(accepted); return newfd; }
+  kfile_t *file = &get_fd_table()[newfd];
+  memset(file, 0, sizeof(*file));
+  file->type = FD_TYPE_SOCKET;
+  file->socket_ptr = accepted;
+  return newfd;
+}
+
+int liwus_linux_socket_read(int fd, void *user_buf, uint32_t count) {
+  liwus_linux_socket_t *socket = linux_socket_from_fd(fd);
+  if (!socket || !socket->connected) return -9;
+  for (uint32_t attempt = 0; socket->rx_count == 0 && !socket->peer_closed &&
+                              attempt < 1000; attempt++)
+    task_sleep_ms(1);
+  if (socket->rx_count == 0) return socket->peer_closed ? 0 : -11;
+  uint32_t amount = count < socket->rx_count ? count : socket->rx_count;
+  uint8_t temp[512];
+  uint32_t done = 0;
+  while (done < amount) {
+    uint32_t chunk = amount - done;
+    if (chunk > sizeof(temp)) chunk = sizeof(temp);
+    for (uint32_t i = 0; i < chunk; i++)
+      temp[i] = socket->rx[(socket->rx_read + i) % LIWUS_LINUX_SOCKET_RX_CAP];
+    socket->rx_read = (socket->rx_read + chunk) % LIWUS_LINUX_SOCKET_RX_CAP;
+    socket->rx_count -= chunk;
+    if (copy_to_user((uint8_t *)user_buf + done, temp, chunk) < 0)
+      return done ? (int)done : -14;
+    done += chunk;
+  }
+  return (int)done;
+}
+
+int liwus_linux_socket_write(int fd, const void *user_buf, uint32_t count) {
+  liwus_linux_socket_t *socket = linux_socket_from_fd(fd);
+  if (!socket || !socket->connected || !socket->peer) return -32;
+  liwus_linux_socket_t *peer = socket->peer;
+  uint32_t amount = count;
+  if (amount > LIWUS_LINUX_SOCKET_RX_CAP - peer->rx_count)
+    amount = LIWUS_LINUX_SOCKET_RX_CAP - peer->rx_count;
+  if (!amount) return -11;
+  uint8_t temp[512];
+  uint32_t done = 0;
+  while (done < amount) {
+    uint32_t chunk = amount - done;
+    if (chunk > sizeof(temp)) chunk = sizeof(temp);
+    if (copy_from_user(temp, (const uint8_t *)user_buf + done, chunk) < 0)
+      return done ? (int)done : -14;
+    for (uint32_t i = 0; i < chunk; i++)
+      peer->rx[(peer->rx_write + i) % LIWUS_LINUX_SOCKET_RX_CAP] = temp[i];
+    peer->rx_write = (peer->rx_write + chunk) % LIWUS_LINUX_SOCKET_RX_CAP;
+    peer->rx_count += chunk;
+    done += chunk;
+  }
+  return (int)done;
+}
+
+int liwus_linux_socket_readable(int fd) {
+  liwus_linux_socket_t *socket = linux_socket_from_fd(fd);
+  if (!socket) return 0;
+  return (socket->listening && socket->pending_head) || socket->rx_count ||
+         socket->peer_closed;
+}
+
+void liwus_linux_socket_release(void *ptr) {
+  liwus_linux_socket_t *socket = (liwus_linux_socket_t *)ptr;
+  if (!socket) return;
+  if (socket->bound) {
+    liwus_linux_socket_t **link = &linux_unix_sockets;
+    while (*link && *link != socket) link = &(*link)->next_global;
+    if (*link == socket) *link = socket->next_global;
+  }
+  if (socket->peer) {
+    socket->peer->peer_closed = true;
+    socket->peer->peer = NULL;
+  }
+  while (socket->pending_head) {
+    liwus_linux_socket_t *next = socket->pending_head->next_pending;
+    kfree(socket->pending_head);
+    socket->pending_head = next;
+  }
+  kfree(socket);
+}
 
 // Retorna a fd table do processo corrente. Se houver um current_task
 // (qualquer tarefa, inclusive kernel tasks), usa a table isolada dele;
@@ -438,6 +659,8 @@ void sys_fd_put(kfile_t *file) {
     }
   } else if (file->type == FD_TYPE_EPOLL && file->socket_ptr) {
     kfree(file->socket_ptr);
+  } else if (file->type == FD_TYPE_SOCKET && file->socket_ptr) {
+    liwus_linux_socket_release(file->socket_ptr);
   } else if (file->type == FD_TYPE_FILE && file->socket_ptr) {
     /* Compatibility for kernel-created file entries without a description. */
     vfs_node_put((fs_node_t *)file->socket_ptr);
@@ -834,6 +1057,8 @@ int sys_read(int fd, void *buf, uint32_t count) {
     pipe_unpin_current(&wait_pin);
     return (int)got;
   }
+  if (fd >= 0 && fd < 32 && fd_table[fd].type == FD_TYPE_SOCKET)
+    return liwus_linux_socket_read(fd, buf, count);
   if (fd == 0 && fd_table[0].type == FD_TYPE_FREE) {
     // Drain any buffered escape sequence bytes first
     if (stdin_esc_pos < stdin_esc_len) {
@@ -1116,6 +1341,8 @@ int sys_write(int fd, const void *buf, uint32_t count) {
     pipe_unpin_current(&wait_pin);
     return (int)written;
   }
+  if (f->type == FD_TYPE_SOCKET)
+    return liwus_linux_socket_write(fd, buf, count);
   if (f->type == FD_TYPE_FILE && f->socket_ptr) {
     if (f->description &&
         !(f->description->access & FD_ACCESS_WRITE)) return -EBADF;
@@ -1857,7 +2084,7 @@ int sys_stat_at(int dirfd, int at_cwd, const char *path,
   uint32_t ftype = K_S_IFREG;
   if (node->flags & FS_DIRECTORY) ftype = K_S_IFDIR;
   else if (node->flags & FS_CHARDEVICE) ftype = K_S_IFCHR;
-  ks.st_mode = ftype | (node->mask & 0777u);
+  ks.st_mode = ftype | (node->mask & 01777u);
   
   ks.st_atime = (int64_t)(timer_ticks / 100);
   ks.st_mtime = ks.st_atime;
@@ -1964,7 +2191,7 @@ int sys_fstat(int fd, struct kernel_stat *st) {
     uint32_t ftype = K_S_IFREG;
     if (node->flags & FS_DIRECTORY) ftype = K_S_IFDIR;
     else if (node->flags & FS_CHARDEVICE) ftype = K_S_IFCHR;
-    ks.st_mode = ftype | (node->mask & 0777u);
+    ks.st_mode = ftype | (node->mask & 01777u);
   }
   
   ks.st_atime = (int64_t)(timer_ticks / 100);

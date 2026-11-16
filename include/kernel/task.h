@@ -258,6 +258,15 @@ void task_process_release_io(process_t *process);
 void task_release_io(task_t *task);
 void sys_fd_get(kfile_t *file);
 void sys_fd_put(kfile_t *file);
+int liwus_linux_socket_create(int domain, int type, int protocol);
+int liwus_linux_socket_bind(int fd, const void *user_addr, uint32_t length);
+int liwus_linux_socket_listen(int fd, int backlog);
+int liwus_linux_socket_connect(int fd, const void *user_addr, uint32_t length);
+int liwus_linux_socket_accept(int fd);
+int liwus_linux_socket_read(int fd, void *user_buf, uint32_t count);
+int liwus_linux_socket_write(int fd, const void *user_buf, uint32_t count);
+int liwus_linux_socket_readable(int fd);
+void liwus_linux_socket_release(void *socket);
 /* Generic descriptor constructors. Descriptor-local flags are installed
  * before each newly opened descriptor becomes visible to the caller. */
 int sys_open_mode(const char *path, int flags, uint32_t create_mode,

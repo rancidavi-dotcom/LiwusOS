@@ -1586,7 +1586,9 @@ static uint32_t sdfs_now(void) {
 static uint16_t sdfs_permission_mode(uint16_t stored) {
     if (stored == 0x0314) return 0644;
     if (stored == 0x0315) return 0755;
-    return stored & 0777;
+    /* Preserve the sticky bit for shared runtime directories such as
+     * /tmp/.X11-unix; regular permission checks still use the low nine bits. */
+    return stored & 01777;
 }
 
 static int sdfs_create_entry_at(uint32_t parent_block, const char *name,
