@@ -150,7 +150,9 @@ compatibility layer now includes `poll`/`epoll`, AF_UNIX stream sockets,
 `socketpair`, and display-lock publication. A raw X11 probe now completes the
 initial setup reply, `GetInputFocus`, and `QueryExtension` requests. The
 remaining X11 client failure is in the higher-level Xlib/Unity setup path, not
-the AF_UNIX handshake itself. A probe with
+the AF_UNIX handshake itself. The source tree now includes an optional
+`programs/granny/compat/xkbshim.c` preload shim that forces Xlib's documented
+non-XKB fallback path. A probe with
 `SDL_VIDEODRIVER=dummy` and `SDL_AUDIODRIVER=dummy` reaches Unity's display
 enumeration but produces no frame, so it is not a menu screenshot. The next
 checkpoint is the XKB/X11 display path, followed by GL/input/audio services.
