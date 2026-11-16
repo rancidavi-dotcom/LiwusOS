@@ -29,11 +29,10 @@ static int refresh_window_state(void) {
     liw_window_state_t state = {0};
     if (liw_window_poll(&state) < 0) { window_storage.close = 1; return -1; }
     if (state.closed) window_storage.close = 1;
-    if (state.width >= 160 && state.height >= 120 &&
-        ((int)state.width != window_storage.width || (int)state.height != window_storage.height)) {
+    if (state.width >= 160 && state.height >= 120) {
         if (craft_gl_resize((int)state.width, (int)state.height) == 0) {
-            window_storage.width = (int)state.width;
-            window_storage.height = (int)state.height;
+            window_storage.width = craft_gl_render_width();
+            window_storage.height = craft_gl_render_height();
         }
     }
     window_storage.cursor_x = state.mouse_x;
@@ -128,9 +127,9 @@ GLFWwindow *glfwCreateWindow(int width, int height, const char *title,
     }
     if (width <= 0 || width > 1920) width = 800;
     if (height <= 0 || height > 1080) height = 520;
-    window_storage.width = width;
-    window_storage.height = height;
     if (craft_gl_init(width, height) != 0) return NULL;
+    window_storage.width = craft_gl_render_width();
+    window_storage.height = craft_gl_render_height();
     return &window_storage;
 }
 GLFWmonitor *glfwGetPrimaryMonitor(void) { return &primary_monitor; }
@@ -171,8 +170,8 @@ void glfwSetCursorPos(GLFWwindow *w, double x, double y) {
 const char *glfwGetClipboardString(GLFWwindow *w) { (void)w; return clipboard; }
 void glfwGetWindowSize(GLFWwindow *w, int *width, int *height) {
     (void)refresh_window_state();
-    if (width) *width = w ? w->width : 640;
-    if (height) *height = w ? w->height : 400;
+    if (width) *width = w ? w->width : craft_gl_render_width();
+    if (height) *height = w ? w->height : craft_gl_render_height();
 }
 void glfwGetFramebufferSize(GLFWwindow *w, int *width, int *height) {
     (void)refresh_window_state();

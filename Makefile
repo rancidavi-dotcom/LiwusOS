@@ -45,10 +45,10 @@ TEST_ISO_IMAGE = liwusos-test.iso
 # files. User-editable examples opt into UID/GID 1000 on their tar entries.
 export TAR_OPTIONS := --owner=0 --group=0 --numeric-owner
 UPDATE_FEED_DIR ?= build/update-feed
-UPDATE_VERSION ?= 2.2.38
+UPDATE_VERSION ?= 2.2.39
 UPDATE_DATE ?= 2026-11-15
 UPDATE_BASE_URL ?= https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo
-UPDATE_NOTES ?= LiwusOS 2.2.38: Correcao definitiva do sensor de mouse do Craft (rotacao livre da camera 360) e selecao de resolucao nativa 1080p/1366p no GRUB e instalador HD
+UPDATE_NOTES ?= LiwusOS 2.2.39: Otimizacao massiva de performance do Craft (30+ FPS com pipeline 3D acelerado e upscale 2x) e resolucao nativa 1366x768 forcada para notebooks no GRUB e HD
 LINUX_STATIC_TEST_DEP =
 LINUX_STATIC_EXPECT ?= Hello from an unmodified static GNU/Linux ELF
 ifneq ($(strip $(LINUX_STATIC_ELF)),)
@@ -619,7 +619,7 @@ $(USER_EDITOR_ELF): $(OBJ_DIR)/programs/user_editor/main.o $(OBJ_DIR)/programs/u
 $(ISO_IMAGE): Makefile isodir/boot/kernel.bin isodir/boot/grub/grub.cfg $(DISK_IMAGE) $(USER_INIT_ELF) $(USER_EDITOR_ELF) $(RING3_C_APP_ELF) $(NATIVE_HELLO_LXE) $(LIWSH_LXE) $(LS_LXE) $(CAT_LXE) $(NATIVE_UTIL_LXES) $(PKG_REPO_LXES) $(KILO_LXE) $(DOOM_LXE) $(SNES_LXE) $(CRAFT_LXE) $(TCC_LXE) $(C_DEMO_LXE) assets/readme.txt assets/doom1.wad
 	@mkdir -p repo build/hd_isodir/boot/grub
 	cp $(KERNEL_BIN) build/hd_isodir/boot/kernel.bin
-	printf 'set timeout=2\nset default=0\nif [ x$$grub_platform = xefi ]; then\n\tinsmod efi_gop\nelse\n\tinsmod vbe\n\tinsmod vga\nfi\ninsmod all_video\ninsmod font\ninsmod gfxterm\nset gfxmode=1920x1080x32,1920x1080,1680x1050x32,1680x1050,1600x900x32,1600x900,1440x900x32,1440x900,1366x768x32,1366x768,1360x768x32,1360x768,1280x1024x32,1280x1024,1280x800x32,1280x800,1280x720x32,1280x720,1024x768x32,1024x768,auto\nset gfxpayload=keep\nterminal_output gfxterm\nmenuentry "LiwusOS x86_64 (Instalado no HD - Auto / Alta Resolucao)" {\n\tset gfxpayload=1920x1080x32,1920x1080,1680x1050x32,1680x1050,1600x900x32,1600x900,1440x900x32,1440x900,1366x768x32,1366x768,1360x768x32,1360x768,1280x1024x32,1280x1024,1280x800x32,1280x800,1280x720x32,1280x720,1024x768x32,1024x768,keep,auto\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\nmenuentry "LiwusOS x86_64 (HD - Modo Full HD 1920x1080)" {\n\tset gfxpayload=1920x1080x32,1920x1080,keep,auto\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\nmenuentry "LiwusOS x86_64 (HD - Modo Notebook 1366x768)" {\n\tset gfxpayload=1366x768x32,1366x768,keep,auto\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\nmenuentry "LiwusOS x86_64 (HD - Modo Seguro 1024x768)" {\n\tset gfxpayload=1024x768x32,1024x768,keep,auto\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\n' > build/hd_isodir/boot/grub/grub.cfg
+	printf 'set timeout=2\nset default=0\nif [ x$$grub_platform = xefi ]; then\n\tinsmod efi_gop\nelse\n\tinsmod vbe\n\tinsmod vga\nfi\ninsmod all_video\ninsmod font\ninsmod gfxterm\nset gfxmode=1366x768x32,1366x768,1360x768x32,1360x768,1920x1080x32,1920x1080,1600x900x32,1600x900,1280x720x32,1280x720,1024x768x32,1024x768,auto\nset gfxpayload=keep\nterminal_output gfxterm\nmenuentry "LiwusOS x86_64 (Instalado no HD - Modo 1366x768 / HD)" {\n\tset gfxpayload=1366x768x32,1366x768,1360x768x32,1360x768,keep,auto\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\nmenuentry "LiwusOS x86_64 (HD - Modo Full HD 1920x1080)" {\n\tset gfxpayload=1920x1080x32,1920x1080,keep,auto\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\nmenuentry "LiwusOS x86_64 (HD - Modo Seguro 1024x768)" {\n\tset gfxpayload=1024x768x32,1024x768,keep,auto\n\tsearch --no-floppy --file --set=root /boot/kernel.bin\n\tmultiboot2 /boot/kernel.bin mode=hd\n}\n' > build/hd_isodir/boot/grub/grub.cfg
 	$(GRUB) -d /usr/lib/grub/i386-pc --fonts="" --locales="" --themes="" -o build/hd_boot.img build/hd_isodir
 	tar -cf initrd.tar -C repo . --format=ustar
 	tar -rf initrd.tar --format=ustar --transform='s|hd_boot.img|boot/hd_boot.img|' -C build hd_boot.img

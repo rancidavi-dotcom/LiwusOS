@@ -766,9 +766,9 @@ void kernel_main_continue(void) {
   if (vga_display_backend_ready()) {
     extern uint32_t vga_fb_width, vga_fb_height;
     if (!vga_is_framebuffer() || (vga_fb_width < 1024 || vga_fb_height < 720)) {
-      if (vga_display_set_mode(1920, 1080) == 0 ||
-          vga_display_set_mode(1366, 768) == 0 ||
+      if (vga_display_set_mode(1366, 768) == 0 ||
           vga_display_set_mode(1360, 768) == 0 ||
+          vga_display_set_mode(1920, 1080) == 0 ||
           vga_display_set_mode(1024, 768) == 0) {
         vga_init();
         serial_print("[display] resolucao configurada com sucesso\n");
