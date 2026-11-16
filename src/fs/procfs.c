@@ -7,7 +7,32 @@
 #define PROC_ROOT_INODE 0x90000001u
 #define PROC_SELF_INODE 0x90000002u
 #define PROC_MAPS_INODE 0x90000003u
+#define PROC_STAT_INODE 0x90000004u
+#define PROC_SELF_STAT_INODE 0x90000005u
 #define MAPS_LINE_MAX 80u
+
+static const char proc_stat_text[] =
+    "cpu  0 0 0 0 0 0 0 0 0 0\n"
+    "intr 0\n"
+    "ctxt 0\n"
+    "btime 0\n"
+    "processes 1\n"
+    "procs_running 1\n"
+    "procs_blocked 0\n";
+
+static const char proc_self_stat_text[] =
+    "5 (Granny) S 1 5 5 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0\n";
+
+static uint32_t read_static_text(fs_node_t *node, uint32_t offset,
+                                 uint32_t size, uint8_t *out) {
+    const char *text = (const char *)(node->impl_offset == PROC_STAT_INODE
+        ? proc_stat_text : proc_self_stat_text);
+    uint32_t length = node->length;
+    if (offset >= length) return 0;
+    if (size > length - offset) size = length - offset;
+    memcpy(out, text + offset, size);
+    return size;
+}
 
 static char *append_hex(char *out, uint64_t value, unsigned min_digits) {
     static const char digits[] = "0123456789abcdef";
@@ -95,10 +120,30 @@ static fs_node_t *find_maps(fs_node_t *self, const char *name) {
     return open_maps(current_task->process);
 }
 
+static fs_node_t *find_self_entry(fs_node_t *self, const char *name) {
+    fs_node_t *node = find_maps(self, name);
+    if (node || strcmp(name, "maps") == 0) return node;
+    if (strcmp(name, "stat") != 0 || !current_task ||
+        !current_task->user_mode) return NULL;
+    static fs_node_t stat_node;
+    memset(&stat_node, 0, sizeof(stat_node));
+    strcpy(stat_node.name, "stat");
+    stat_node.flags = FS_FILE;
+    stat_node.mask = 0444;
+    stat_node.inode = PROC_SELF_STAT_INODE;
+    stat_node.impl_offset = PROC_SELF_STAT_INODE;
+    stat_node.length = sizeof(proc_self_stat_text) - 1;
+    stat_node.read = read_static_text;
+    return &stat_node;
+}
+
 static struct dirent *read_self_dir(fs_node_t *node, uint32_t index) {
     static struct dirent maps = { .name = "maps", .ino = PROC_MAPS_INODE };
+    static struct dirent stat = { .name = "stat", .ino = PROC_SELF_STAT_INODE };
     (void)node;
-    return index == 0 ? &maps : NULL;
+    if (index == 0) return &maps;
+    if (index == 1) return &stat;
+    return NULL;
 }
 
 static fs_node_t *find_self(fs_node_t *root, const char *name) {
@@ -112,15 +157,34 @@ static fs_node_t *find_self(fs_node_t *root, const char *name) {
     node->flags = FS_DIRECTORY;
     node->mask = 0555;
     node->inode = PROC_SELF_INODE;
-    node->finddir = find_maps;
+    node->finddir = find_self_entry;
     node->readdir = read_self_dir;
     return node;
 }
 
 static struct dirent *read_proc_dir(fs_node_t *node, uint32_t index) {
     static struct dirent self = { .name = "self", .ino = PROC_SELF_INODE };
+    static struct dirent stat = { .name = "stat", .ino = PROC_STAT_INODE };
     (void)node;
-    return index == 0 ? &self : NULL;
+    if (index == 0) return &self;
+    if (index == 1) return &stat;
+    return NULL;
+}
+
+static fs_node_t *find_proc_entry(fs_node_t *self, const char *name) {
+    if (strcmp(name, "self") == 0) return find_self(self, name);
+    if (strcmp(name, "stat") != 0 || !current_task || !current_task->user_mode)
+        return NULL;
+    static fs_node_t stat_node;
+    memset(&stat_node, 0, sizeof(stat_node));
+    strcpy(stat_node.name, "stat");
+    stat_node.flags = FS_FILE;
+    stat_node.mask = 0444;
+    stat_node.inode = PROC_STAT_INODE;
+    stat_node.impl_offset = PROC_STAT_INODE;
+    stat_node.length = sizeof(proc_stat_text) - 1;
+    stat_node.read = read_static_text;
+    return &stat_node;
 }
 
 fs_node_t *procfs_init(void) {
@@ -129,7 +193,7 @@ fs_node_t *procfs_init(void) {
         .flags = FS_DIRECTORY,
         .mask = 0555,
         .inode = PROC_ROOT_INODE,
-        .finddir = find_self,
+        .finddir = find_proc_entry,
         .readdir = read_proc_dir,
     };
     return &root;

@@ -9,7 +9,7 @@
 #define LIWUSTUBE_MAX_TITLE   128
 #define LIWUSTUBE_MAX_AUTHOR  64
 #define LIWUSTUBE_MAX_ID      32
-#define LIWUSTUBE_MAX_URL     512
+#define LIWUSTUBE_MAX_URL     2048
 
 /* Instâncias públicas e Bridge padrão */
 #define LIWUSTUBE_DEFAULT_PIPED_API     "https://api.piped.private.coffee"

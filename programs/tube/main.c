@@ -103,10 +103,7 @@ static int cmd_search(const char *query) {
     }
 
     if (!found) {
-        print_str(2, "[LiwusTube] Erro: Falha ao consultar busca na API em todos os endpoints.\n"
-                     "[LiwusTube] Dica: Certifique-se de que a rede esta ativa e execute o bridge local:\n"
-                     "            python3 scripts/tube_bridge.py\n"
-                     "            tube --bridge http://10.0.2.2:8085 search \"...\n");
+        print_str(2, "[LiwusTube] Erro: Falha ao consultar busca na API em todos os endpoints publicos.\n");
         return 1;
     }
 
@@ -187,9 +184,7 @@ static int cmd_resolve(const char *input, liwustube_stream_info_t *out_info) {
     }
 
     if (!found) {
-        print_str(2, "[LiwusTube] Nenhuma stream compativel (MP4 360p) encontrada para este video.\n"
-                     "[LiwusTube] Dica: Inicie o bridge local no host para assistir qualquer video:\n"
-                     "            python3 scripts/tube_bridge.py\n");
+        print_str(2, "[LiwusTube] Nenhuma stream compativel (MP4 360p) encontrada nos endpoints publicos.\n");
         return -1;
     }
     return 0;

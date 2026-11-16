@@ -29,6 +29,7 @@ static inline bool is_alnum_dash(char c) {
 }
 
 static const char *skip_whitespace(const char *p, const char *end) {
+    if (!p) return NULL;
     while (p < end && is_space(*p)) {
         p++;
     }
@@ -40,8 +41,9 @@ static const char *skip_whitespace(const char *p, const char *end) {
  * ------------------------------------------------------------ */
 
 static const char *parse_json_string(const char *p, const char *end, char *out, size_t out_max) {
+    if (!p) return NULL;
     p = skip_whitespace(p, end);
-    if (p >= end || *p != '"') {
+    if (!p || p >= end || *p != '"') {
         return NULL;
     }
     p++; /* Pula aspas de abertura */
@@ -102,8 +104,9 @@ static const char *parse_json_string(const char *p, const char *end, char *out, 
 }
 
 static const char *parse_json_number(const char *p, const char *end, int64_t *out_val) {
+    if (!p) return NULL;
     p = skip_whitespace(p, end);
-    if (p >= end) return NULL;
+    if (!p || p >= end) return NULL;
 
     bool neg = false;
     if (*p == '-') {
@@ -138,7 +141,9 @@ static const char *parse_json_number(const char *p, const char *end, int64_t *ou
 }
 
 static const char *parse_json_bool(const char *p, const char *end, bool *out_val) {
+    if (!p) return NULL;
     p = skip_whitespace(p, end);
+    if (!p || p >= end) return NULL;
     if (p + 4 <= end && memcmp(p, "true", 4) == 0) {
         if (out_val) *out_val = true;
         return p + 4;
@@ -152,8 +157,9 @@ static const char *parse_json_bool(const char *p, const char *end, bool *out_val
 
 /* Pula um valor JSON arbitrário (escalar, objeto aninhado ou array) */
 static const char *skip_json_value(const char *p, const char *end) {
+    if (!p) return NULL;
     p = skip_whitespace(p, end);
-    if (p >= end) return NULL;
+    if (!p || p >= end) return NULL;
 
     if (*p == '"') {
         return parse_json_string(p, end, NULL, 0);
@@ -459,9 +465,9 @@ int liwustube_parse_search_json(const char *json, size_t json_len, liwustube_sea
 
         /* Parseia campos dentro do objeto item */
         const char *cur = obj_start + 1;
-        while (cur < obj_end) {
+        while (cur && cur < obj_end) {
             cur = skip_whitespace(cur, obj_end);
-            if (cur >= obj_end || *cur == '}') break;
+            if (!cur || cur >= obj_end || *cur == '}') break;
             if (*cur == ',') { cur++; continue; }
 
             char key[64];
@@ -469,16 +475,24 @@ int liwustube_parse_search_json(const char *json, size_t json_len, liwustube_sea
             if (!cur) break;
 
             cur = skip_whitespace(cur, obj_end);
+            if (!cur) break;
             if (cur < obj_end && *cur == ':') cur++;
 
+            cur = skip_whitespace(cur, obj_end);
+            if (!cur) break;
+
             if (strcmp(key, "title") == 0) {
-                cur = parse_json_string(cur, obj_end, item->title, sizeof(item->title));
+                if (*cur == '"') cur = parse_json_string(cur, obj_end, item->title, sizeof(item->title));
+                else cur = skip_json_value(cur, obj_end);
             } else if (strcmp(key, "url") == 0 || strcmp(key, "videoId") == 0) {
-                char raw_url[256];
-                cur = parse_json_string(cur, obj_end, raw_url, sizeof(raw_url));
-                liwustube_extract_video_id(raw_url, item->id, sizeof(item->id));
+                if (*cur == '"') {
+                    char raw_url[256];
+                    cur = parse_json_string(cur, obj_end, raw_url, sizeof(raw_url));
+                    liwustube_extract_video_id(raw_url, item->id, sizeof(item->id));
+                } else cur = skip_json_value(cur, obj_end);
             } else if (strcmp(key, "uploaderName") == 0 || strcmp(key, "author") == 0) {
-                cur = parse_json_string(cur, obj_end, item->author, sizeof(item->author));
+                if (*cur == '"') cur = parse_json_string(cur, obj_end, item->author, sizeof(item->author));
+                else cur = skip_json_value(cur, obj_end);
             } else if (strcmp(key, "duration") == 0 || strcmp(key, "lengthSeconds") == 0) {
                 int64_t dur = 0;
                 cur = parse_json_number(cur, obj_end, &dur);
@@ -517,14 +531,20 @@ int liwustube_parse_stream_json(const char *json, size_t json_len, liwustube_str
     const char *title_key = strstr(json, "\"title\":");
     if (title_key) {
         const char *val = strchr(title_key, ':');
-        if (val) parse_json_string(val + 1, end, out_info->title, sizeof(out_info->title));
+        if (val) {
+            val = skip_whitespace(val + 1, end);
+            if (val && *val == '"') parse_json_string(val, end, out_info->title, sizeof(out_info->title));
+        }
     }
 
     const char *author_key = strstr(json, "\"uploader\":");
     if (!author_key) author_key = strstr(json, "\"author\":");
     if (author_key) {
         const char *val = strchr(author_key, ':');
-        if (val) parse_json_string(val + 1, end, out_info->author, sizeof(out_info->author));
+        if (val) {
+            val = skip_whitespace(val + 1, end);
+            if (val && *val == '"') parse_json_string(val, end, out_info->author, sizeof(out_info->author));
+        }
     }
 
     const char *duration_key = strstr(json, "\"duration\":");
@@ -550,9 +570,9 @@ int liwustube_parse_stream_json(const char *json, size_t json_len, liwustube_str
     const char *p = streams_start + 1;
     bool found_best = false;
 
-    while (p < end) {
+    while (p && p < end) {
         p = skip_whitespace(p, end);
-        if (p >= end || *p == ']') break;
+        if (!p || p >= end || *p == ']') break;
         if (*p == ',') { p++; continue; }
         if (*p != '{') {
             p = skip_json_value(p, end);
@@ -564,18 +584,18 @@ int liwustube_parse_stream_json(const char *json, size_t json_len, liwustube_str
         if (!obj_end) break;
 
         char url[LIWUSTUBE_MAX_URL] = {0};
-        char quality[16] = {0};
-        char format[16] = {0};
-        char vcodec[16] = {0};
-        char acodec[16] = {0};
+        char quality[32] = {0};
+        char format[32] = {0};
+        char vcodec[32] = {0};
+        char acodec[32] = {0};
         bool video_only = true;
         int64_t content_len = 0;
         int64_t w = 0, h = 0;
 
         const char *cur = obj_start + 1;
-        while (cur < obj_end) {
+        while (cur && cur < obj_end) {
             cur = skip_whitespace(cur, obj_end);
-            if (cur >= obj_end || *cur == '}') break;
+            if (!cur || cur >= obj_end || *cur == '}') break;
             if (*cur == ',') { cur++; continue; }
 
             char key[64];
@@ -583,23 +603,33 @@ int liwustube_parse_stream_json(const char *json, size_t json_len, liwustube_str
             if (!cur) break;
 
             cur = skip_whitespace(cur, obj_end);
+            if (!cur) break;
             if (cur < obj_end && *cur == ':') cur++;
 
+            cur = skip_whitespace(cur, obj_end);
+            if (!cur) break;
+
             if (strcmp(key, "url") == 0) {
-                cur = parse_json_string(cur, obj_end, url, sizeof(url));
+                if (*cur == '"') cur = parse_json_string(cur, obj_end, url, sizeof(url));
+                else cur = skip_json_value(cur, obj_end);
             } else if (strcmp(key, "quality") == 0 || strcmp(key, "qualityLabel") == 0 || strcmp(key, "resolution") == 0) {
-                char qtmp[16] = {0};
-                cur = parse_json_string(cur, obj_end, qtmp, sizeof(qtmp));
-                if (quality[0] == '\0' || strstr(qtmp, "360") != NULL || strstr(qtmp, "p") != NULL) {
-                    strncpy(quality, qtmp, sizeof(quality) - 1);
-                }
+                if (*cur == '"') {
+                    char qtmp[32] = {0};
+                    cur = parse_json_string(cur, obj_end, qtmp, sizeof(qtmp));
+                    if (quality[0] == '\0' || strstr(qtmp, "360") != NULL || strstr(qtmp, "p") != NULL) {
+                        strncpy(quality, qtmp, sizeof(quality) - 1);
+                    }
+                } else cur = skip_json_value(cur, obj_end);
             } else if (strcmp(key, "format") == 0 || strcmp(key, "container") == 0 ||
                        strcmp(key, "type") == 0 || strcmp(key, "mimeType") == 0 || strcmp(key, "ext") == 0) {
-                cur = parse_json_string(cur, obj_end, format, sizeof(format));
+                if (*cur == '"') cur = parse_json_string(cur, obj_end, format, sizeof(format));
+                else cur = skip_json_value(cur, obj_end);
             } else if (strcmp(key, "codec") == 0 || strcmp(key, "encoding") == 0) {
-                cur = parse_json_string(cur, obj_end, vcodec, sizeof(vcodec));
+                if (*cur == '"') cur = parse_json_string(cur, obj_end, vcodec, sizeof(vcodec));
+                else cur = skip_json_value(cur, obj_end);
             } else if (strcmp(key, "audioEncoding") == 0) {
-                cur = parse_json_string(cur, obj_end, acodec, sizeof(acodec));
+                if (*cur == '"') cur = parse_json_string(cur, obj_end, acodec, sizeof(acodec));
+                else cur = skip_json_value(cur, obj_end);
             } else if (strcmp(key, "videoOnly") == 0) {
                 cur = parse_json_bool(cur, obj_end, &video_only);
             } else if (strcmp(key, "contentLength") == 0) {

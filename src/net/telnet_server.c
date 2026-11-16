@@ -434,6 +434,66 @@ static void telnet_handle_command(telnet_session_t *s, char *cmd_line) {
             } else {
                 telnet_send(s->pcb, "[LiwusTube] Nenhum resultado ou falha ao consultar API.\r\n");
             }
+        } else if (strcmp(argv[1], "get") == 0 || strcmp(argv[1], "play") == 0) {
+            const char *vid = (argc >= 3) ? argv[2] : "dQw4w9WgXcQ";
+            char id[LIWUSTUBE_MAX_ID];
+            if (liwustube_extract_video_id(vid, id, sizeof(id)) != 0) {
+                telnet_send(s->pcb, "[LiwusTube] ID ou URL invalida.\r\n");
+                return;
+            }
+            telnet_send(s->pcb, "[LiwusTube] Resolvendo stream para ID: ");
+            telnet_send(s->pcb, id);
+            telnet_send(s->pcb, "...\r\n");
+
+            int cand_cnt = liwustube_get_candidate_count();
+            bool found = false;
+            liwustube_stream_info_t sinfo;
+
+            for (int i = 0; i < cand_cnt; i++) {
+                const char *api = liwustube_get_candidate_api(i);
+                char url[LIWUSTUBE_MAX_URL];
+                if (liwustube_build_stream_url(api, id, url, sizeof(url)) != 0) continue;
+
+                telnet_send(s->pcb, "[LiwusTube] Tentando API: ");
+                telnet_send(s->pcb, api);
+                telnet_send(s->pcb, "...\r\n");
+
+                uint8_t *body = NULL;
+                size_t size = 0;
+                int status = 0;
+                int r = http_get_mem(url, &body, &size, &status, NULL, NULL);
+                if (r >= 0 && body) {
+                    if (liwustube_parse_stream_json((const char *)body, size, &sinfo) == 0 && sinfo.stream_url[0]) {
+                        found = true;
+                        liwustube_set_api(api);
+                        kfree(body);
+                        break;
+                    }
+                    kfree(body);
+                }
+            }
+
+            if (found) {
+                telnet_send(s->pcb, "[LiwusTube] Stream encontrada!\r\n  Titulo: ");
+                telnet_send(s->pcb, sinfo.title);
+                telnet_send(s->pcb, "\r\n  Canal: ");
+                telnet_send(s->pcb, sinfo.author);
+                telnet_send(s->pcb, "\r\n  Qualidade: ");
+                telnet_send(s->pcb, sinfo.quality);
+                telnet_send(s->pcb, "\r\n");
+
+                if (strcmp(argv[1], "play") == 0) {
+                    telnet_send(s->pcb, "[LiwusTube] Baixando stream para reproducao (/tmp/youtube.mp4)...\r\n");
+                    int dl = http_download_file(sinfo.stream_url, "/tmp/youtube.mp4", NULL, NULL);
+                    if (dl > 0) {
+                        telnet_send(s->pcb, "[LiwusTube] Download concluido!\r\n");
+                    } else {
+                        telnet_send(s->pcb, "[LiwusTube] Falha no download do stream.\r\n");
+                    }
+                }
+            } else {
+                telnet_send(s->pcb, "[LiwusTube] Nenhuma stream compativel encontrada.\r\n");
+            }
         } else {
             telnet_send(s->pcb, "uso: tube <search <termo> | play <id> | get <id>>\r\n");
         }

@@ -1037,10 +1037,6 @@ uint64_t schedule(uint64_t current_rsp) {
   }
 
   task_t *new_curr = current_task;
-  if (new_curr != curr && new_curr->id >= 6 && new_curr->id <= 8) {
-    serial_print("[sched switch tid="); serial_print_hex((uint64_t)new_curr->id);
-    serial_print("]\\n");
-  }
   new_curr->switch_count++;
   global_switch_count++;
 

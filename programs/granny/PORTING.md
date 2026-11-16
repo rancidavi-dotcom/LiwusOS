@@ -141,10 +141,12 @@ The source-side compile gate is passed. The LiwusOS runtime gate is not:
 | Load the Vita build in LiwusOS | Not compatible | Vita ARM32 IL2CPP/SUPRX output and Vita APIs |
 | Start the Linux player's ELF interpreter | Passed in QEMU | The original Granny executable reaches glibc's shared library loader |
 | Load shared libraries | Passed for the staged Unity build in QEMU | glibc transfers control to Unity, which loads Mono with `dlopen` |
-| Initialize Mono | Pending | `/proc/self/maps` and Linux signal handling are missing |
-| Run Unity graphics/input/audio on LiwusOS | Pending | The Linux player expects X11, GL and audio services |
-| Package a functional Granny `.lxe` | Pending | The game must reach a playable state before packaging |
+| Initialize Mono | In progress | `/proc` (`maps`, `stat`, `readlink`), signal masks, `getrlimit(RLIMIT_STACK)`, JIT `MAP_32BIT`/RWX, futexes, TLS and POSIX scheduling now let Mono create its worker pool; the player then reaches SDL/X11 bootstrap |
+| Run Unity graphics/input/audio on LiwusOS | Pending | The Linux player still needs an X11-compatible window/display path (or an SDL framebuffer backend), plus GL/input/audio services |
+| Package a functional Granny `.lxe` | Pending | The original player has not reached Unity's menu on LiwusOS; no screenshot or package is claimed |
 
 The current route reuses the Linux Unity player and its Mono runtime. The
-next checkpoint is to expose the process's real memory maps and implement
-the signal operations Mono uses during initialization.
+next checkpoint is the windowing backend: the runtime now stays alive and
+spawns its worker pool, but no Unity menu is visible until Liwus supplies the
+X11/SDL display path and the associated input/audio services. The QEMU fixture
+used during this work is temporary and is not a distributable `.lxe`.

@@ -87,8 +87,8 @@ static void test_parse_stream_json(void) {
     static const char sample_stream[] =
         "{\"title\":\"Rick Astley - Never Gonna Give You Up\",\"uploader\":\"Rick Astley\",\"duration\":213,"
         "\"videoStreams\":["
-        "{\"quality\":\"1080p\",\"format\":\"MPEG_4\",\"videoOnly\":true,\"url\":\"https://example.com/1080p.mp4\"},"
-        "{\"quality\":\"360p\",\"format\":\"MPEG_4\",\"videoOnly\":false,\"url\":\"https://example.com/360p_prog.mp4\","
+        "{\"quality\":\"1080p\",\"format\":\"MPEG_4\",\"codec\":null,\"videoOnly\":true,\"url\":\"https://example.com/1080p.mp4\"},"
+        "{\"quality\":\"360p\",\"format\":\"MPEG_4\",\"codec\":null,\"audioTrackId\":null,\"videoOnly\":false,\"url\":\"https://example.com/360p_prog.mp4\","
         "\"width\":640,\"height\":360,\"contentLength\":11829048}"
         "]}";
 
@@ -102,6 +102,20 @@ static void test_parse_stream_json(void) {
     assert(info.width == 640);
     assert(info.height == 360);
     assert(info.content_length == 11829048);
+
+    /* Teste com null values e URLs longas (> 1000 chars) como no Piped */
+    char long_stream[4096];
+    char long_url[1200];
+    memset(long_url, 'a', sizeof(long_url) - 1);
+    long_url[sizeof(long_url) - 1] = '\0';
+    snprintf(long_stream, sizeof(long_stream),
+             "{\"title\":\"Long URL Test\",\"uploader\":\"Test\",\"duration\":100,"
+             "\"videoStreams\":[{\"url\":\"https://example.com/%s.mp4\",\"quality\":\"360p\",\"format\":\"video/mp4\",\"codec\":null,\"videoOnly\":false}]}",
+             long_url);
+
+    assert(liwustube_parse_stream_json(long_stream, strlen(long_stream), &info) == 0);
+    assert(strstr(info.stream_url, "https://example.com/") != NULL);
+    assert(strlen(info.stream_url) > 1000);
 
     printf("liwustube parse_stream_json: PASS\n");
 }

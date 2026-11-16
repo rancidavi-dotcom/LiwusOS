@@ -5625,7 +5625,7 @@ static void player_tube_search_cb(lv_event_t *e) {
                 if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Falha no download do stream.");
             }
         } else {
-            if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Stream indisponivel. Inicie o bridge no host.");
+            if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Nenhuma stream compativel encontrada.");
         }
     } else {
         if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Pesquisando na API...");
@@ -5671,6 +5671,7 @@ static void player_tube_search_cb(lv_event_t *e) {
 
             for (int i = 0; i < cand_cnt; i++) {
                 const char *api = (i == 0 && working_api) ? working_api : liwustube_get_candidate_api(i);
+                if (i > 0 && working_api && strcmp(api, working_api) == 0) continue;
                 char stream_info_url[LIWUSTUBE_MAX_URL];
                 liwustube_build_stream_url(api, sres.items[0].id, stream_info_url, sizeof(stream_info_url));
 
@@ -5690,6 +5691,12 @@ static void player_tube_search_cb(lv_event_t *e) {
             }
 
             if (stream_ok) {
+                if (lbl_player_track) {
+                    char msg[128];
+                    lv_snprintf(msg, sizeof(msg), "LiwusTube: Baixando \"%s\"...", sinfo.title);
+                    lv_label_set_text(lbl_player_track, msg);
+                }
+                vga_flip();
                 int dl = http_download_file_progress(sinfo.stream_url, "/tmp/youtube.mp4",
                                                      tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL);
                 if (dl > 0) {
@@ -5698,7 +5705,7 @@ static void player_tube_search_cb(lv_event_t *e) {
                     if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Erro ao baixar stream.");
                 }
             } else {
-                if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Stream indisponivel. Inicie o bridge no host.");
+                if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Nenhuma stream compativel encontrada.");
             }
         } else {
             if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Falha ao consultar busca na API.");

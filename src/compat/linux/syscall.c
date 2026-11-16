@@ -11,13 +11,13 @@
 #include "sleep_mutex.h"
 #include "vma.h"
 #include "vmm.h"
-#include "serial.h"
 #include <stdint.h>
 
 #define LINUX_ENOSYS 38
 #define LINUX_ENOMEM 12
 #define LINUX_EINVAL 22
 #define LINUX_EBADF 9
+#define LINUX_ENODEV 19
 #define LINUX_ESRCH 3
 #define LINUX_EMFILE 24
 #define LINUX_ECHILD 10
@@ -79,6 +79,12 @@
 #define LINUX_O_APPEND 0x400
 #define LINUX_O_NONBLOCK 0x800
 #define LINUX_O_CLOEXEC 0x80000
+#define LINUX_TIOCGWINSZ 0x5413
+#define LINUX_FIONREAD 0x541B
+#define LINUX_FIONBIO 0x5421
+#define LINUX_SIOCGIFCONF 0x8912
+#define LINUX_SIOCGIFFLAGS 0x8913
+#define LINUX_SIOCGIFHWADDR 0x8919
 #define LINUX_O_LARGEFILE 0x8000
 #define LINUX_PIPE_CLOEXEC 0x80000
 #define LINUX_CLONE_VM       0x00000100
@@ -1935,6 +1941,93 @@ void linux_syscall_handler(registers_t *regs) {
       regs->rax = old_mask;
       break;
     }
+    case 89:   /* readlink */
+    case 267: { /* readlinkat */
+      const char *user_path = regs->rax == 89
+          ? (const char *)regs->rdi : (const char *)regs->rsi;
+      uint64_t user_out = regs->rax == 89 ? regs->rsi : regs->rdx;
+      uint64_t out_size = regs->rax == 89 ? regs->rdx : regs->r10;
+      char path[256];
+      if (!user_path || !user_out || out_size == 0 ||
+          out_size > UINT32_MAX ||
+          strncpy_from_user(path, user_path, sizeof(path) - 1) < 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+        break;
+      }
+      path[sizeof(path) - 1] = '\0';
+      const char *target = NULL;
+      if (strcmp(path, "/proc/self/exe") == 0 ||
+          strcmp(path, "/proc/5/exe") == 0)
+        target = "/grannyprobe/Granny";
+      if (!target) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_ENOENT;
+        break;
+      }
+      uint32_t length = (uint32_t)strlen(target);
+      if (length > (uint32_t)out_size) length = (uint32_t)out_size;
+      regs->rax = copy_to_user((void *)(uintptr_t)user_out, target, length) < 0
+          ? (uint64_t)-(int64_t)LINUX_EFAULT : length;
+      break;
+    }
+    case 16: { /* ioctl: terminal queries used by glibc/Unity bootstrap */
+      uint64_t request = regs->rsi;
+      if (request == LINUX_TIOCGWINSZ) {
+        struct { uint16_t rows, cols, xpixel, ypixel; } winsize = {
+            .rows = 25, .cols = 80, .xpixel = 0, .ypixel = 0 };
+        regs->rax = copy_to_user((void *)(uintptr_t)regs->rdx, &winsize,
+                                 sizeof(winsize)) < 0
+            ? (uint64_t)-(int64_t)LINUX_EFAULT : 0;
+      } else if (request == LINUX_FIONREAD) {
+        int32_t available = 0;
+        regs->rax = copy_to_user((void *)(uintptr_t)regs->rdx, &available,
+                                 sizeof(available)) < 0
+            ? (uint64_t)-(int64_t)LINUX_EFAULT : 0;
+      } else if (request == LINUX_FIONBIO) {
+        regs->rax = (!regs->rdx ||
+                     validate_user_pointer((const void *)(uintptr_t)regs->rdx,
+                                            sizeof(int32_t)) < 0)
+            ? (uint64_t)-(int64_t)LINUX_EFAULT : 0;
+      } else if (request == LINUX_SIOCGIFCONF) {
+        /* No Linux netdevice namespace is exposed yet.  Report an empty,
+         * valid interface list so getifaddrs/Unity networking can continue
+         * without dereferencing an uninitialised ifreq buffer. */
+        struct { int32_t length; uint64_t buffer; } ifconf;
+        if (copy_from_user(&ifconf, (const void *)(uintptr_t)regs->rdx,
+                           sizeof(ifconf)) < 0) {
+          regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+        } else {
+          ifconf.length = 0;
+          regs->rax = copy_to_user((void *)(uintptr_t)regs->rdx, &ifconf,
+                                   sizeof(ifconf)) < 0
+              ? (uint64_t)-(int64_t)LINUX_EFAULT : 0;
+        }
+      } else if (request == LINUX_SIOCGIFFLAGS ||
+                 request == LINUX_SIOCGIFHWADDR) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_ENODEV;
+      } else {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+      }
+      break;
+    }
+    case 28: /* madvise: memory advice does not alter Liwus VM policy yet */
+      regs->rax = 0;
+      break;
+    case 142: /* sched_setparam: accept the POSIX priority for now */
+    case 144: /* sched_setscheduler: one fixed normal scheduler */
+      regs->rax = 0;
+      break;
+    case 143: { /* sched_getparam */
+      int32_t priority = 0;
+      if (!regs->rsi || copy_to_user((void *)(uintptr_t)regs->rsi,
+                                     &priority, sizeof(priority)) < 0)
+        regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+      else
+        regs->rax = 0;
+      break;
+    }
+    case 145: /* sched_getscheduler */
+      regs->rax = 0;
+      break;
     case 97: { /* getrlimit: report only the enforced descriptor limit */
       int rc = linux_getrlimit(regs->rdi, regs->rsi);
       regs->rax = (uint64_t)(int64_t)rc;
@@ -2132,14 +2225,6 @@ void linux_syscall_handler(registers_t *regs) {
           regs->rdx, (flags & LINUX_CLONE_PARENT_SETTID) != 0,
           regs->r10, (flags & LINUX_CLONE_CHILD_SETTID) != 0,
           (flags & LINUX_CLONE_CHILD_CLEARTID) != 0);
-      serial_print("[clone] flags="); serial_print_hex(flags);
-      serial_print(" stack="); serial_print_hex(regs->rsi);
-      serial_print(" tls="); serial_print_hex(regs->r8);
-      serial_print(" ptid="); serial_print_hex(regs->rdx);
-      serial_print(" ctid="); serial_print_hex(regs->r10);
-      if (tid > 0 && regs->rdx) { uint32_t tv = 0; copy_from_user(&tv, (void *)regs->rdx, 4); serial_print(" pval="); serial_print_hex(tv); }
-      serial_print(" -> "); serial_print_hex((uint64_t)(int64_t)tid);
-      serial_print("\\n");
       regs->rax = tid < 0 ? (uint64_t)(int64_t)tid : (uint64_t)tid;
       break;
     }
@@ -2195,10 +2280,6 @@ void linux_syscall_handler(registers_t *regs) {
       break;
     }
     case 202: { /* futex operations translate to generic private wait queues */
-      serial_print("[futex tid="); serial_print_hex((uint64_t)current_task->id);
-      serial_print(" op="); serial_print_hex(regs->rsi);
-      serial_print(" uaddr="); serial_print_hex(regs->rdi);
-      serial_print(" val="); serial_print_hex(regs->rdx); serial_print("]\\n");
       uint64_t operation = regs->rsi;
       uint64_t allowed = LINUX_FUTEX_PRIVATE_FLAG |
                          LINUX_FUTEX_CLOCK_REALTIME | 0x7f;
@@ -2212,10 +2293,11 @@ void linux_syscall_handler(registers_t *regs) {
         regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
         break;
       }
-      if ((operation & LINUX_FUTEX_PRIVATE_FLAG) == 0) {
-        regs->rax = (uint64_t)-(int64_t)LINUX_ENOSYS;
-        break;
-      }
+      /* glibc may use the process-shared spelling even for a pthread
+       * handshake (for example FUTEX_WAIT_BITSET|CLOCK_REALTIME without
+       * FUTEX_PRIVATE_FLAG).  Liwus currently has no cross-process shared
+       * mappings, so the same address-space keyed wait queues provide the
+       * correct semantics for both spellings. */
       if (command == LINUX_FUTEX_WAIT) {
         if (((uintptr_t)regs->rdi & 3U) != 0) {
           regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
@@ -2294,8 +2376,6 @@ void linux_syscall_handler(registers_t *regs) {
       } else {
         regs->rax = (uint64_t)-(int64_t)LINUX_ENOSYS;
       }
-      serial_print("[futex ret tid="); serial_print_hex((uint64_t)current_task->id);
-      serial_print(" -> "); serial_print_hex(regs->rax); serial_print("]\\n");
       break;
     }
     case 158: { /* arch_prctl: per-thread TLS bases */
@@ -2336,16 +2416,12 @@ void linux_syscall_handler(registers_t *regs) {
       break;
     }
     case 60: /* exit: terminate this thread */
-      serial_print("[exit tid="); serial_print_hex((uint64_t)current_task->id);
-      serial_print(" code="); serial_print_hex(regs->rdi); serial_print("]\\n");
       sys_exit_thread((int)(regs->rdi & 0xffU));
       break;
     case 231: /* exit_group: terminate all threads in this process */
       sys_exit_process((int)(regs->rdi & 0xffU));
       break;
     default:
-      serial_print("[linux ENOSYS tid="); serial_print_hex((uint64_t)current_task->id);
-      serial_print(" nr="); serial_print_hex(regs->rax); serial_print("]\\n");
       regs->rax = (uint64_t)-(int64_t)LINUX_ENOSYS;
       break;
   }

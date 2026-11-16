@@ -36,7 +36,7 @@ static bool http_req_append_u32(char *buffer, size_t capacity, size_t *length,
 #define HTTP_SCRATCH_SIZE 16384
 #define HTTP_INIT_BODY_CAPACITY (64 * 1024)
 #define HTTP_TLS_CHUNK_SIZE 4096
-#define HTTP_URL_MAX 1024U
+#define HTTP_URL_MAX 2048U
 #define HTTP_PATH_MAX (HTTP_URL_MAX * 3U + 1U)
 
 typedef struct {
@@ -480,7 +480,7 @@ static int http_perform_request(const char *url, uint8_t **out_body, size_t *out
     }
 
     if (strlen(url) >= HTTP_URL_MAX) {
-        http_log(output_cb, user_data, "URL excede o limite de 1023 caracteres");
+        http_log(output_cb, user_data, "URL excede o limite suportado");
         return -1;
     }
     char active_url[HTTP_URL_MAX];
