@@ -456,6 +456,57 @@ int liwus_linux_socket_create(int domain, int type, int protocol) {
   return fd;
 }
 
+int liwus_linux_socket_pair(int domain, int type, int protocol, int *user_fds) {
+  if (domain != LIWUS_LINUX_AF_UNIX ||
+      (type & 0xf) != LIWUS_LINUX_SOCK_STREAM || !user_fds)
+    return -97; /* EAFNOSUPPORT */
+  int first = linux_socket_alloc_fd();
+  if (first < 0) return first;
+  kfile_t *table = get_fd_table();
+  liwus_linux_socket_t *left =
+      (liwus_linux_socket_t *)kmalloc(sizeof(*left));
+  if (!left) return -12;
+  memset(left, 0, sizeof(*left));
+  left->domain = domain;
+  left->type = type;
+  left->protocol = protocol;
+  left->connected = true;
+  left->references = 1;
+  memset(&table[first], 0, sizeof(table[first]));
+  table[first].type = FD_TYPE_SOCKET;
+  table[first].socket_ptr = left;
+
+  int second = linux_socket_alloc_fd();
+  if (second < 0) {
+    sys_fd_put(&table[first]);
+    return second;
+  }
+  liwus_linux_socket_t *right =
+      (liwus_linux_socket_t *)kmalloc(sizeof(*right));
+  if (!right) {
+    sys_fd_put(&table[first]);
+    return -12;
+  }
+  memset(right, 0, sizeof(*right));
+  right->domain = domain;
+  right->type = type;
+  right->protocol = protocol;
+  right->connected = true;
+  right->references = 1;
+  left->peer = right;
+  right->peer = left;
+  memset(&table[second], 0, sizeof(table[second]));
+  table[second].type = FD_TYPE_SOCKET;
+  table[second].socket_ptr = right;
+  int fds[2] = { first, second };
+  if (copy_to_user(user_fds, fds, sizeof(fds)) < 0) {
+    sys_fd_put(&table[second]);
+    sys_fd_put(&table[first]);
+    return -14; /* EFAULT */
+  }
+  return 0;
+}
+
 static int linux_socket_copy_path(const void *user_addr, uint32_t length,
                                   char path[LIWUS_LINUX_SOCKET_PATH_MAX]) {
   if (!user_addr || length < 3 || length > 128) return -22;

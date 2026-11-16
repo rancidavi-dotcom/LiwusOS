@@ -2098,6 +2098,11 @@ void linux_syscall_handler(registers_t *regs) {
       regs->rax = (uint64_t)(int64_t)liwus_linux_socket_create(
           (int)regs->rdi, (int)regs->rsi, (int)regs->rdx);
       break;
+    case 53: /* socketpair: Xorg/SDL use local stream pairs for wakeups */
+      regs->rax = (uint64_t)(int64_t)liwus_linux_socket_pair(
+          (int)regs->rdi, (int)regs->rsi, (int)regs->rdx,
+          (int *)regs->r10);
+      break;
     case 42: /* connect */
       regs->rax = (uint64_t)(int64_t)liwus_linux_socket_connect(
           (int)regs->rdi, (const void *)regs->rsi, (uint32_t)regs->rdx);

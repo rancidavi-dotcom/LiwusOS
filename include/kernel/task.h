@@ -264,6 +264,7 @@ void task_release_io(task_t *task);
 void sys_fd_get(kfile_t *file);
 void sys_fd_put(kfile_t *file);
 int liwus_linux_socket_create(int domain, int type, int protocol);
+int liwus_linux_socket_pair(int domain, int type, int protocol, int *user_fds);
 int liwus_linux_socket_bind(int fd, const void *user_addr, uint32_t length);
 int liwus_linux_socket_listen(int fd, int backlog);
 int liwus_linux_socket_connect(int fd, const void *user_addr, uint32_t length);
