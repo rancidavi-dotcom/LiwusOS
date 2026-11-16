@@ -226,6 +226,39 @@ void cmd_play(int argc, char **argv) {
     sys_waitpid(pid, &status, 0);
 }
 
+void cmd_tube(int argc, char **argv) {
+    extern int launch_initrd_program_argv(const char *filename, char *const argv[]);
+    extern int sys_waitpid(int pid, int *status, int options);
+    char *prog_argv[16];
+    if (argc >= 15) argc = 15;
+    prog_argv[0] = "tube";
+    for (int i = 1; i < argc; i++) {
+        prog_argv[i] = argv[i];
+    }
+    prog_argv[argc] = NULL;
+
+    int pid = launch_initrd_program_argv("/bin/tube.lxe", prog_argv);
+    if (pid <= 0) pid = launch_initrd_program_argv("tube", prog_argv);
+    if (pid <= 0) pid = launch_initrd_program_argv("bin/tube.lxe", prog_argv);
+    if (pid <= 0) {
+        vga_puts("tube: executavel nao encontrado\n");
+        return;
+    }
+    int status = 0;
+    sys_waitpid(pid, &status, 0);
+}
+
+void cmd_player(int argc, char **argv) {
+    extern void desktop_open_player(void);
+    extern void desktop_tube_search(const char *query);
+    if (argc >= 2 && (strcmp(argv[1], "tube") == 0 || strcmp(argv[1], "youtube") == 0 || strcmp(argv[1], "search") == 0)) {
+        const char *q = (argc >= 3) ? argv[2] : "lofi";
+        desktop_tube_search(q);
+        return;
+    }
+    desktop_open_player();
+}
+
 void cmd_dhcp(int argc, char **argv) {
     (void)argc; (void)argv;
     extern void cmd_ifconfig(int argc, char **argv);
@@ -249,6 +282,10 @@ static const terminal_command_t commands[] = {
     {"snes", cmd_snes, "Emulador de SNES (tela cheia)"},
     {"craft", cmd_craft, "Craft em janela LVGL"},
     {"play", cmd_play, "Reproduz audio MP3 pela saida HDA"},
+    {"player", cmd_player, "Abre a janela do Player de Midia / LiwusTube"},
+    {"midia", cmd_player, "Abre a janela do Player de Midia / LiwusTube"},
+    {"tube", cmd_tube, "Cliente LiwusTube / YouTube (search, play, get)"},
+    {"youtube", cmd_tube, "Cliente LiwusTube / YouTube (alias)"},
     {"dhcp", cmd_dhcp, "Renova / solicita IP do roteador via DHCP"},
     {"mkdir", cmd_mkdir, "Create directory"},
     {"touch", cmd_touch, "Create empty file"},

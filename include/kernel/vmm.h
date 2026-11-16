@@ -56,6 +56,11 @@ void init_vmm(uint64_t memory_size);
 int vmm_map_page(void *phys, void *virt, uint64_t flags);
 int vmm_map_page_in(page_directory_t *dir, void *phys, void *virt,
                     uint64_t flags);
+/* Prepare a 4 KiB user leaf without modifying its mapping. The caller
+ * serializes updates to the address space until the new frame is installed. */
+pte_t *vmm_prepare_user_leaf(page_directory_t *dir, uint64_t address);
+void vmm_install_user_leaf(page_directory_t *dir, uint64_t address,
+                           pte_t *leaf, void *frame, uint64_t flags);
 int vmm_map_kernel_page(uint64_t phys, uint64_t virt, uint64_t flags);
 int vmm_map_large_page(uint64_t phys, uint64_t virt, uint64_t flags);
 int vmm_map_large_page_in(page_directory_t *dir, uint64_t phys,

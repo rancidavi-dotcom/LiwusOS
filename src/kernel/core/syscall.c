@@ -1946,10 +1946,10 @@ int sys_fstat(int fd, struct kernel_stat *st) {
   if (fd < 0 || fd >= 32 || fd_table[fd].type != FD_TYPE_FILE) return -1;
   
   kfile_t *f = &fd_table[fd];
+  fs_node_t *node = f->description ? f->description->node : f->socket_ptr;
   ks.st_dev = 1;
-  ks.st_ino = fd + 1;
+  ks.st_ino = node ? node->inode : 0;
   ks.st_nlink = 1;
-  fs_node_t *node = f->description ? f->description->node : NULL;
   ks.st_uid = node ? node->uid : 0;
   ks.st_gid = node ? node->gid : 0;
   ks.st_rdev = node ? (uint64_t)vfs_detect_resource_type(node, node->name) : (uint64_t)LIWUS_RES_DEVICE;
@@ -1957,8 +1957,7 @@ int sys_fstat(int fd, struct kernel_stat *st) {
   ks.st_blksize = 4096;
   ks.st_blocks = (file_size(f) + 511) / 512;
   
-  if (f->socket_ptr) {
-    node = (fs_node_t *)f->socket_ptr;
+  if (node) {
     uint32_t ftype = K_S_IFREG;
     if (node->flags & FS_DIRECTORY) ftype = K_S_IFDIR;
     else if (node->flags & FS_CHARDEVICE) ftype = K_S_IFCHR;
@@ -2404,8 +2403,10 @@ uint64_t sys_mmap(void *addr, uint64_t length, int prot, int flags,
   page_directory_t *mm = current_task->process->mm;
   if (!mm) return MAP_FAILED;
   if (!(flags & MAP_ANONYMOUS)) return MAP_FAILED; // suportado apenas anônimo
-  if ((prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
-    return MAP_FAILED;
+  /* Linux runtimes such as Unity's Mono JIT reserve anonymous code pages as
+   * RWX and tighten them with mprotect after emission.  The compatibility
+   * syscall layer validates the final mapping policy; do not reject this
+   * transient allocation here or the JIT cannot bootstrap. */
 
   /* Se o usuário passou um hint explícito (MAP_FIXED ou addr != NULL),
    * garante que ele está dentro do espaço de endereço de usuário. */

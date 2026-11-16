@@ -1037,6 +1037,10 @@ uint64_t schedule(uint64_t current_rsp) {
   }
 
   task_t *new_curr = current_task;
+  if (new_curr != curr && new_curr->id >= 6 && new_curr->id <= 8) {
+    serial_print("[sched switch tid="); serial_print_hex((uint64_t)new_curr->id);
+    serial_print("]\\n");
+  }
   new_curr->switch_count++;
   global_switch_count++;
 
@@ -1050,6 +1054,12 @@ uint64_t schedule(uint64_t current_rsp) {
   if (new_curr->kernel_stack != 0) {
       cpus_tss[get_cpu_id()].rsp0 = new_curr->kernel_stack;
   }
+
+  /* Linux pthreads keep their TCB at FS_BASE.  CLONE_SETTLS stores the
+   * child's value in the thread object; restore both user segment bases on
+   * every scheduler switch so the new thread can enter glibc with valid TLS. */
+  write_msr_qword(0xC0000100U, new_curr->fs_base);
+  write_msr_qword(0xC0000102U, new_curr->user_gs_base);
 
   /* FPU/SSE contexto: o kernel é -mno-sse, mas tasks que usam FP (ex. o
    * decoder MP3, compilado com -msse) precisam ter o estado XMM/x87 salvo

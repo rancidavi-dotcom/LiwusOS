@@ -130,6 +130,23 @@ int vma_remove(struct page_directory *mm, uint64_t start, uint64_t end) {
   return 0;
 }
 
+int vma_replace(struct page_directory *mm, uint64_t start, uint64_t end,
+                uint32_t prot, uint32_t flags, uint64_t file_offset) {
+  if (!mm || !valid_interval(start, end)) return -1;
+  vma_t *area = vma_allocate(start, end, prot, flags, file_offset, 0);
+  if (!area) return -1;
+  if (vma_remove(mm, start, end) < 0) {
+    kfree(area);
+    return -1;
+  }
+
+  vma_t **link = &mm->vmas;
+  while (*link && (*link)->start < start) link = &(*link)->next;
+  area->next = *link;
+  *link = area;
+  return 0;
+}
+
 /* Replace protection metadata for a fully covered interval. Build a new VMA
  * list first so allocation failures leave the old map intact. The page-table
  * permission changes are applied only after all mappings and metadata have

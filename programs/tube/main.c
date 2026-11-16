@@ -69,41 +69,46 @@ static void load_config_if_present(void) {
 }
 
 static int cmd_search(const char *query) {
-    char url[LIWUSTUBE_MAX_URL];
-    if (liwustube_build_search_url(NULL, query, url, sizeof(url)) != 0) {
-        print_str(2, "[LiwusTube] Erro: falha ao montar URL de busca\n");
-        return 1;
-    }
+    int cand_cnt = liwustube_get_candidate_count();
+    bool found = false;
+    liwustube_search_result_t res;
 
     print_str(1, "[LiwusTube] Pesquisando: \"");
     print_str(1, query);
-    print_str(1, "\"\n[LiwusTube] Endpoint: ");
-    print_str(1, url);
-    print_str(1, "\n[LiwusTube] Aguarde a resposta...\n");
+    print_str(1, "\"...\n");
 
-    long dl = liw_net_http_get(url, TUBE_TMP_JSON);
-    if (dl <= 0) {
-        print_str(2, "[LiwusTube] Erro de rede ao consultar API\n"
+    for (int c = 0; c < cand_cnt; c++) {
+        const char *api = liwustube_get_candidate_api(c);
+        char url[LIWUSTUBE_MAX_URL];
+        if (liwustube_build_search_url(api, query, url, sizeof(url)) != 0) continue;
+
+        print_str(1, "[LiwusTube] Tentando API: ");
+        print_str(1, api);
+        print_str(1, "...\n");
+
+        long dl = liw_net_http_get(url, TUBE_TMP_JSON);
+        if (dl <= 0) continue;
+
+        size_t json_len = 0;
+        char *json = read_file_all(TUBE_TMP_JSON, &json_len);
+        if (!json) continue;
+
+        if (liwustube_parse_search_json(json, json_len, &res) == 0 && res.count > 0) {
+            found = true;
+            liwustube_set_api(api);
+            free(json);
+            break;
+        }
+        free(json);
+    }
+
+    if (!found) {
+        print_str(2, "[LiwusTube] Erro: Falha ao consultar busca na API em todos os endpoints.\n"
                      "[LiwusTube] Dica: Certifique-se de que a rede esta ativa e execute o bridge local:\n"
                      "            python3 scripts/tube_bridge.py\n"
                      "            tube --bridge http://10.0.2.2:8085 search \"...\n");
         return 1;
     }
-
-    size_t json_len = 0;
-    char *json = read_file_all(TUBE_TMP_JSON, &json_len);
-    if (!json) {
-        print_str(2, "[LiwusTube] Erro ao ler resposta JSON\n");
-        return 1;
-    }
-
-    liwustube_search_result_t res;
-    if (liwustube_parse_search_json(json, json_len, &res) != 0 || res.count == 0) {
-        free(json);
-        print_str(1, "[LiwusTube] Nenhum resultado encontrado para o termo pesquisado.\n");
-        return 0;
-    }
-    free(json);
 
     print_str(1, "\n================================================================================\n");
     print_str(1, "ID           TEMPO    CANAL                TITULO\n");
@@ -149,37 +154,44 @@ static int cmd_resolve(const char *input, liwustube_stream_info_t *out_info) {
         return -1;
     }
 
-    char url[LIWUSTUBE_MAX_URL];
-    if (liwustube_build_stream_url(NULL, id, url, sizeof(url)) != 0) {
-        print_str(2, "[LiwusTube] Erro ao montar URL do video\n");
-        return -1;
-    }
+    int cand_cnt = liwustube_get_candidate_count();
+    bool found = false;
 
     print_str(1, "[LiwusTube] Resolvendo video ID: ");
     print_str(1, id);
-    print_str(1, "\n[LiwusTube] Endpoint: ");
-    print_str(1, url);
-    print_str(1, "\n[LiwusTube] Aguarde a resposta...\n");
+    print_str(1, "...\n");
 
-    long dl = liw_net_http_get(url, TUBE_TMP_JSON);
-    if (dl <= 0) {
-        print_str(2, "[LiwusTube] Erro de rede ao obter stream do video\n");
-        return -1;
-    }
+    for (int c = 0; c < cand_cnt; c++) {
+        const char *api = liwustube_get_candidate_api(c);
+        char url[LIWUSTUBE_MAX_URL];
+        if (liwustube_build_stream_url(api, id, url, sizeof(url)) != 0) continue;
 
-    size_t json_len = 0;
-    char *json = read_file_all(TUBE_TMP_JSON, &json_len);
-    if (!json) {
-        print_str(2, "[LiwusTube] Erro ao ler informacoes de stream\n");
-        return -1;
-    }
+        print_str(1, "[LiwusTube] Tentando API: ");
+        print_str(1, api);
+        print_str(1, "...\n");
 
-    if (liwustube_parse_stream_json(json, json_len, out_info) != 0) {
+        long dl = liw_net_http_get(url, TUBE_TMP_JSON);
+        if (dl <= 0) continue;
+
+        size_t json_len = 0;
+        char *json = read_file_all(TUBE_TMP_JSON, &json_len);
+        if (!json) continue;
+
+        if (liwustube_parse_stream_json(json, json_len, out_info) == 0 && out_info->stream_url[0]) {
+            found = true;
+            liwustube_set_api(api);
+            free(json);
+            break;
+        }
         free(json);
-        print_str(2, "[LiwusTube] Nenhuma stream compativel (MP4 360p) encontrada para este video\n");
+    }
+
+    if (!found) {
+        print_str(2, "[LiwusTube] Nenhuma stream compativel (MP4 360p) encontrada para este video.\n"
+                     "[LiwusTube] Dica: Inicie o bridge local no host para assistir qualquer video:\n"
+                     "            python3 scripts/tube_bridge.py\n");
         return -1;
     }
-    free(json);
     return 0;
 }
 

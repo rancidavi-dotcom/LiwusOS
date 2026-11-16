@@ -32,19 +32,25 @@ entries identify the Linux libraries it uses. The shell command
 from the VFS, sets `AT_BASE` to its load bias, and starts at its entry point.
 `AT_ENTRY` and the program headers describe the original game executable.
 
-With `LD_LIBRARY_PATH` set to the staged libraries in QEMU, the original
-Granny executable reaches `ld.so`, which finds `libdl.so.2` and exits with
-`failed to map segment from shared object`. The run stops before Unity
-initializes or reads the game assets.
+LiwusOS implements private file mappings and `MAP_FIXED` replacement under
+the Linux ABI. Mappings copy the requested file data into private frames.
+`fstat` identifies files by their VFS inode, so glibc can distinguish separate
+libraries opened through the same descriptor number.
 
-QEMU with `-cpu max` successfully ran a PIE with the glibc interpreter and
-zero shared-library dependencies. A program linked against `libc.so.6`
-found the library via an explicit runpath and failed with
-`failed to map segment from shared object`. LiwusOS currently implements
-anonymous `mmap`; shared-object loading needs private file mappings and
-`MAP_FIXED` replacement of library segments.
+In QEMU with `-cpu max`, a dynamically linked glibc program exited with status
+0. With the original game executable, its Linux libraries and the original
+Unity startup data staged in the guest, the loader initialized the shared
+libraries and entered Unity. Unity found its data directory and loaded
+`Granny_Data/MonoBleedingEdge/x86_64/libmonobdwgc-2.0.so`.
 
-After library loading, the Unity player also requires Linux desktop services
+Unity logged failures to install signal handlers for SIGSEGV, SIGBUS, SIGFPE
+and SIGILL. Mono then exited with `Mono requires /proc to be mounted.` Its
+startup code checks for `/proc/self/maps`, and its garbage collector reads the
+actual mappings there. The QEMU image staged the original startup files
+and Mono library. The full game data remains in the reference build.
+[Unity Mono startup source](https://github.com/Unity-Technologies/mono/blob/684649f590e758b168626173ef4c64dac05da4fc/mono/mini/mini-runtime.c#L3815).
+
+After runtime initialization, the Unity player also requires Linux desktop services
 for graphics, input and audio. The Linux ABI lacks the `ioctl`, `socket`,
 `poll`/`epoll` and signal interfaces used by desktop libraries. LiwusOS exposes LVGL and
 its own window/input/audio paths; it does not provide the Linux X11/GL stack
@@ -134,10 +140,11 @@ The source-side compile gate is passed. The LiwusOS runtime gate is not:
 | Translate the Linux gameplay assembly with Unity 2018.2 IL2CPP | Unsupported target | Linux Standalone IL2CPP was introduced in Unity 2019.3 |
 | Load the Vita build in LiwusOS | Not compatible | Vita ARM32 IL2CPP/SUPRX output and Vita APIs |
 | Start the Linux player's ELF interpreter | Passed in QEMU | The original Granny executable reaches glibc's shared library loader |
-| Load shared libraries | Pending | The Linux ABI only maps anonymous memory |
+| Load shared libraries | Passed for the staged Unity build in QEMU | glibc transfers control to Unity, which loads Mono with `dlopen` |
+| Initialize Mono | Pending | `/proc/self/maps` and Linux signal handling are missing |
 | Run Unity graphics/input/audio on LiwusOS | Pending | The Linux player expects X11, GL and audio services |
 | Package a functional Granny `.lxe` | Pending | The game must reach a playable state before packaging |
 
-The current route reuses the Linux Unity player and its Mono runtime so the
-original C# gameplay can run with the original scenes. The next checkpoint
-is a small executable that loads `libc.so.6` and exits normally on LiwusOS.
+The current route reuses the Linux Unity player and its Mono runtime. The
+next checkpoint is to expose the process's real memory maps and implement
+the signal operations Mono uses during initialization.

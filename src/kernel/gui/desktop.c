@@ -2328,7 +2328,7 @@ static void create_settings_window(void) {
     lbl_settings_sys_text = lv_label_create(sys_card);
     lv_obj_set_width(lbl_settings_sys_text, 660);
     lv_label_set_text_fmt(lbl_settings_sys_text,
-        "Sistema Operacional: LiwusOS v2.2.24 (x86_64)\n"
+        "Sistema Operacional: LiwusOS v2.2.41 (x86_64)\n"
         "Hostname: %s\n"
         "Modo de Operacao: %s\n"
         "Memoria Fisica: %u MB total / %u MB livre\n"
@@ -5558,7 +5558,7 @@ static void player_tube_search_cb(lv_event_t *e) {
     (void)e;
     if (!ta_player_tube) return;
     const char *txt = lv_textarea_get_text(ta_player_tube);
-    if (!txt || !txt[0]) return;
+    if (!txt || !txt[0]) txt = "lofi";
 
     if (strncmp(txt, "bridge ", 7) == 0 || strncmp(txt, "server ", 7) == 0) {
         const char *new_api = txt + 7;
@@ -5579,88 +5579,126 @@ static void player_tube_search_cb(lv_event_t *e) {
     }
 
     char vid[LIWUSTUBE_MAX_ID];
-    if (liwustube_extract_video_id(txt, vid, sizeof(vid)) == 0) {
+    bool is_direct = (liwustube_extract_video_id(txt, vid, sizeof(vid)) == 0);
+
+    if (is_direct) {
         if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Resolvendo stream do video...");
         vga_flip();
 
-        char stream_info_url[LIWUSTUBE_MAX_URL];
-        liwustube_build_stream_url(NULL, vid, stream_info_url, sizeof(stream_info_url));
+        int cand_cnt = liwustube_get_candidate_count();
+        bool found = false;
+        liwustube_stream_info_t sinfo;
 
-        uint8_t *json_data = NULL;
-        size_t json_sz = 0;
-        int status = 0;
-        int res = http_get_mem_progress_limit(stream_info_url, &json_data, &json_sz, &status,
-                                              tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL, 512 * 1024);
-        if (res > 0 && json_data) {
-            liwustube_stream_info_t sinfo;
-            if (liwustube_parse_stream_json((const char *)json_data, json_sz, &sinfo) == 0) {
-                if (lbl_player_track) {
-                    char msg[128];
-                    lv_snprintf(msg, sizeof(msg), "LiwusTube: Baixando %s...", sinfo.title);
-                    lv_label_set_text(lbl_player_track, msg);
+        for (int i = 0; i < cand_cnt; i++) {
+            const char *api = liwustube_get_candidate_api(i);
+            char stream_info_url[LIWUSTUBE_MAX_URL];
+            liwustube_build_stream_url(api, vid, stream_info_url, sizeof(stream_info_url));
+
+            uint8_t *json_data = NULL;
+            size_t json_sz = 0;
+            int status = 0;
+            int res = http_get_mem_progress_limit(stream_info_url, &json_data, &json_sz, &status,
+                                                  tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL, 512 * 1024);
+            if (res > 0 && json_data) {
+                if (liwustube_parse_stream_json((const char *)json_data, json_sz, &sinfo) == 0 && sinfo.stream_url[0]) {
+                    found = true;
+                    liwustube_set_api(api);
+                    kfree(json_data);
+                    break;
                 }
-                vga_flip();
-                int dl = http_download_file_progress(sinfo.stream_url, "/tmp/youtube.mp4",
-                                                     tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL);
-                if (dl > 0) {
-                    player_open_file("/tmp/youtube.mp4");
-                } else {
-                    if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Falha no download do stream.");
-                }
-            } else {
-                if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Nenhuma stream 360p disponivel.");
+                kfree(json_data);
             }
-            kfree(json_data);
+        }
+
+        if (found) {
+            if (lbl_player_track) {
+                char msg[128];
+                lv_snprintf(msg, sizeof(msg), "LiwusTube: Baixando \"%s\"...", sinfo.title);
+                lv_label_set_text(lbl_player_track, msg);
+            }
+            vga_flip();
+            int dl = http_download_file_progress(sinfo.stream_url, "/tmp/youtube.mp4",
+                                                 tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL);
+            if (dl > 0) {
+                player_open_file("/tmp/youtube.mp4");
+            } else {
+                if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Falha no download do stream.");
+            }
         } else {
-            if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Erro de conexao com API/Bridge.");
+            if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Stream indisponivel. Inicie o bridge no host.");
         }
     } else {
         if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Pesquisando na API...");
         vga_flip();
 
-        char search_url[LIWUSTUBE_MAX_URL];
-        liwustube_build_search_url(NULL, txt, search_url, sizeof(search_url));
+        int cand_cnt = liwustube_get_candidate_count();
+        bool search_ok = false;
+        liwustube_search_result_t sres;
+        const char *working_api = NULL;
 
-        uint8_t *json_data = NULL;
-        size_t json_sz = 0;
-        int status = 0;
-        int res = http_get_mem_progress_limit(search_url, &json_data, &json_sz, &status,
-                                              tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL, 512 * 1024);
-        if (res > 0 && json_data) {
-            liwustube_search_result_t sres;
-            if (liwustube_parse_search_json((const char *)json_data, json_sz, &sres) == 0 && sres.count > 0) {
-                char stream_info_url[LIWUSTUBE_MAX_URL];
-                liwustube_build_stream_url(NULL, sres.items[0].id, stream_info_url, sizeof(stream_info_url));
-                kfree(json_data);
-                json_data = NULL;
+        for (int i = 0; i < cand_cnt; i++) {
+            const char *api = liwustube_get_candidate_api(i);
+            char search_url[LIWUSTUBE_MAX_URL];
+            liwustube_build_search_url(api, txt, search_url, sizeof(search_url));
 
-                if (lbl_player_track) {
-                    char msg[128];
-                    lv_snprintf(msg, sizeof(msg), "LiwusTube: Encontrado \"%s\"...", sres.items[0].title);
-                    lv_label_set_text(lbl_player_track, msg);
-                }
-                vga_flip();
-
-                res = http_get_mem_progress_limit(stream_info_url, &json_data, &json_sz, &status,
+            uint8_t *json_data = NULL;
+            size_t json_sz = 0;
+            int status = 0;
+            int res = http_get_mem_progress_limit(search_url, &json_data, &json_sz, &status,
                                                   tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL, 512 * 1024);
+            if (res > 0 && json_data) {
+                if (liwustube_parse_search_json((const char *)json_data, json_sz, &sres) == 0 && sres.count > 0) {
+                    search_ok = true;
+                    working_api = api;
+                    liwustube_set_api(api);
+                    kfree(json_data);
+                    break;
+                }
+                kfree(json_data);
+            }
+        }
+
+        if (search_ok) {
+            if (lbl_player_track) {
+                char msg[128];
+                lv_snprintf(msg, sizeof(msg), "LiwusTube: Encontrado \"%s\"...", sres.items[0].title);
+                lv_label_set_text(lbl_player_track, msg);
+            }
+            vga_flip();
+
+            bool stream_ok = false;
+            liwustube_stream_info_t sinfo;
+
+            for (int i = 0; i < cand_cnt; i++) {
+                const char *api = (i == 0 && working_api) ? working_api : liwustube_get_candidate_api(i);
+                char stream_info_url[LIWUSTUBE_MAX_URL];
+                liwustube_build_stream_url(api, sres.items[0].id, stream_info_url, sizeof(stream_info_url));
+
+                uint8_t *json_data = NULL;
+                size_t json_sz = 0;
+                int status = 0;
+                int res = http_get_mem_progress_limit(stream_info_url, &json_data, &json_sz, &status,
+                                                      tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL, 512 * 1024);
                 if (res > 0 && json_data) {
-                    liwustube_stream_info_t sinfo;
-                    if (liwustube_parse_stream_json((const char *)json_data, json_sz, &sinfo) == 0) {
-                        int dl = http_download_file_progress(sinfo.stream_url, "/tmp/youtube.mp4",
-                                                             tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL);
-                        if (dl > 0) {
-                            player_open_file("/tmp/youtube.mp4");
-                        } else {
-                            if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Erro ao baixar stream.");
-                        }
-                    } else {
-                        if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Stream 360p nao encontrada.");
+                    if (liwustube_parse_stream_json((const char *)json_data, json_sz, &sinfo) == 0 && sinfo.stream_url[0]) {
+                        stream_ok = true;
+                        kfree(json_data);
+                        break;
                     }
                     kfree(json_data);
                 }
+            }
+
+            if (stream_ok) {
+                int dl = http_download_file_progress(sinfo.stream_url, "/tmp/youtube.mp4",
+                                                     tube_ui_log_cb, NULL, tube_ui_progress_cb, NULL);
+                if (dl > 0) {
+                    player_open_file("/tmp/youtube.mp4");
+                } else {
+                    if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Erro ao baixar stream.");
+                }
             } else {
-                if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Nenhum video encontrado.");
-                kfree(json_data);
+                if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Stream indisponivel. Inicie o bridge no host.");
             }
         } else {
             if (lbl_player_track) lv_label_set_text(lbl_player_track, "LiwusTube: Falha ao consultar busca na API.");
@@ -5756,6 +5794,24 @@ static void player_poll_stream(void) {
 
 static void create_player_window(void) {
     if (win_player) return;
+
+    /* Tenta carregar API configurada em /etc/tube.conf */
+    fs_node_t *tconf = vfs_open("/etc/tube.conf");
+    if (tconf) {
+        char cbuf[LIWUSTUBE_MAX_URL];
+        uint32_t cr = read_fs(tconf, 0, sizeof(cbuf) - 1, (uint8_t *)cbuf);
+        if (cr > 0) {
+            cbuf[cr] = '\0';
+            char *cline = cbuf;
+            while (*cline == ' ' || *cline == '\t' || *cline == '\r' || *cline == '\n') cline++;
+            char *cend = cline;
+            while (*cend && *cend != '\r' && *cend != '\n') cend++;
+            *cend = '\0';
+            if (cline[0]) {
+                liwustube_set_api(cline);
+            }
+        }
+    }
 
     g_player_img_dsc.header.always_zero = 0;
     g_player_img_dsc.header.w = PLAYER_VIDEO_W;
@@ -5919,6 +5975,20 @@ static void dock_player_cb(lv_event_t *e) {
     set_pkg_input_focus(false);
     set_inst_host_focus(false);
     set_player_tube_focus(false);
+}
+
+void desktop_open_player(void) {
+    dock_player_cb(NULL);
+}
+
+void desktop_tube_search(const char *query) {
+    if (!win_player) create_player_window();
+    lv_obj_clear_flag(win_player, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(win_player);
+    if (ta_player_tube && query && query[0]) {
+        lv_textarea_set_text(ta_player_tube, query);
+    }
+    player_tube_search_cb(NULL);
 }
 
 /* =========================================================================

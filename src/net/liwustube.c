@@ -207,14 +207,13 @@ int liwustube_extract_video_id(const char *input, char *out_id, size_t out_size)
     if (!input || !out_id || out_size < 12) return -1;
     out_id[0] = '\0';
 
-    const char *start = input;
+    while (*input == ' ' || *input == '\t') input++;
 
-    /* Procura padrão v= */
+    const char *start = NULL;
     const char *v_param = strstr(input, "v=");
     if (v_param) {
         start = v_param + 2;
     } else {
-        /* Procura /v/ ou /embed/ ou youtu.be/ */
         const char *slash_v = strstr(input, "/v/");
         if (slash_v) start = slash_v + 3;
         else {
@@ -223,15 +222,23 @@ int liwustube_extract_video_id(const char *input, char *out_id, size_t out_size)
             else {
                 const char *ybe = strstr(input, "youtu.be/");
                 if (ybe) start = ybe + 9;
-                else {
+                else if (strstr(input, "://") != NULL || strchr(input, '/') != NULL) {
                     const char *last_slash = strrchr(input, '/');
                     if (last_slash && last_slash[1] != '\0') {
                         start = last_slash + 1;
+                    }
+                } else {
+                    /* Se for texto puro sem URL: só é ID se tiver exatamente 11 caracteres alfanumericos */
+                    size_t len = strlen(input);
+                    if (len == 11) {
+                        start = input;
                     }
                 }
             }
         }
     }
+
+    if (!start) return -1;
 
     size_t i = 0;
     while (start[i] && is_alnum_dash(start[i]) && i + 1 < out_size) {
@@ -240,7 +247,7 @@ int liwustube_extract_video_id(const char *input, char *out_id, size_t out_size)
     }
     out_id[i] = '\0';
 
-    if (i >= 6) {
+    if (i == 11) {
         return 0;
     }
     return -1;
@@ -296,15 +303,48 @@ static void format_two_digits(int v, char *out) {
     out[1] = (char)('0' + (v % 10));
 }
 
-static char g_liwustube_api[LIWUSTUBE_MAX_URL] = LIWUSTUBE_DEFAULT_BRIDGE_API;
+static char g_liwustube_api[LIWUSTUBE_MAX_URL] = LIWUSTUBE_DEFAULT_PIPED_API;
+
+static const char *g_candidate_apis[] = {
+    LIWUSTUBE_DEFAULT_PIPED_API,
+    LIWUSTUBE_FALLBACK_PIPED_API,
+    LIWUSTUBE_DEFAULT_BRIDGE_API,
+    LIWUSTUBE_LOCAL_BRIDGE_API
+};
+#define CANDIDATE_API_COUNT ((int)(sizeof(g_candidate_apis) / sizeof(g_candidate_apis[0])))
 
 const char *liwustube_get_api(void) {
     return g_liwustube_api;
 }
 
+int liwustube_get_candidate_count(void) {
+    for (int i = 0; i < CANDIDATE_API_COUNT; i++) {
+        if (strcmp(g_candidate_apis[i], g_liwustube_api) == 0) {
+            return CANDIDATE_API_COUNT;
+        }
+    }
+    return CANDIDATE_API_COUNT + 1;
+}
+
+const char *liwustube_get_candidate_api(int index) {
+    if (index == 0) {
+        return g_liwustube_api;
+    }
+    int count = 1;
+    for (int i = 0; i < CANDIDATE_API_COUNT; i++) {
+        if (strcmp(g_candidate_apis[i], g_liwustube_api) != 0) {
+            if (count == index) {
+                return g_candidate_apis[i];
+            }
+            count++;
+        }
+    }
+    return g_liwustube_api;
+}
+
 void liwustube_set_api(const char *url) {
     if (!url || !url[0]) {
-        str_copy(g_liwustube_api, sizeof(g_liwustube_api), LIWUSTUBE_DEFAULT_BRIDGE_API);
+        str_copy(g_liwustube_api, sizeof(g_liwustube_api), LIWUSTUBE_DEFAULT_PIPED_API);
         return;
     }
     str_copy(g_liwustube_api, sizeof(g_liwustube_api), url);
@@ -498,9 +538,10 @@ int liwustube_parse_stream_json(const char *json, size_t json_len, liwustube_str
         }
     }
 
-    /* Procura array de streams ("videoStreams" no Piped ou "formatStreams" no Invidious) */
+    /* Procura array de streams ("videoStreams" no Piped, "formatStreams" ou "adaptiveFormats" no Invidious) */
     const char *streams_key = strstr(json, "\"videoStreams\":");
     if (!streams_key) streams_key = strstr(json, "\"formatStreams\":");
+    if (!streams_key) streams_key = strstr(json, "\"adaptiveFormats\":");
     if (!streams_key) return -1;
 
     const char *streams_start = strchr(streams_key, '[');

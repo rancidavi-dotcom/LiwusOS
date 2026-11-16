@@ -8,8 +8,10 @@
 #include "timer.h"
 #include "vfs.h"
 #include "kheap.h"
+#include "sleep_mutex.h"
 #include "vma.h"
 #include "vmm.h"
+#include "serial.h"
 #include <stdint.h>
 
 #define LINUX_ENOSYS 38
@@ -97,6 +99,20 @@
 #define LIWUS_FD_TYPE_PIPE 3
 #define LIWUS_FD_ACCESS_READ 0x01
 #define LIWUS_FD_ACCESS_WRITE 0x02
+#define LINUX_MAP_SHARED          0x000001ULL
+#define LINUX_MAP_PRIVATE         0x000002ULL
+#define LINUX_MAP_FIXED           0x000010ULL
+#define LINUX_MAP_ANONYMOUS       0x000020ULL
+#define LINUX_MAP_DENYWRITE       0x000800ULL
+#define LINUX_MAP_EXECUTABLE      0x001000ULL
+#define LINUX_MAP_NORESERVE       0x004000ULL
+#define LINUX_MAP_STACK           0x020000ULL
+#define LINUX_MAP_FIXED_NOREPLACE 0x100000ULL
+#define LINUX_MAP_32BIT          0x000040ULL
+
+/* Serialize Linux VM mutations with each other and with fork's VM snapshot.
+ * The file read may block in the VFS, so this must be a sleepable lock. */
+static sleep_mutex_t linux_vm_lock = SLEEP_MUTEX_INITIALIZER;
 
 extern int sys_read(int fd, void *buf, uint32_t count);
 extern int sys_write(int fd, const void *buf, uint32_t count);
@@ -233,6 +249,78 @@ typedef struct {
 
 _Static_assert(sizeof(linux_iovec64_t) == 16,
                "Linux x86-64 iovec layout");
+
+/* x86-64 Linux rt_sigaction layout. */
+typedef struct {
+  uint64_t handler;
+  uint64_t flags;
+  uint64_t restorer;
+  uint64_t mask[2];
+} linux_sigaction_t;
+
+typedef struct {
+  uint64_t ss_sp;
+  int32_t ss_flags;
+  uint32_t _pad;
+  uint64_t ss_size;
+} linux_stack_t;
+
+static int linux_signal_valid(uint64_t signo) {
+  return signo >= 1 && signo <= 64 && signo != 9 && signo != 19;
+}
+
+static int64_t linux_rt_sigaction(uint64_t signo, const void *user_act,
+                                  void *user_oldact, uint64_t sigsetsize) {
+  if (!linux_signal_valid(signo) || (sigsetsize != 8 && sigsetsize != 16))
+    return -LINUX_EINVAL;
+  thread_t *thread = current_task;
+  linux_sigaction_t old = {0};
+  old.handler = thread->linux_sigaction_handler[signo - 1];
+  old.flags = thread->linux_sigaction_flags[signo - 1];
+  if (user_oldact && copy_to_user(user_oldact, &old,
+                                  sigsetsize == 8 ? 24 : sizeof(old)) < 0)
+    return -LINUX_EFAULT;
+  if (user_act) {
+    linux_sigaction_t action = {0};
+    if (copy_from_user(&action, user_act,
+                       sigsetsize == 8 ? 24 : sizeof(action)) < 0)
+      return -LINUX_EFAULT;
+    thread->linux_sigaction_handler[signo - 1] = action.handler;
+    thread->linux_sigaction_flags[signo - 1] = action.flags;
+  }
+  return 0;
+}
+
+static int64_t linux_rt_sigprocmask(uint64_t how, const void *user_set,
+                                    void *user_oldset, uint64_t sigsetsize) {
+  if (sigsetsize != 8 && sigsetsize != 16) return -LINUX_EINVAL;
+  uint64_t old = current_task->sigmask;
+  if (user_oldset && copy_to_user(user_oldset, &old, 8) < 0)
+    return -LINUX_EFAULT;
+  if (!user_set) return 0;
+  uint64_t set = 0;
+  if (copy_from_user(&set, user_set, 8) < 0) return -LINUX_EFAULT;
+  switch (how) {
+    case 0: current_task->sigmask |= set; break; /* SIG_BLOCK */
+    case 1: current_task->sigmask &= ~set; break; /* SIG_UNBLOCK */
+    case 2: current_task->sigmask = set; break; /* SIG_SETMASK */
+    default: return -LINUX_EINVAL;
+  }
+  current_task->sigmask &= ~((1ULL << (9 - 1)) | (1ULL << (19 - 1)));
+  return 0;
+}
+
+static int64_t linux_sigaltstack(const void *user_ss, void *user_old_ss) {
+  if (user_old_ss) {
+    linux_stack_t disabled = {0};
+    disabled.ss_flags = 2; /* SS_DISABLE */
+    if (copy_to_user(user_old_ss, &disabled, sizeof(disabled)) < 0)
+      return -LINUX_EFAULT;
+  }
+  if (user_ss && validate_user_pointer(user_ss, sizeof(linux_stack_t)) < 0)
+    return -LINUX_EFAULT;
+  return 0;
+}
 
 typedef struct {
   uint64_t current;
@@ -449,14 +537,187 @@ static int linux_validate_io_fd(int fd, int writing) {
 
 static int linux_getrlimit(uint64_t resource, uint64_t user_out) {
   if (resource >= LINUX_RLIMIT_NLIMITS) return -LINUX_EINVAL;
-  /* The process table has exactly 32 descriptor slots (0 through 31). Other
-   * limits are not reported as infinity because LIWUS does not enforce them. */
-  if (resource != LINUX_RLIMIT_NOFILE) return -LINUX_ENOSYS;
-  linux_rlimit64_t limit = { .current = 32, .maximum = 32 };
+  linux_rlimit64_t limit;
+  if (resource == LINUX_RLIMIT_NOFILE) {
+    /* The process table has exactly 32 descriptor slots. */
+    limit.current = 32;
+    limit.maximum = 32;
+  } else if (resource == 3) { /* RLIMIT_STACK */
+    limit.current = 8ULL * 1024ULL * 1024ULL;
+    limit.maximum = UINT64_MAX;
+  } else {
+    return -LINUX_ENOSYS;
+  }
   if (!user_out || copy_to_user((void *)(uintptr_t)user_out, &limit,
                                 sizeof(limit)) < 0)
     return -LINUX_EFAULT;
   return 0;
+}
+
+typedef struct {
+  void *frame;
+  pte_t *leaf;
+} linux_mmap_page_t;
+
+/* PMM pages hold the staging records so large mappings don't require a
+ * contiguous kernel heap allocation. */
+typedef struct linux_mmap_batch {
+  struct linux_mmap_batch *next;
+  size_t used;
+  linux_mmap_page_t pages[(PAGE_SIZE - sizeof(void *) - sizeof(size_t)) /
+                         sizeof(linux_mmap_page_t)];
+} linux_mmap_batch_t;
+
+static int64_t linux_mmap_copy(process_t *process, fs_node_t *node,
+                               uint64_t base, uint64_t length, uint64_t offset,
+                               uint32_t prot, uint32_t vma_flags, int replace) {
+  page_directory_t *mm = process->mm;
+  linux_mmap_batch_t *first = NULL;
+  linux_mmap_batch_t **next = &first;
+  uint64_t file_size = node ? node->length : 0;
+  int64_t result = -LINUX_ENOMEM;
+
+  for (uint64_t copied = 0; copied < length;) {
+    linux_mmap_batch_t *batch = pmm_alloc_block();
+    if (!batch) goto release;
+    batch->next = NULL;
+    batch->used = 0;
+    *next = batch;
+    next = &batch->next;
+    while (copied < length && batch->used < sizeof(batch->pages) /
+                                            sizeof(batch->pages[0])) {
+      void *frame = pmm_alloc_block();
+      if (!frame) goto release;
+      batch->pages[batch->used++].frame = frame;
+      memset(frame, 0, PAGE_SIZE);
+      uint64_t position = offset + copied;
+      if (position < file_size) {
+        uint64_t bytes = file_size - position;
+        if (bytes > PAGE_SIZE) bytes = PAGE_SIZE;
+        if (read_fs(node, (uint32_t)position, (uint32_t)bytes, frame) != bytes) {
+          result = -LINUX_EIO;
+          goto release;
+        }
+      }
+      copied += PAGE_SIZE;
+    }
+  }
+
+  uint64_t address = base;
+  for (linux_mmap_batch_t *batch = first; batch; batch = batch->next)
+    for (size_t i = 0; i < batch->used; i++, address += PAGE_SIZE) {
+      pte_t *leaf = vmm_prepare_user_leaf(mm, address);
+      if (!leaf) goto release;
+      if ((*leaf & PTE_P) && !replace) {
+        result = -EEXIST;
+        goto release;
+      }
+      batch->pages[i].leaf = leaf;
+    }
+
+  uint64_t pte_flags = (prot & VMA_PROT_WRITE) ? PTE_W : 0;
+  if (!(prot & VMA_PROT_EXEC)) pte_flags |= PTE_NX;
+  uint64_t irq_flags = task_scheduler_lock();
+  int rc = replace ? vma_replace(mm, base, base + length, prot, vma_flags, offset)
+                   : vma_insert(mm, base, base + length, prot, vma_flags, offset, NULL);
+  if (rc == 0) {
+    address = base;
+    for (linux_mmap_batch_t *batch = first; batch; batch = batch->next)
+      for (size_t i = 0; i < batch->used; i++, address += PAGE_SIZE)
+        vmm_install_user_leaf(mm, address, batch->pages[i].leaf,
+                              batch->pages[i].frame, pte_flags);
+    result = (int64_t)base;
+  }
+  task_scheduler_unlock(irq_flags);
+
+release:
+  while (first) {
+    linux_mmap_batch_t *batch = first;
+    first = batch->next;
+    if (result < 0)
+      for (size_t i = 0; i < batch->used; i++)
+        pmm_free_block(batch->pages[i].frame);
+    pmm_free_block(batch);
+  }
+  return result;
+}
+
+static int64_t linux_mmap(uint64_t addr, uint64_t length, uint64_t prot,
+                          uint64_t flags, int fd, uint64_t offset) {
+  const uint64_t type = flags & 0xf;
+  const uint64_t supported_flags = LINUX_MAP_SHARED | LINUX_MAP_PRIVATE |
+      LINUX_MAP_FIXED | LINUX_MAP_ANONYMOUS | LINUX_MAP_DENYWRITE |
+      LINUX_MAP_EXECUTABLE | LINUX_MAP_NORESERVE | LINUX_MAP_STACK |
+      LINUX_MAP_FIXED_NOREPLACE | LINUX_MAP_32BIT;
+  const int anonymous = (flags & LINUX_MAP_ANONYMOUS) != 0;
+  const int no_replace = (flags & LINUX_MAP_FIXED_NOREPLACE) != 0;
+  const int fixed = no_replace || (flags & LINUX_MAP_FIXED);
+  const uint64_t page_mask = PAGE_SIZE - 1;
+  if (!length || length > UINT64_MAX - page_mask || (offset & page_mask) ||
+      (prot & ~7ULL) ||
+      (type != LINUX_MAP_PRIVATE && type != LINUX_MAP_SHARED))
+    return -LINUX_EINVAL;
+  if ((flags & ~supported_flags) || (!anonymous && type == LINUX_MAP_SHARED))
+    return -LINUX_EOPNOTSUPP;
+
+  if (anonymous && !fixed) {
+    uint64_t address = sys_mmap((void *)addr, length, (int)prot,
+                                (int)flags, -1, 0);
+    return address == UINT64_MAX ? -LINUX_ENOMEM : (int64_t)address;
+  }
+
+  length = (length + page_mask) & ~page_mask;
+  if (length / PAGE_SIZE > pmm_get_free_memory() / PAGE_SIZE)
+    return -LINUX_ENOMEM;
+  process_t *process = current_task->process;
+  page_directory_t *mm = process->mm;
+  uint64_t base = addr;
+  if (fixed) {
+    if (base & page_mask) return -LINUX_EINVAL;
+    if (base < USER_ADDR_MIN || base >= USER_ADDR_MAX ||
+        length > USER_ADDR_MAX - base) return -LINUX_ENOMEM;
+    if (no_replace)
+      for (vma_t *area = mm->vmas; area && area->start < base + length;
+           area = area->next)
+        if (area->end > base) return -EEXIST;
+  } else if (vma_find_gap_topdown(mm, process->mmap_top, USER_ADDR_MIN,
+                                  length, &base) < 0) {
+    return -LINUX_ENOMEM;
+  }
+
+  fs_node_t *node = NULL;
+  kfile_t file = {0};
+  if (anonymous) {
+    offset = 0;
+  } else {
+    if (offset > UINT32_MAX || length > UINT64_MAX - offset)
+      return -LINUX_EOVERFLOW;
+    if (fd < 0 || fd >= (int)(sizeof(process->file_descriptors) /
+                               sizeof(process->file_descriptors[0])))
+      return -LINUX_EBADF;
+    uint64_t irq_flags = task_scheduler_lock();
+    file = process->file_descriptors[fd];
+    int rc = -LINUX_EBADF;
+    if (file.type == LIWUS_FD_TYPE_FILE && file.description) {
+      node = file.description->node;
+      if (!(file.description->access & LIWUS_FD_ACCESS_READ)) rc = -EACCES;
+      else if (!node || !(node->flags & FS_FILE) || !node->read) rc = -ENODEV;
+      else {
+        sys_fd_get(&file);
+        rc = 0;
+      }
+    }
+    task_scheduler_unlock(irq_flags);
+    if (rc < 0) return rc;
+  }
+
+  uint32_t vma_flags = (type == LINUX_MAP_SHARED) ? VMA_SHARED : VMA_PRIVATE;
+  vma_flags |= anonymous ? VMA_ANON : VMA_FILE;
+  int64_t result = linux_mmap_copy(process, node, base, length, offset,
+                                   (uint32_t)prot, vma_flags, fixed && !no_replace);
+  if (node) sys_fd_put(&file);
+  if (result >= 0 && !fixed) process->mmap_top = base;
+  return result;
 }
 
 static int linux_translate_open_flags(uint64_t flags, int *native_flags,
@@ -992,6 +1253,18 @@ void linux_syscall_handler(registers_t *regs) {
   }
 
   switch (regs->rax) {
+    case 13: /* rt_sigaction */
+      regs->rax = (uint64_t)linux_rt_sigaction(
+          regs->rdi, (const void *)regs->rsi, (void *)regs->rdx, regs->r10);
+      break;
+    case 14: /* rt_sigprocmask */
+      regs->rax = (uint64_t)linux_rt_sigprocmask(
+          regs->rdi, (const void *)regs->rsi, (void *)regs->rdx, regs->r10);
+      break;
+    case 131: /* sigaltstack */
+      regs->rax = (uint64_t)linux_sigaltstack(
+          (const void *)regs->rdi, (void *)regs->rsi);
+      break;
     case 2: { /* open: legacy x86-64 syscall retained by Linux */
       int native_flags = 0;
       uint32_t descriptor_flags = 0;
@@ -1459,16 +1732,24 @@ void linux_syscall_handler(registers_t *regs) {
       break;
     }
     case 9: { /* mmap: arg4 is in R10, not RCX */
-      uint64_t result = sys_mmap((void *)regs->rdi, regs->rsi,
-                                 (int)regs->rdx, (int)regs->r10,
-                                 (int)regs->r8, regs->r9);
-      regs->rax = result == UINT64_MAX
-          ? (uint64_t)-(int64_t)LINUX_ENOMEM : result;
+      if (sleep_mutex_lock(&linux_vm_lock) < 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINTR;
+        break;
+      }
+      regs->rax = (uint64_t)linux_mmap(regs->rdi, regs->rsi, regs->rdx,
+                                      regs->r10, (int)regs->r8, regs->r9);
+      sleep_mutex_unlock(&linux_vm_lock);
       break;
     }
-    case 11: /* munmap */
+    case 11: { /* munmap */
+      if (sleep_mutex_lock(&linux_vm_lock) < 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINTR;
+        break;
+      }
       regs->rax = (uint64_t)(int64_t)sys_munmap((void *)regs->rdi, regs->rsi);
+      sleep_mutex_unlock(&linux_vm_lock);
       break;
+    }
     case 10: { /* mprotect */
       const uint64_t prot_mask = 0x7;
       if (!regs->rsi || (regs->rdi & (PAGE_SIZE - 1)) ||
@@ -1489,14 +1770,25 @@ void linux_syscall_handler(registers_t *regs) {
       if (regs->rdx & 0x1) vma_prot |= VMA_PROT_READ;
       if (regs->rdx & 0x2) vma_prot |= VMA_PROT_WRITE;
       if (regs->rdx & 0x4) vma_prot |= VMA_PROT_EXEC;
+      if (sleep_mutex_lock(&linux_vm_lock) < 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINTR;
+        break;
+      }
       int rc = vma_protect(current_task->process->mm, start,
                            start + length, vma_prot);
       regs->rax = rc < 0 ? (uint64_t)-(int64_t)LINUX_ENOMEM : 0;
+      sleep_mutex_unlock(&linux_vm_lock);
       break;
     }
-    case 12: /* brk */
+    case 12: { /* brk */
+      if (sleep_mutex_lock(&linux_vm_lock) < 0) {
+        regs->rax = current_task->process->linux_brk_current;
+        break;
+      }
       regs->rax = linux_sys_brk(regs->rdi);
+      sleep_mutex_unlock(&linux_vm_lock);
       break;
+    }
     case 39: /* getpid */
       regs->rax = (uint64_t)sys_getpid();
       break;
@@ -1840,6 +2132,14 @@ void linux_syscall_handler(registers_t *regs) {
           regs->rdx, (flags & LINUX_CLONE_PARENT_SETTID) != 0,
           regs->r10, (flags & LINUX_CLONE_CHILD_SETTID) != 0,
           (flags & LINUX_CLONE_CHILD_CLEARTID) != 0);
+      serial_print("[clone] flags="); serial_print_hex(flags);
+      serial_print(" stack="); serial_print_hex(regs->rsi);
+      serial_print(" tls="); serial_print_hex(regs->r8);
+      serial_print(" ptid="); serial_print_hex(regs->rdx);
+      serial_print(" ctid="); serial_print_hex(regs->r10);
+      if (tid > 0 && regs->rdx) { uint32_t tv = 0; copy_from_user(&tv, (void *)regs->rdx, 4); serial_print(" pval="); serial_print_hex(tv); }
+      serial_print(" -> "); serial_print_hex((uint64_t)(int64_t)tid);
+      serial_print("\\n");
       regs->rax = tid < 0 ? (uint64_t)(int64_t)tid : (uint64_t)tid;
       break;
     }
@@ -1853,8 +2153,13 @@ void linux_syscall_handler(registers_t *regs) {
       break;
     }
     case 57: { /* fork: copy-on-fork path provided by the generic process core */
+      if (sleep_mutex_lock(&linux_vm_lock) < 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINTR;
+        break;
+      }
       int pid = fork_process(regs);
       regs->rax = pid < 0 ? (uint64_t)(int64_t)pid : (uint64_t)pid;
+      sleep_mutex_unlock(&linux_vm_lock);
       break;
     }
     case 61: /* wait4: WNOHANG, encoded exit status; no process groups/signals */
@@ -1871,7 +2176,29 @@ void linux_syscall_handler(registers_t *regs) {
       regs->rax = (uint64_t)(int64_t)tid;
       break;
     }
+    case 273: /* set_robust_list: userspace pthread cleanup is optional here */
+      regs->rax = 0;
+      break;
+    case 334: /* rseq: glibc feature probe; no restartable sequences yet */
+      regs->rax = (uint64_t)-(int64_t)LINUX_ENOSYS;
+      break;
+    case 324: /* membarrier: no-op for the single-core scheduler */
+      regs->rax = 0;
+      break;
+    case 234: { /* tgkill: preserve errno semantics until signal delivery lands */
+      if (regs->rdi != (uint64_t)current_task->process->pid &&
+          regs->rdi != 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_ESRCH;
+      } else {
+        regs->rax = 0;
+      }
+      break;
+    }
     case 202: { /* futex operations translate to generic private wait queues */
+      serial_print("[futex tid="); serial_print_hex((uint64_t)current_task->id);
+      serial_print(" op="); serial_print_hex(regs->rsi);
+      serial_print(" uaddr="); serial_print_hex(regs->rdi);
+      serial_print(" val="); serial_print_hex(regs->rdx); serial_print("]\\n");
       uint64_t operation = regs->rsi;
       uint64_t allowed = LINUX_FUTEX_PRIVATE_FLAG |
                          LINUX_FUTEX_CLOCK_REALTIME | 0x7f;
@@ -1967,6 +2294,8 @@ void linux_syscall_handler(registers_t *regs) {
       } else {
         regs->rax = (uint64_t)-(int64_t)LINUX_ENOSYS;
       }
+      serial_print("[futex ret tid="); serial_print_hex((uint64_t)current_task->id);
+      serial_print(" -> "); serial_print_hex(regs->rax); serial_print("]\\n");
       break;
     }
     case 158: { /* arch_prctl: per-thread TLS bases */
@@ -2007,12 +2336,16 @@ void linux_syscall_handler(registers_t *regs) {
       break;
     }
     case 60: /* exit: terminate this thread */
+      serial_print("[exit tid="); serial_print_hex((uint64_t)current_task->id);
+      serial_print(" code="); serial_print_hex(regs->rdi); serial_print("]\\n");
       sys_exit_thread((int)(regs->rdi & 0xffU));
       break;
     case 231: /* exit_group: terminate all threads in this process */
       sys_exit_process((int)(regs->rdi & 0xffU));
       break;
     default:
+      serial_print("[linux ENOSYS tid="); serial_print_hex((uint64_t)current_task->id);
+      serial_print(" nr="); serial_print_hex(regs->rax); serial_print("]\\n");
       regs->rax = (uint64_t)-(int64_t)LINUX_ENOSYS;
       break;
   }

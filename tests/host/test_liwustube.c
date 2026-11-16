@@ -56,7 +56,7 @@ static void test_url_builders(void) {
     assert(liwustube_build_search_url(NULL, "jazz", url, sizeof(url)) == 0);
     assert(strstr(url, "http://192.168.1.100:8085/search?q=jazz") != NULL);
     liwustube_set_api(NULL);
-    assert(strcmp(liwustube_get_api(), LIWUSTUBE_DEFAULT_BRIDGE_API) == 0);
+    assert(strcmp(liwustube_get_api(), LIWUSTUBE_DEFAULT_PIPED_API) == 0);
 
     printf("liwustube url_builders and duration: PASS\n");
 }

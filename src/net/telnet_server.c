@@ -10,6 +10,7 @@
 #include "kheap.h"
 #include "sdfs.h"
 #include "acpi.h"
+#include "net/liwustube.h"
 
 /* lwIP Headers */
 #include "lwip/tcp.h"
@@ -373,6 +374,68 @@ static void telnet_handle_command(telnet_session_t *s, char *cmd_line) {
         } else {
             const char *dest = (argc >= 3) ? argv[2] : NULL;
             http_download_file(argv[1], dest, telnet_http_output, s->pcb);
+        }
+    }
+    else if (strcmp(cmd, "tube") == 0) {
+        if (argc < 2) {
+            telnet_send(s->pcb, "uso: tube <search <termo> | play <id> | get <id>>\r\n");
+        } else if (strcmp(argv[1], "search") == 0) {
+            const char *query = (argc >= 3) ? argv[2] : "lofi";
+            telnet_send(s->pcb, "[LiwusTube] Pesquisando: \"");
+            telnet_send(s->pcb, query);
+            telnet_send(s->pcb, "\"...\r\n");
+
+            int cand_cnt = liwustube_get_candidate_count();
+            bool found = false;
+            liwustube_search_result_t sres;
+
+            for (int i = 0; i < cand_cnt; i++) {
+                const char *api = liwustube_get_candidate_api(i);
+                char url[LIWUSTUBE_MAX_URL];
+                if (liwustube_build_search_url(api, query, url, sizeof(url)) != 0) continue;
+
+                telnet_send(s->pcb, "[LiwusTube] Tentando API: ");
+                telnet_send(s->pcb, api);
+                telnet_send(s->pcb, "...\r\n");
+
+                uint8_t *body = NULL;
+                size_t size = 0;
+                int status = 0;
+                int r = http_get_mem(url, &body, &size, &status, NULL, NULL);
+                if (r >= 0 && body) {
+                    if (liwustube_parse_search_json((const char *)body, size, &sres) == 0 && sres.count > 0) {
+                        found = true;
+                        liwustube_set_api(api);
+                        kfree(body);
+                        break;
+                    }
+                    kfree(body);
+                }
+            }
+
+            if (found) {
+                telnet_send(s->pcb, "\r\n================================================================================\r\n");
+                telnet_send(s->pcb, "ID           TEMPO    CANAL                TITULO\r\n");
+                telnet_send(s->pcb, "================================================================================\r\n");
+                for (int i = 0; i < sres.count; i++) {
+                    liwustube_search_item_t *it = &sres.items[i];
+                    char dur[16];
+                    liwustube_format_duration(it->duration_sec, dur, sizeof(dur));
+                    telnet_send(s->pcb, it->id);
+                    telnet_send(s->pcb, "  ");
+                    telnet_send(s->pcb, dur);
+                    telnet_send(s->pcb, "  ");
+                    telnet_send(s->pcb, it->author[0] ? it->author : "Desconhecido");
+                    telnet_send(s->pcb, " - ");
+                    telnet_send(s->pcb, it->title);
+                    telnet_send(s->pcb, "\r\n");
+                }
+                telnet_send(s->pcb, "================================================================================\r\n");
+            } else {
+                telnet_send(s->pcb, "[LiwusTube] Nenhum resultado ou falha ao consultar API.\r\n");
+            }
+        } else {
+            telnet_send(s->pcb, "uso: tube <search <termo> | play <id> | get <id>>\r\n");
         }
     }
     else if (strcmp(cmd, "echo") == 0) {

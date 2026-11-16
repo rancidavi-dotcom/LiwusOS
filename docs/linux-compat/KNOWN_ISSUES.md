@@ -9,10 +9,9 @@ All items below are real limitations observed or documented. Hypotheses are mark
 - **Dependencies:** Broader CPU feature policy, advanced xstate components, kernel SIMD bracketing and SMP migration tests.
 - **Resolve when:** Separate tests cover every advertised xstate feature and migration/CPU-feature boundaries, while dynamic glibc runs through PT_INTERP.
 
-## 2) Shared-library mapping is missing
-- Linux ELF64 `execve` resolves and maps the `PT_INTERP` file and supplies its base in `AT_BASE`.
-- In QEMU with `-cpu max`, glibc's `ld.so` started a PIE without shared dependencies. A program linked to `libc.so.6` and Granny's player both reached the loader and reported `failed to map segment from shared object`.
-- The compatibility layer needs private file-backed `mmap` and `MAP_FIXED` replacement for the library segments.
+## 2) Partial Linux memory mapping
+- In QEMU, glibc loads shared libraries through private file mappings and fixed replacement. The original Unity player also loads its Mono library.
+- Mappings copy file data into private frames at map time. Shared files, demand paging and SIGBUS for accesses past EOF require additional work.
 
 ## 3) Incomplete pthreads/libc support
 - **Status:** The reproduced default-stack TLS fault is fixed by Linux `mprotect(10)` translation to generic LIWUS VMA and page-table protection updates. Musl's `pthread_create` maps stack plus guard as `PROT_NONE`, then enables the usable stack with `mprotect` before copying TLS; its libc tolerates `ENOSYS`, so the previously missing syscall silently left the stack inaccessible.

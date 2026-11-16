@@ -46,6 +46,11 @@ static uint32_t get_size(const char *in) {
 
 static struct dirent dirent;
 
+static uint32_t initrd_file_inode(const void *data) {
+    /* Initrd identities are stable across opens and outside SDFS's block IDs. */
+    return 0x80000000U | (uint32_t)(((uintptr_t)data - initrd_location) / 512);
+}
+
 static uint32_t initrd_read(fs_node_t *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
     uint32_t file_size = 0;
     void *file_data = initrd_get_file(node->name, &file_size);
@@ -101,6 +106,7 @@ static fs_node_t *initrd_bin_finddir(fs_node_t *node, const char *name) {
         memset(res, 0, sizeof(fs_node_t));
         strcpy(res->name, path);
         res->length = size;
+        res->inode = initrd_file_inode(data);
         res->flags = FS_FILE;
         res->read = initrd_read;
         uint16_t uid = 0, gid = 0, mode = 0755;
@@ -195,6 +201,7 @@ static fs_node_t *initrd_finddir(fs_node_t *node, const char *name) {
         memset(res, 0, sizeof(fs_node_t));
         strcpy(res->name, name);
         res->length = size;
+        res->inode = initrd_file_inode(data);
         res->flags = FS_FILE;
         res->read = initrd_read;
         uint16_t uid = 0, gid = 0, mode = 0755;

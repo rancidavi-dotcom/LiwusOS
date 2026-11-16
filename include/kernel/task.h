@@ -117,6 +117,11 @@ typedef struct thread {
   uint64_t user_gs_base;
   uint64_t clear_child_tid;
   uint64_t sigmask;
+  /* Linux personality signal dispositions.  The native scheduler keeps
+   * delivery disabled for now, but runtimes still need real rt_sigaction
+   * state for their signal probing/installation path. */
+  uint64_t linux_sigaction_handler[64];
+  uint64_t linux_sigaction_flags[64];
   wait_queue_t *waiting_on;
   struct thread *wait_next;
   uintptr_t wait_space;

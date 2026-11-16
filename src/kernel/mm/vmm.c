@@ -228,6 +228,40 @@ int vmm_map_page_in(page_directory_t *dir, void *phys, void *virt,
   return 0;
 }
 
+pte_t *vmm_prepare_user_leaf(page_directory_t *dir, uint64_t address) {
+  if (!dir || !dir->pml4_virt || !is_user_addr((void *)address) ||
+      (address & (PAGE_SIZE - 1))) return NULL;
+
+  /* A populated supervisor branch can contain shared large mappings.
+   * Reject it before walk_pt attempts to promote or split it. */
+  pte_t pml4e = dir->pml4_virt->entries[vaddr_pml4i(address)];
+  if (pml4e & PTE_P) {
+    if (!(pml4e & PTE_U)) return NULL;
+    pdp_t *pdp = phys_to_virt(pml4e & PTE_ADDR_MASK);
+    pte_t pdpe = pdp->entries[vaddr_pdpi(address)];
+    if (pdpe & PTE_P) {
+      if (!(pdpe & PTE_U) || (pdpe & PTE_PS)) return NULL;
+      pd_t *pd = phys_to_virt(pdpe & PTE_ADDR_MASK);
+      pte_t pde = pd->entries[vaddr_pdi(address)];
+      if ((pde & PTE_P) && (!(pde & PTE_U) || (pde & PTE_PS))) return NULL;
+    }
+  }
+
+  pte_t *leaf = walk_pt(dir, address, PTE_U);
+  if (!leaf || ((*leaf & PTE_P) && !(*leaf & PTE_U))) return NULL;
+  return leaf;
+}
+
+void vmm_install_user_leaf(page_directory_t *dir, uint64_t address,
+                           pte_t *leaf, void *frame, uint64_t flags) {
+  pte_t old = *leaf;
+  if (!vmm_nx_enabled) flags &= ~PTE_NX;
+  *leaf = virt_to_phys(frame) | PTE_P | PTE_U | (flags & (PTE_W | PTE_NX));
+  if (dir == current_directory)
+    asm volatile("invlpg (%0)" : : "r"(address) : "memory");
+  if (old & PTE_P) pmm_free_block(phys_to_virt(old & PTE_ADDR_MASK));
+}
+
 int vmm_map_kernel_page(uint64_t phys, uint64_t virt, uint64_t flags) {
   if (!kernel_directory || (flags & PTE_U) ||
       (virt & (PAGE_SIZE - 1)) || (phys & (PAGE_SIZE - 1))) return -1;

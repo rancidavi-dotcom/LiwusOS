@@ -21,6 +21,7 @@
 #include "fpu.h"
 #include "timer.h"
 #include "vfs.h"
+#include "procfs.h"
 #include "syscall.h"
 #include "vmm.h"
 #include "kstack.h"
@@ -845,6 +846,7 @@ void kernel_main_continue(void) {
   fs_node_t *ipc_root = ipcfs_init();
   vfs_mount("ipc:", ipc_root);
   vfs_mount("/ipc", ipc_root);
+  vfs_mount("/proc", procfs_init());
 
   /* Detect test mode from initrd (skips first-boot copy). */
   int kernel_test_mode = 0;

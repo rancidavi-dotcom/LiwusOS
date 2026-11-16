@@ -83,12 +83,12 @@ overlap several build files.
 - Kernel build with `-Werror`
 
 ## Known open problems (see KNOWN_ISSUES.md)
-- Shared libraries need file-backed `mmap` and `MAP_FIXED` replacement
+- A glibc PIE and the Granny Unity player load shared libraries through private file mappings in QEMU
 - Pthread evidence remains a small static musl matrix; it is not general libc support
 - Futex: private WAIT/WAKE/WAIT_BITSET/REQUEUE and relative/absolute timeout subsets validated at basic coverage; no shared futex or robust lists; basic WAIT_BITSET is implemented, while broader REQUEUE race coverage remains pending
 - Threads: no full clone generality, no validated cross-CPU migration/stress, no signals
 - wait4 supports normal exit only with PID positive/-1 and WNOHANG; signal status, process groups, SIGCHLD and real rusage are missing
-- Demand paging/COW/file-backed mmap not implemented for Linux VM needs
+- Demand paging, COW and shared file mappings remain outside the Linux VM subset
 - AVX-512/AMX xstate and full CPU feature-policy validation remain unsupported; x87/SSE/AVX with XSAVE now works, including the tested static glibc smoke
 - TLB shootdown remote not validated under concurrent AP execution
 - Auxv has a tested basic set including `AT_HWCAP`/`AT_HWCAP2`, but no vDSO/`AT_SYSINFO_EHDR` or complete libc loader contract; no broad syscall coverage
