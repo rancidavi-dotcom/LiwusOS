@@ -3,8 +3,8 @@ DATE=2026-11-16
 PACKAGES=kilo,c_demo,neofetch,sysbench,play,tube
 NOTES=LiwusOS 2.2.41: LiwusTube com fallback multi-instancia publico Piped + Bridge, correcao de busca e suporte a /etc/tube.conf
 BOOT_IMAGE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/hd_boot.img?v=2.2.41
-BOOT_IMAGE_SIZE=5402624
-BOOT_IMAGE_CRC32=d1130588
+BOOT_IMAGE_SIZE=5408768
+BOOT_IMAGE_CRC32=05a8a7c3
 SYSTEM_ARCHIVE_URL=https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo/system-update.tar?v=2.2.41
-SYSTEM_ARCHIVE_SIZE=16936960
-SYSTEM_ARCHIVE_CRC32=d9fb4d57
+SYSTEM_ARCHIVE_SIZE=16947200
+SYSTEM_ARCHIVE_CRC32=23c6c1f7
