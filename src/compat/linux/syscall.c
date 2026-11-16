@@ -28,6 +28,8 @@
 #define LINUX_EINTR 4
 #define LINUX_ENOTDIR 20
 #define LINUX_ENOSPC 28
+#define LINUX_EAFNOSUPPORT 97
+#define LINUX_ENOTSOCK 88
 #define LINUX_EFBIG 27
 #define LINUX_ERANGE 34
 #define LINUX_ESPIPE 29
@@ -1797,6 +1799,21 @@ void linux_syscall_handler(registers_t *regs) {
     }
     case 39: /* getpid */
       regs->rax = (uint64_t)sys_getpid();
+      break;
+    case 41: /* socket: network sockets are not exposed to Linux guests yet */
+      /* Returning the Linux error for an unsupported address family is
+       * important here: SDL/Unity audio and discovery libraries probe for
+       * PulseAudio/X11 sockets and otherwise retry ENOSYS indefinitely. */
+      regs->rax = (uint64_t)-(int64_t)LINUX_EAFNOSUPPORT;
+      break;
+    case 42: /* connect */
+    case 43: /* accept */
+    case 44: /* sendto */
+    case 45: /* recvfrom */
+    case 46: /* sendmsg */
+    case 47: /* recvmsg */
+    case 48: /* shutdown */
+      regs->rax = (uint64_t)-(int64_t)LINUX_ENOTSOCK;
       break;
     case 79: { /* getcwd returns the byte count including the trailing NUL */
       if (!regs->rdi) {
