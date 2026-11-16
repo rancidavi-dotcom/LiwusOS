@@ -49,7 +49,7 @@ overlap several build files.
 ## Implemented subsystems (verified)
 - **Entry/dispatch**: Linux x86-64 `SYSCALL/SYSRET` entry configured (STAR/LSTAR/SFMASK). Stub swaps GS, builds registers frame, routes by ABI. Dispatcher in `src/compat/linux/syscall.c`. Linux returns `-errno` in RAX.
 - **ABI selection**: Per process/thread via `task_t->process->abi` (`TASK_ABI_LINUX_X86_64`). Selection checked in Linux dispatcher.
-- **ELF loading**: Existing ELF loader supports ET_EXEC/ET_DYN for Linux binaries at boundary (translation done). No PT_INTERP support yet.
+- **ELF loading**: Existing ELF loader supports ET_EXEC/ET_DYN for Linux binaries at boundary (translation done). Linux `execve` maps the `PT_INTERP` interpreter and starts it with its load bias in `AT_BASE`.
 - **TLS/FS/GS**: Per-thread FS/GS bases stored; `ARCH_SET_FS/GET_FS`, `ARCH_SET_GS/GET_GS`, `CLONE_SETTLS` supported. Restored on context switch.
 - **Threads (shared-process)**: `clone` with required flags `CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD` and tested `CLONE_SETTLS`, `CLONE_SYSVSEM`, `CLONE_DETACHED`, `CLONE_PARENT_SETTID`, `CLONE_CHILD_SETTID`, `CLONE_CHILD_CLEARTID`; stack/TLS/TID pointers validated, child returns 0. `gettid`, `exit` (thread), `exit_group` (process). Process/thread separation in place (`process_t` resources, `thread_t` execution). Static musl create/join passes with caller and default stacks; a four-thread mutex/join and condition-variable broadcast/join tests pass, while broader pthread/requeue race coverage remains incomplete.
 - **Fork/wait**: Linux `fork(57)` reuses generic `fork_process`; child preserves its Linux personality. `wait4(61)` supports positive PID or -1, WNOHANG, normal exit status encoding and zero-filled 144-byte rusage; process groups, signal states, SIGCHLD and resource accounting are not implemented.
@@ -83,7 +83,7 @@ overlap several build files.
 - Kernel build with `-Werror`
 
 ## Known open problems (see KNOWN_ISSUES.md)
-- No PT_INTERP/dynamic linker (glibc dynamic won't load)
+- Shared libraries need file-backed `mmap` and `MAP_FIXED` replacement
 - Pthread evidence remains a small static musl matrix; it is not general libc support
 - Futex: private WAIT/WAKE/WAIT_BITSET/REQUEUE and relative/absolute timeout subsets validated at basic coverage; no shared futex or robust lists; basic WAIT_BITSET is implemented, while broader REQUEUE race coverage remains pending
 - Threads: no full clone generality, no validated cross-CPU migration/stress, no signals

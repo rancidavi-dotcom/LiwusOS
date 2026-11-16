@@ -86,6 +86,10 @@ int liw_execve(const char *path, char *const argv[], char *const envp[]) {
     return (int)liw_syscall3(SYS_EXECVE, (long)path, (long)argv, (long)envp);
 }
 
+int liw_execve_linux(const char *path, char *const argv[], char *const envp[]) {
+    return (int)liw_syscall3(SYS_EXECVE_LINUX, (long)path, (long)argv, (long)envp);
+}
+
 int liw_waitpid(int pid, int *status, int options) {
     return (int)liw_syscall3(SYS_WAITPID, (long)pid, (long)status, (long)options);
 }

@@ -83,6 +83,7 @@ void kernel_panic(const char *msg) {
 }
 
 bool is_live_mode = true;
+bool g_autostart_craft = false;
 static bool force_text_mode = false;
 char g_system_hostname[32] = "liwus";
 uint64_t memory_size = 0;
@@ -115,6 +116,9 @@ static void parse_multiboot2(uint32_t mbi_addr) {
         is_live_mode = false;
       } else if (strstr(cmdline, "mode=live") || strstr(cmdline, "boot=live")) {
         is_live_mode = true;
+      }
+      if (strstr(cmdline, "autostart=craft") || strstr(cmdline, "craft=1")) {
+        g_autostart_craft = true;
       }
       if (strstr(cmdline, "mode=text")) force_text_mode = true;
       if (strstr(cmdline, "kbd=us-intl"))

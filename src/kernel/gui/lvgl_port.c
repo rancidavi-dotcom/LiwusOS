@@ -36,6 +36,8 @@ static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t 
         color_p += w;
     }
 
+    extern void vga_mark_dirty(void);
+    vga_mark_dirty();
     lv_disp_flush_ready(drv);
 }
 

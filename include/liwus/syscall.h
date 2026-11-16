@@ -29,6 +29,7 @@ long liw_shutdown(void);
 int liw_getpid(void);
 int liw_fork(void);
 int liw_execve(const char *path, char *const argv[], char *const envp[]);
+int liw_execve_linux(const char *path, char *const argv[], char *const envp[]);
 int liw_waitpid(int pid, int *status, int options);
 void *liw_brk(void *addr);
 void *liw_mmap(void *addr, size_t len, int prot, int flags, int fd, long off);

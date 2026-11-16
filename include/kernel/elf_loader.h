@@ -9,6 +9,11 @@ uint64_t elf32_load_file_in(page_directory_t *mm, void *file_buffer,
                             uint32_t file_size);
 uint64_t elf64_load_file_in(page_directory_t *mm, void *file_buffer,
                             uint32_t file_size);
+uint64_t elf64_load_linux_in(page_directory_t *mm, void *file_buffer,
+                             uint32_t file_size, char *interp_path,
+                             size_t interp_path_size);
+uint64_t elf64_load_interpreter_in(page_directory_t *mm, void *file_buffer,
+                                   uint32_t file_size, uint64_t *load_bias_out);
 uint64_t elf32_load_file(void *file_buffer, uint32_t file_size);
 uint64_t elf64_load_file(void *file_buffer, uint32_t file_size);
 

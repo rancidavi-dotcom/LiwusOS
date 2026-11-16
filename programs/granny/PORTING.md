@@ -1,0 +1,143 @@
+# Granny PSVita source port
+
+## Source selected
+
+- Upstream: `https://github.com/BasHeemskerk/Granny-Decompiled`
+- Revision: `56b1111e445318138614a722334cfd7c81276060` (`v1.2.0`, branch `vita`)
+- Unity project version: `2018.2.19f1`
+- Local checkout: `/home/davivbr/Documentos/Granny-Decompiled`
+
+Keep the original C# gameplay scripts and Unity scene/assets as the behavior
+reference. Do not use the separate Windows `Granny Legacy 1.9.2` executable as
+the source for this port.
+
+## Port boundary
+
+The selected project contains Unity game code and serialized assets, but not
+the Unity player/runtime. Its `Library/il2cpp_cache` is a PS Vita ARM32 build
+cache (`Il2CppAssemblies.suprx` plus 587 ARM32 EABI `.obj` files); it contains
+no generated C++ source. Those objects cannot be linked into the LiwusOS
+x86-64 `.lxe`.
+
+The LiwusOS SDK currently builds static native ELF applications. It has no CIL
+runtime or Unity API implementation. A native port therefore needs a
+compatible runtime layer before the original game scripts can execute.
+
+## Linux player compatibility
+
+The Linux reference player is a dynamically linked x86-64 `ET_EXEC`. Its
+`PT_INTERP` requests `/lib64/ld-linux-x86-64.so.2`, and eight `DT_NEEDED`
+entries identify the Linux libraries it uses. The shell command
+`linux /path/to/Granny` enters the Linux ABI. The kernel loads the interpreter
+from the VFS, sets `AT_BASE` to its load bias, and starts at its entry point.
+`AT_ENTRY` and the program headers describe the original game executable.
+
+With `LD_LIBRARY_PATH` set to the staged libraries in QEMU, the original
+Granny executable reaches `ld.so`, which finds `libdl.so.2` and exits with
+`failed to map segment from shared object`. The run stops before Unity
+initializes or reads the game assets.
+
+QEMU with `-cpu max` successfully ran a PIE with the glibc interpreter and
+zero shared-library dependencies. A program linked against `libc.so.6`
+found the library via an explicit runpath and failed with
+`failed to map segment from shared object`. LiwusOS currently implements
+anonymous `mmap`; shared-object loading needs private file mappings and
+`MAP_FIXED` replacement of library segments.
+
+After library loading, the Unity player also requires Linux desktop services
+for graphics, input and audio. The Linux ABI lacks the `ioctl`, `socket`,
+`poll`/`epoll` and signal interfaces used by desktop libraries. LiwusOS exposes LVGL and
+its own window/input/audio paths; it does not provide the Linux X11/GL stack
+expected by this Unity player. The installed Unity Editor provides player
+binaries and IL2CPP runtime source, but not the UnityEngine native engine source
+or a LiwusOS player backend needed to retarget that runtime. Its Mono binaries
+are host Linux binaries too.
+The generated player contains SDL/X11/GLX and ALSA/PulseAudio backend imports,
+confirmed by its embedded library and symbol names.
+
+The Vita cache has a different target mismatch: it contains ARM32 Vita
+IL2CPP/SUPRX output and uses Vita platform APIs. It cannot be linked into the
+x86-64 LiwusOS executable format either.
+
+## Required runtime services
+
+Source inventory shows gameplay code uses Unity object/component lifecycle,
+transforms, input, 3D rendering, collision and rigid bodies, NavMesh, animation,
+audio, UI, scene changes, and PlayerPrefs. The current LiwusOS graphics path
+provides LVGL windows and the smaller software renderer used by Craft; it does
+not implement those Unity services.
+
+A workspace inventory found no Mono, CoreCLR, or other CIL execution runtime
+in the LiwusOS source or SDK. The reference Unity build contains a 952,320-byte
+`Assembly-CSharp.dll` and Unity's managed facade assemblies, but those
+assemblies call into the Unity native player; copying them into an `.lxe`
+package alone would not execute the game.
+
+The selected `Assembly-CSharp` tree contains 344 C# files; 337 contain
+`MonoBehaviour`. A source-token inventory finds `GameObject` in 205 files,
+collider types in 115, `AudioSource` in 86, animation APIs in 60, input APIs
+in 50, Unity UI in 39, physics APIs in 37, and `PlayerPrefs` in 32. These
+counts are a rough source inventory, not a claim that each file needs a
+separate engine subsystem.
+
+The main `Scene.unity` alone serializes 1,766 GameObjects, 588 MonoBehaviours,
+614 mesh filters, 595 mesh renderers, 117 rigid bodies, and 67 lights. The
+original scene data is present; rendering and lifecycle behavior for those
+serialized objects is the missing part.
+
+Representative script-to-runtime links from the selected source:
+
+| Original script | Game behavior | Unity services called |
+| --- | --- | --- |
+| `EnemyAIGranny.cs` | Granny's search, chase, and attack state machine | `NavMeshAgent`, physics raycasts, animation clips, coroutines, audio, object/component lifecycle |
+| `FPSControllerNEW.cs` | Player movement and camera control | `CharacterController`, transforms, `Physics`, `Time`, legacy `Animation`, touch input |
+| `PickUp.cs` | Item pickup, placement, and puzzle interactions | raycasts/colliders, `GameObject`, transforms, animation, audio |
+| `SensitivitySlider.cs` | Persist control sensitivity | `PlayerPrefs`, Unity UI slider |
+
+## Current state
+
+- Source and target versions are identified and pinned above.
+- Unity `2018.2.19f1` and Linux Standalone support are installed locally; the
+  Editor is now activated with Unity Personal.
+- An isolated export of the pinned revision builds under Unity 2018.2 as an
+  x86-64 Linux Mono player. The current build is in
+  `/home/davivbr/Documentos/.granny-linux-reference.kkSLGg/player/`.
+  The build log is in the parent folder, and `Assembly-CSharp.dll` is in
+  `Granny_Data/Managed`. This copy preserves the gameplay scripts and assets.
+- Unity 2018.2 does not support IL2CPP for Linux Standalone. Unity added that
+  target in 2019.3; the installed 2018.2 Linux module is Mono-only. Therefore
+  its `Currently selected scripting backend (IL2CPP) is not installed.` error
+  is an expected target/version limitation, not a Granny source-code failure.
+  See [Unity 2019.3.0b4 release notes](https://unity.com/releases/editor/beta/2019.3.0b4).
+- A direct invocation of the bundled `il2cpp.exe` against the Linux player's
+  `Assembly-CSharp.dll` was also tried outside Unity's supported build
+  pipeline. It aborted in `DelegateMethodsWriter` while processing
+  `Mono.Math.Prime.PrimalityTest::.ctor(Object, IntPtr)` with
+  `Sequence contains no matching element`; passing the managed directory as
+  both an assembly directory and an explicit assembly also reports a duplicate
+  assembly. This experiment did not produce C++ and does not establish whether
+  the project converts successfully with a supported IL2CPP target.
+- The current isolated build embeds the locally cached Post Processing 2.3.0
+  package. The checkout at the pinned revision remains intact.
+- The existing ignored `build/liwus-sdk/bin/granny.lxe` is not a port of this
+  source project: its embedded strings identify it as `PROTOTIPO 01`, and it
+  has a standalone `move_granny` implementation rather than the game's Unity
+  assemblies and assets.
+
+## Port gate
+
+The source-side compile gate is passed. The LiwusOS runtime gate is not:
+
+| Gate | State | Evidence |
+| --- | --- | --- |
+| Compile selected C# scripts and scenes | Passed on Unity 2018.2 Linux player | Isolated build completed; `Assembly-CSharp.dll` generated |
+| Translate the Linux gameplay assembly with Unity 2018.2 IL2CPP | Unsupported target | Linux Standalone IL2CPP was introduced in Unity 2019.3 |
+| Load the Vita build in LiwusOS | Not compatible | Vita ARM32 IL2CPP/SUPRX output and Vita APIs |
+| Start the Linux player's ELF interpreter | Passed in QEMU | The original Granny executable reaches glibc's shared library loader |
+| Load shared libraries | Pending | The Linux ABI only maps anonymous memory |
+| Run Unity graphics/input/audio on LiwusOS | Pending | The Linux player expects X11, GL and audio services |
+| Package a functional Granny `.lxe` | Pending | The game must reach a playable state before packaging |
+
+The current route reuses the Linux Unity player and its Mono runtime so the
+original C# gameplay can run with the original scenes. The next checkpoint
+is a small executable that loads `libc.so.6` and exits normally on LiwusOS.

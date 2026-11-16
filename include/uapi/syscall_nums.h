@@ -50,5 +50,6 @@
 #define SYS_WINDOW_POLL 51
 #define SYS_WINDOW_FINISH 52
 #define SYS_WINDOW_GRAB_MOUSE 53
+#define SYS_EXECVE_LINUX 54
 
 #endif

@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include "GL/glew.h"
 #include "platform.h"
 #include "softgl.h"
@@ -124,34 +125,8 @@ void craft_gl_shutdown(void) {
 }
 
 void craft_gl_present(void) {
-    if (!color_buffer || !present_buffer || screen_w <= 0 || screen_h <= 0) return;
-    if (screen_w == target_w && screen_h == target_h) {
-        craft_platform_present(color_buffer, screen_w, screen_h);
-        return;
-    }
-    /* Fast 2x nearest-neighbor upscale into desktop window */
-    for (int y = 0; y < screen_h; y++) {
-        const uint32_t *src_row = color_buffer + y * screen_w;
-        uint32_t *dst_row0 = present_buffer + (y * 2) * target_w;
-        uint32_t *dst_row1 = present_buffer + (y * 2 + 1) * target_w;
-        uint64_t *d64 = (uint64_t *)dst_row0;
-        for (int x = 0; x < screen_w; x++) {
-            uint32_t p = src_row[x];
-            d64[x] = ((uint64_t)p << 32) | (uint64_t)p;
-        }
-        if (target_w > screen_w * 2) {
-            dst_row0[target_w - 1] = src_row[screen_w - 1];
-        }
-        if (y * 2 + 1 < target_h) {
-            memcpy(dst_row1, dst_row0, (size_t)target_w * sizeof(uint32_t));
-        }
-    }
-    if (target_h > screen_h * 2) {
-        memcpy(present_buffer + (size_t)(target_h - 1) * target_w,
-               present_buffer + (size_t)(screen_h * 2 - 1) * target_w,
-               (size_t)target_w * sizeof(uint32_t));
-    }
-    craft_platform_present(present_buffer, target_w, target_h);
+    if (!color_buffer || screen_w <= 0 || screen_h <= 0) return;
+    craft_platform_present(color_buffer, screen_w, screen_h);
 }
 
 GLenum glewInit(void) { return GLEW_OK; }
@@ -219,10 +194,17 @@ void glClear(GLbitfield mask) {
     if (!color_buffer) return;
     size_t n = (size_t)screen_w * screen_h;
     if (mask & GL_COLOR_BUFFER_BIT) {
-        for (size_t i = 0; i < n; ++i) color_buffer[i] = clear_color;
+        if (clear_color == 0) {
+            memset(color_buffer, 0, n * sizeof(uint32_t));
+        } else {
+            for (size_t i = 0; i < n; ++i) color_buffer[i] = clear_color;
+        }
     }
     if (mask & GL_DEPTH_BUFFER_BIT) {
-        for (size_t i = 0; i < n; ++i) depth_buffer[i] = 1.0f;
+        uint64_t *d64 = (uint64_t *)depth_buffer;
+        size_t n64 = n / 2;
+        for (size_t i = 0; i < n64; ++i) d64[i] = 0x3F8000003F800000ULL;
+        if (n & 1) depth_buffer[n - 1] = 1.0f;
     }
 }
 
@@ -360,11 +342,17 @@ static inline int transform_vertex(int vertex, SoftVertex *out, int kind) {
         out->diffuse = diffuse > 0.0f ? diffuse : 0.0f;
         if (!p->ortho && p->fog_distance > 0.0f) {
             float dx = pos[0] - p->camera[0], dy = pos[1] - p->camera[1], dz = pos[2] - p->camera[2];
-            float d = sqrtf(dx*dx + dy*dy + dz*dz) / p->fog_distance;
-            d = clamp01(d);
-            out->fog = d * d * d * d;
-            float h = sqrtf(dx*dx + dz*dz);
-            out->fog_height = (atan2f(dy, h) + PI_F * 0.5f) / PI_F;
+            float d2 = (dx*dx + dy*dy + dz*dz) / (p->fog_distance * p->fog_distance);
+            if (d2 > 0.05f) {
+                float d = sqrtf(d2);
+                if (d > 1.0f) d = 1.0f;
+                out->fog = d * d * d * d;
+                float h = sqrtf(dx*dx + dz*dz);
+                out->fog_height = (atan2f(dy, h) + PI_F * 0.5f) / PI_F;
+            } else {
+                out->fog = 0.0f;
+                out->fog_height = 0.5f;
+            }
         }
     }
     return 1;
@@ -409,14 +397,24 @@ static inline void put_pixel_generic(size_t at, float z, const float *color) {
         color_buffer[at] = ((~old) & 0x00ffffffU);
         return;
     }
-    uint32_t c = rgb(color[0], color[1], color[2]);
+    uint32_t c;
     if (blend) {
-        float a = clamp01(color[3]);
+        uint32_t a = (uint32_t)(color[3] * 256.0f);
+        if (a > 256) a = 256;
+        uint32_t inv_a = 256 - a;
         uint32_t old = color_buffer[at];
-        float r = ((old >> 16) & 255) / 255.0f;
-        float g = ((old >> 8) & 255) / 255.0f;
-        float b = (old & 255) / 255.0f;
-        c = rgb(mixf(r, color[0], a), mixf(g, color[1], a), mixf(b, color[2], a));
+        uint32_t or = (old >> 16) & 255;
+        uint32_t og = (old >> 8) & 255;
+        uint32_t ob = old & 255;
+        uint32_t nr = (uint32_t)(color[0] * 255.0f);
+        uint32_t ng = (uint32_t)(color[1] * 255.0f);
+        uint32_t nb = (uint32_t)(color[2] * 255.0f);
+        uint32_t r = (or * inv_a + nr * a) >> 8;
+        uint32_t g = (og * inv_a + ng * a) >> 8;
+        uint32_t b = (ob * inv_a + nb * a) >> 8;
+        c = 0xFF000000U | (r << 16) | (g << 8) | b;
+    } else {
+        c = rgb(color[0], color[1], color[2]);
     }
     color_buffer[at] = c;
     if (depth_test) depth_buffer[at] = clamp01(z);
@@ -509,6 +507,7 @@ static void raster_triangle_blocks(SoftVertex a, SoftVertex b, SoftVertex c) {
     float wb_row = edge(c.x, c.y, a.x, a.y, start_x, start_y) * invarea;
     float dwa_dx = (c.y - b.y) * invarea, dwa_dy = -(c.x - b.x) * invarea;
     float dwb_dx = (a.y - c.y) * invarea, dwb_dy = -(a.x - c.x) * invarea;
+    bool has_fog = (a.fog > 0.005f || b.fog > 0.005f || c.fog > 0.005f);
 
     for (int y = miny; y < maxy; y++) {
         float wa = wa_row, wb = wb_row;
@@ -567,17 +566,19 @@ static void raster_triangle_blocks(SoftVertex a, SoftVertex b, SoftVertex c) {
                     uint32_t cg = (((texel >> 8) & 0xFF) * ifactor) >> 8;
                     uint32_t cb = (((texel >> 16) & 0xFF) * ifactor) >> 8;
 
-                    float fog = wa * a.fog + wb * b.fog + wc * c.fog;
-                    if (fog > 0.005f) {
-                        float fog_height = wa * a.fog_height + wb * b.fog_height + wc * c.fog_height;
-                        float sky[4];
-                        sample_rgba(sky_sampler, timer, fog_height, sky);
-                        float f_r = (float)cr + (sky[0] * 255.0f - (float)cr) * fog;
-                        float f_g = (float)cg + (sky[1] * 255.0f - (float)cg) * fog;
-                        float f_b = (float)cb + (sky[2] * 255.0f - (float)cb) * fog;
-                        cr = (uint32_t)(f_r < 0.0f ? 0.0f : f_r > 255.0f ? 255.0f : f_r);
-                        cg = (uint32_t)(f_g < 0.0f ? 0.0f : f_g > 255.0f ? 255.0f : f_g);
-                        cb = (uint32_t)(f_b < 0.0f ? 0.0f : f_b > 255.0f ? 255.0f : f_b);
+                    if (has_fog) {
+                        float fog = wa * a.fog + wb * b.fog + wc * c.fog;
+                        if (fog > 0.005f) {
+                            float fog_height = wa * a.fog_height + wb * b.fog_height + wc * c.fog_height;
+                            float sky[4];
+                            sample_rgba(sky_sampler, timer, fog_height, sky);
+                            float f_r = (float)cr + (sky[0] * 255.0f - (float)cr) * fog;
+                            float f_g = (float)cg + (sky[1] * 255.0f - (float)cg) * fog;
+                            float f_b = (float)cb + (sky[2] * 255.0f - (float)cb) * fog;
+                            cr = (uint32_t)(f_r < 0.0f ? 0.0f : f_r > 255.0f ? 255.0f : f_r);
+                            cg = (uint32_t)(f_g < 0.0f ? 0.0f : f_g > 255.0f ? 255.0f : f_g);
+                            cb = (uint32_t)(f_b < 0.0f ? 0.0f : f_b > 255.0f ? 255.0f : f_b);
+                        }
                     }
 
                     color_buffer[at] = 0xFF000000U | (cr << 16) | (cg << 8) | cb;
@@ -617,6 +618,7 @@ static void raster_triangle_generic(SoftVertex a, SoftVertex b, SoftVertex c, in
     float wb_row = edge(c.x, c.y, a.x, a.y, start_x, start_y) * invarea;
     float dwa_dx = (c.y - b.y) * invarea, dwa_dy = -(c.x - b.x) * invarea;
     float dwb_dx = (a.y - c.y) * invarea, dwb_dy = -(a.x - c.x) * invarea;
+    bool has_fog = (a.fog > 0.005f || b.fog > 0.005f || c.fog > 0.005f);
 
     for (int y = miny; y < maxy; y++) {
         float wa = wa_row, wb = wb_row;

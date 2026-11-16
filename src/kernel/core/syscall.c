@@ -1,4 +1,5 @@
 #include "syscall.h"
+#include "uapi/syscall_nums.h"
 #include "acpi.h"
 #include "elf.h"
 #include "sdfs.h"
@@ -1425,7 +1426,6 @@ static int linux_exec_aux_info(const void *file_buffer, uint32_t file_size,
   out->phent = header->e_phentsize;
   out->phnum = header->e_phnum;
   out->entry = loaded_entry;
-  out->base = 0; /* PT_INTERP is not supported; this is a static ELF. */
   out->brk = initial_brk;
   out->uid = process ? process->uid : 0;
   out->euid = process ? process->euid : 0;
@@ -1570,13 +1570,53 @@ static int exec_build_stack(page_directory_t *mm, int elf_class_value,
   return 0;
 }
 
+static int exec_load_linux_interpreter(page_directory_t *mm, const char *path,
+                                       process_t *process, uint64_t *entry,
+                                       uint64_t *base) {
+  fs_node_t *node = NULL;
+  int rc = vfs_open_access(path, process->euid, process->egid,
+                           VFS_ACCESS_EXEC, &node);
+  if (rc < 0) return rc;
+
+  /* ld.so is small. Bound the temporary allocation for arbitrary PT_INTERP
+   * paths since a file can reference any executable in the VFS. */
+  const uint32_t max_interp_size = 4 * 1024 * 1024;
+  uint32_t size = node->length;
+  if (!(node->flags & FS_FILE) || size < sizeof(Elf64_Ehdr) ||
+      size > max_interp_size) {
+    vfs_node_put(node);
+    return -ENOEXEC;
+  }
+  void *file = kmalloc(size);
+  if (!file) {
+    vfs_node_put(node);
+    return -ENOMEM;
+  }
+  uint32_t read_size = read_fs(node, 0, size, file);
+  vfs_node_put(node);
+  rc = -EIO;
+  if (read_size == size) {
+    *entry = elf64_load_interpreter_in(mm, file, size, base);
+    rc = *entry ? 0 : last_elf_load_error;
+  }
+  kfree(file);
+  return rc;
+}
+
 static int do_execve(registers_t *regs, const char *filename,
-                     char *const argv[], char *const envp[]) {
+                     char *const argv[], char *const envp[], int select_linux) {
   if (!regs) return -EPERM;
   if ((regs->cs & 3) != 3) {
     serial_print("[execve] rejected CS="); serial_print_hex(regs->cs); serial_print("\n");
     return -EPERM;
   }
+  process_t *process = syscall_process();
+  if (!process) return -EPERM;
+  task_abi_t abi = select_linux ? TASK_ABI_LINUX_X86_64 : process->abi;
+  int linux_abi = abi == TASK_ABI_LINUX_X86_64;
+  /* Replacing the process address space is only safe with one thread
+   * until exec can retire the other threads. */
+  if (linux_abi && process->thread_count != 1) return -EINVAL;
 
   char fname[256];
   uint32_t ignored_len = 0;
@@ -1597,7 +1637,6 @@ static int do_execve(registers_t *regs, const char *filename,
   strncpy(sdfs_path, resolved, sizeof(sdfs_path) - 1);
   sdfs_path[sizeof(sdfs_path) - 1] = '\0';
 
-  process_t *process = syscall_process();
   fs_node_t *exec_node = NULL;
   int access_rc = vfs_open_access(sdfs_path,
                                   process ? process->euid : 0,
@@ -1640,7 +1679,7 @@ static int do_execve(registers_t *regs, const char *filename,
   if (!file) { kfree(storage); return -ENOENT; }
 
   int klass = elf_class(file, file_size);
-  if (klass != ELFCLASS32 && klass != ELFCLASS64) {
+  if (klass != ELFCLASS64 && (linux_abi || klass != ELFCLASS32)) {
     if (owned_file) kfree(file);
     kfree(storage);
     return -ENOEXEC;
@@ -1658,20 +1697,32 @@ static int do_execve(registers_t *regs, const char *filename,
   current_task->process->mm = new_dir;
   switch_page_directory(new_dir);
   last_elf_heap_start = 0;
+  char interp_path[256] = {0};
   uint64_t entry = klass == ELFCLASS64
-      ? elf64_load_file_in(new_dir, file, file_size)
+      ? (linux_abi ? elf64_load_linux_in(new_dir, file, file_size,
+                                        interp_path, sizeof(interp_path))
+                   : elf64_load_file_in(new_dir, file, file_size))
       : elf32_load_file_in(new_dir, file, file_size);
   int load_error = entry ? 0 : last_elf_load_error;
   linux_exec_aux_info_t linux_aux_storage;
   const linux_exec_aux_info_t *linux_aux = NULL;
-  if (entry && klass == ELFCLASS64 &&
-      current_task->process->abi == TASK_ABI_LINUX_X86_64) {
+  if (entry && linux_abi) {
     int aux_rc = linux_exec_aux_info(file, file_size, entry, fname,
                                      &linux_aux_storage);
     if (aux_rc < 0) load_error = aux_rc;
     else linux_aux = &linux_aux_storage;
   }
   if (owned_file) kfree(file);
+  if (linux_aux && interp_path[0]) {
+    if (!linux_aux->phdr ||
+        validate_user_pointer((void *)linux_aux->phdr,
+                              linux_aux->phent * linux_aux->phnum) < 0) {
+      load_error = -ENOEXEC;
+    } else {
+      load_error = exec_load_linux_interpreter(new_dir, interp_path, process,
+                                              &entry, &linux_aux_storage.base);
+    }
+  }
   if (!entry || load_error < 0) {
     serial_print("[execve] ELF load failed rc="); serial_print_hex((uint64_t)(int64_t)load_error); serial_print("\n");
     current_task->process->mm = old_dir;
@@ -1696,11 +1747,18 @@ static int do_execve(registers_t *regs, const char *filename,
   }
 
   page_directory_t *old_to_free = old_dir;
-  current_task->process->heap_start = last_elf_heap_start;
-  current_task->process->heap_end = last_elf_heap_start;
+  current_task->process->abi = abi;
+  current_task->process->heap_start = linux_aux ? linux_aux->brk
+                                               : last_elf_heap_start;
+  current_task->process->heap_end = current_task->process->heap_start;
   if (linux_aux) {
     current_task->process->linux_brk_start = linux_aux->brk;
     current_task->process->linux_brk_current = linux_aux->brk;
+    current_task->fs_base = 0;
+    current_task->user_gs_base = 0;
+    current_task->clear_child_tid = 0;
+    write_msr_qword(0xC0000100U, 0); /* IA32_FS_BASE */
+    write_msr_qword(0xC0000102U, 0); /* User GS base while in kernel */
   } else {
     current_task->process->linux_brk_start = 0;
     current_task->process->linux_brk_current = 0;
@@ -1733,11 +1791,10 @@ static int do_execve(registers_t *regs, const char *filename,
   return 0;
 }
 
-/* Reuse the native loader/VM transition for the isolated Linux ABI dispatcher.
- * The current process personality is retained across a successful exec. */
+/* Linux execve and the native launch syscall share the same ELF transition. */
 int sys_execve_linux(registers_t *regs, const char *filename,
                      char *const argv[], char *const envp[]) {
-  return do_execve(regs, filename, argv, envp);
+  return do_execve(regs, filename, argv, envp, 1);
 }
 
 // ============================================================
@@ -2499,10 +2556,15 @@ void syscall_handler(registers_t *regs) {
     case 11: regs->rax = keyboard_is_pressed((uint8_t)regs->rdi); break;
     case 37: regs->rax = sys_mouse_get((void *)regs->rdi); break;
     case 14: regs->rax = fork_process(regs); break;
-    case 15:
+    case SYS_EXECVE:
       regs->rax = do_execve(regs, (const char *)regs->rdi,
                             (char *const *)regs->rsi,
-                            (char *const *)regs->rdx);
+                            (char *const *)regs->rdx, 0);
+      break;
+    case SYS_EXECVE_LINUX:
+      regs->rax = sys_execve_linux(regs, (const char *)regs->rdi,
+                                   (char *const *)regs->rsi,
+                                   (char *const *)regs->rdx);
       break;
     case 16: regs->rax = sys_tcgetattr((int)regs->rdi, (struct termios *)regs->rsi); break;
     case 17: regs->rax = sys_tcsetattr((int)regs->rdi, (int)regs->rsi, (const struct termios *)regs->rdx); break;

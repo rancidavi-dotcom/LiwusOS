@@ -25,7 +25,12 @@ static int mouse_buttons[3];
 static char clipboard[256];
 static int modifiers(void);
 
+static uint64_t last_poll_tick = 0;
+
 static int refresh_window_state(void) {
+    uint64_t now_ticks = craft_platform_ticks();
+    if (now_ticks != 0 && now_ticks == last_poll_tick) return 0;
+    last_poll_tick = now_ticks;
     liw_window_state_t state = {0};
     if (liw_window_poll(&state) < 0) { window_storage.close = 1; return -1; }
     if (state.closed) window_storage.close = 1;

@@ -9,14 +9,10 @@ All items below are real limitations observed or documented. Hypotheses are mark
 - **Dependencies:** Broader CPU feature policy, advanced xstate components, kernel SIMD bracketing and SMP migration tests.
 - **Resolve when:** Separate tests cover every advertised xstate feature and migration/CPU-feature boundaries, while dynamic glibc runs through PT_INTERP.
 
-## 2) No PT_INTERP support
-- **Symptom:** Dynamically linked ELF (with PT_INTERP) not loaded/executed.
-- **Cause:** Loader does not parse PT_INTERP or load dynamic linker.
-- **Evidence:** Documented in ABI_LINUX.md and ROADMAP.
-- **Possible solution:** Implement PT_INTERP parsing in ELF loader, load interpreter, set up auxv (AT_BASE), transfer control to interpreter.
-- **Dependencies:** VM/demand paging may help, proper auxv, file loading.
-- **Reproduce:** Try to run glibc dynamic binary.
-- **Resolve when:** ld.so loads and can execute simple dynamic binary.
+## 2) Shared-library mapping is missing
+- Linux ELF64 `execve` resolves and maps the `PT_INTERP` file and supplies its base in `AT_BASE`.
+- In QEMU with `-cpu max`, glibc's `ld.so` started a PIE without shared dependencies. A program linked to `libc.so.6` and Granny's player both reached the loader and reported `failed to map segment from shared object`.
+- The compatibility layer needs private file-backed `mmap` and `MAP_FIXED` replacement for the library segments.
 
 ## 3) Incomplete pthreads/libc support
 - **Status:** The reproduced default-stack TLS fault is fixed by Linux `mprotect(10)` translation to generic LIWUS VMA and page-table protection updates. Musl's `pthread_create` maps stack plus guard as `PROT_NONE`, then enables the usable stack with `mprotect` before copying TLS; its libc tolerates `ENOSYS`, so the previously missing syscall silently left the stack inaccessible.
@@ -62,12 +58,12 @@ All items below are real limitations observed or documented. Hypotheses are mark
 - **Resolve when:** Signal, stop/continue and process-group cases plus real rusage accounting pass Linux ABI probes.
 
 ## 8) Basic auxv exists; vDSO and libc completeness remain absent
-- **Symptom:** Linux programs requiring `AT_SYSINFO_EHDR` or a dynamic loader can fail; libc behavior is not broadly validated.
+- **Symptom:** Linux programs requiring `AT_SYSINFO_EHDR` or shared libraries can fail; libc behavior is not broadly validated.
 - **Current boundary:** `AT_HWCAP` reports CPUID.1:EDX and `AT_HWCAP2` is zero. LIWUS does not enable ring-3 MWAIT/FSGSBASE; it enables x87/SSE/AVX state only when XSAVE+AVX are available. Broader feature masking, AVX-512/AMX, and heterogeneous CPU behavior are not validated.
-- **Cause:** LIWUS supplies a tested basic ELF64 auxv but has no vDSO, `PT_INTERP`, or complete CPU capability contract.
+- **Cause:** LIWUS supplies a tested basic ELF64 auxv but lacks a vDSO and a complete CPU capability contract.
 - **Evidence:** `linux_syscall_probe` validates the initial stack/auxv and conditionally tests YMM context preservation; static musl and glibc `puts` smokes pass with `LINUX_STATIC_ELF`. The glibc archive carries a GNU property note for x86-64-v3/v4, but a single greeting does not show that AVX-512 code paths execute.
 - **Program break boundary:** `AT_BRK` and Linux `brk(12)` now share a tested page-aligned initial value and support basic eager grow/shrink. Concurrent `brk`/`mmap`, `RLIMIT_DATA` enforcement, and memory pressure races are not verified.
-- **Possible solution:** Add a generic capability policy and vDSO; handle `PT_INTERP` as a separate loader milestone.
+- **Possible solution:** Add a generic CPU capability policy and vDSO.
 - **Dependencies:** VM, ELF loader, FPU/XSAVE and feature policy.
 - **Reproduce:** `make ring3-test`; optional external static musl hello via `LINUX_STATIC_ELF=/tmp/liwus-musl-hello`.
 - **Resolve when:** Static and dynamic libc programs pass reproducible external tests with supported CPU feature requirements.

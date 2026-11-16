@@ -38,6 +38,7 @@
 #include "lvgl/src/draw/lv_img_cache.h"
 #include "lvgl_port.h"
 #include "acpi.h"
+#include "kernel_layout.h"
 
 extern bool is_live_mode;
 extern char g_system_hostname[32];
@@ -702,9 +703,6 @@ static lv_obj_t *win_player = NULL;
 static lv_obj_t *win_craft = NULL;
 static lv_obj_t *img_craft = NULL;
 static lv_obj_t *craft_resize_grip = NULL;
-static lv_img_dsc_t craft_frame_desc;
-static uint32_t *craft_frame_pixels = NULL;
-static size_t craft_frame_capacity = 0;
 static bool craft_close_requested = false;
 static bool craft_process_running = false;
 static lv_obj_t *lbl_settings_network = NULL;
@@ -1470,28 +1468,82 @@ static void craft_resize_event_cb(lv_event_t *e) {
 
 /* Called by the Craft syscalls while the LVGL desktop remains in control. */
 int desktop_craft_present(const uint32_t *pixels, uint32_t width, uint32_t height) {
-    if (!win_craft || !img_craft || !pixels || !width || !height ||
-        width > 1920 || height > 1080) return -1;
-    size_t count = (size_t)width * height;
-    lv_img_cache_invalidate_src(&craft_frame_desc);
-    if (count > craft_frame_capacity) {
-        uint32_t *next = kmalloc(count * sizeof(uint32_t));
-        if (!next) return -1;
-        if (craft_frame_pixels) kfree(craft_frame_pixels);
-        craft_frame_pixels = next;
-        craft_frame_capacity = count;
+    if (!win_craft || !pixels || !width || !height || width > 1920 || height > 1080) return -1;
+    if (lv_obj_has_flag(win_craft, LV_OBJ_FLAG_HIDDEN)) return 0;
+
+    lv_obj_t *content = lv_win_get_content(win_craft);
+    if (!content) return -1;
+    lv_area_t area;
+    lv_obj_get_coords(content, &area);
+    int win_w = area.x2 - area.x1 + 1;
+    int win_h = area.y2 - area.y1 + 1;
+    if (win_w <= 0 || win_h <= 0) return -1;
+
+    uint32_t *back = vga_get_backbuffer();
+    extern uint64_t vga_fb_addr;
+    uint32_t *hw = vga_is_framebuffer() ? (uint32_t *)phys_to_virt(vga_fb_addr) : NULL;
+    uint32_t stride = vga_get_fb_pitch() / 4;
+    uint32_t sw = vga_get_fb_width();
+    uint32_t sh = vga_get_fb_height();
+    bool hw_direct = (hw != NULL && vga_get_hw_bpp() != 24);
+
+    int start_x = area.x1;
+    int start_y = area.y1;
+
+    /* Direct 2x nearest-neighbor upscale directly into framebuffer/backbuffer */
+    if (win_w >= (int)width * 2 && win_h >= (int)height * 2) {
+        if (area.x1 < 0 || area.x1 + (int)width * 2 > (int)sw) return 0;
+        for (uint32_t y = 0; y < height; y++) {
+            int dy0 = start_y + (int)y * 2;
+            int dy1 = dy0 + 1;
+            if (dy0 < 0 || dy0 >= (int)sh) continue;
+            const uint32_t *src_row = pixels + y * width;
+
+            uint32_t *b0 = back ? (back + dy0 * stride + start_x) : NULL;
+            uint32_t *b1 = (back && dy1 < (int)sh) ? (back + dy1 * stride + start_x) : NULL;
+            uint32_t *h0 = hw_direct ? (hw + dy0 * stride + start_x) : NULL;
+            uint32_t *h1 = (hw_direct && dy1 < (int)sh) ? (hw + dy1 * stride + start_x) : NULL;
+
+            uint64_t *b64_0 = (uint64_t *)b0;
+            uint64_t *b64_1 = (uint64_t *)b1;
+            uint64_t *h64_0 = (uint64_t *)h0;
+            uint64_t *h64_1 = (uint64_t *)h1;
+
+            for (uint32_t x = 0; x < width; x++) {
+                uint32_t p = src_row[x];
+                uint64_t p64 = ((uint64_t)p << 32) | p;
+                if (b64_0) b64_0[x] = p64;
+                if (b64_1) b64_1[x] = p64;
+                if (h64_0) h64_0[x] = p64;
+                if (h64_1) h64_1[x] = p64;
+            }
+        }
+    } else {
+        /* 1:1 direct blit into framebuffer/backbuffer */
+        uint32_t cw = width < (uint32_t)win_w ? width : (uint32_t)win_w;
+        uint32_t ch = height < (uint32_t)win_h ? height : (uint32_t)win_h;
+        for (uint32_t y = 0; y < ch; y++) {
+            int dy = start_y + (int)y;
+            if (dy < 0 || dy >= (int)sh) continue;
+            const uint32_t *src_row = pixels + y * width;
+            if (back) fast_memcpy(back + dy * stride + start_x, src_row, cw * sizeof(uint32_t));
+            if (hw_direct) fast_memcpy(hw + dy * stride + start_x, src_row, cw * sizeof(uint32_t));
+        }
     }
-    memcpy(craft_frame_pixels, pixels, count * sizeof(uint32_t));
-    craft_frame_desc.header.cf = LV_IMG_CF_TRUE_COLOR;
-    craft_frame_desc.header.always_zero = 0;
-    craft_frame_desc.header.reserved = 0;
-    craft_frame_desc.header.w = width;
-    craft_frame_desc.header.h = height;
-    craft_frame_desc.data_size = (uint32_t)(count * sizeof(uint32_t));
-    craft_frame_desc.data = (const uint8_t *)craft_frame_pixels;
-    lv_img_set_src(img_craft, &craft_frame_desc);
-    lv_obj_invalidate(img_craft);
+
     craft_process_running = true;
+
+    /* Log real presentation FPS to serial */
+    static uint32_t s_craft_frames = 0;
+    static uint64_t s_craft_last_sec = 0;
+    s_craft_frames++;
+    if (s_craft_last_sec == 0) s_craft_last_sec = timer_ticks;
+    if (timer_ticks - s_craft_last_sec >= 100) { /* 1 second (100 Hz timer) */
+        uint32_t fps = (s_craft_frames * 100) / (uint32_t)(timer_ticks - s_craft_last_sec);
+        serial_printf("[CRAFT-FPS] fps=%u frames=%u\n", fps, s_craft_frames);
+        s_craft_frames = 0;
+        s_craft_last_sec = timer_ticks;
+    }
     return 0;
 }
 
@@ -1615,6 +1667,8 @@ int desktop_craft_open(void) {
         lv_obj_add_flag(win_craft, LV_OBJ_FLAG_HIDDEN);
         return -1;
     }
+    extern void task_set_priority(int pid, int priority);
+    task_set_priority(pid, 10); /* TASK_PRIO_MAX = 10 for smooth 3D rendering */
     craft_process_running = true;
     return 0;
 }
@@ -6358,14 +6412,14 @@ void desktop_init(void) {
     lvgl_port_init();
     html_fonts_init();
 
-    /* Eleva a resolucao caso o sistema tenha inicializado em modo de baixa resolucao */
+    /* Eleva a resolucao caso o sistema tenha inicializado em modo de baixa resolucao (Prioridade: 1366x768 notebook) */
     if (vga_display_backend_ready()) {
         uint16_t cur_w = (uint16_t)desktop_screen_w();
         uint16_t cur_h = (uint16_t)desktop_screen_h();
         if (cur_w < 1024 || cur_h < 720) {
-            if (lvgl_port_set_resolution(1920, 1080) != 0) {
-                if (lvgl_port_set_resolution(1366, 768) != 0) {
-                    lvgl_port_set_resolution(1360, 768);
+            if (lvgl_port_set_resolution(1366, 768) != 0) {
+                if (lvgl_port_set_resolution(1360, 768) != 0) {
+                    lvgl_port_set_resolution(1920, 1080);
                 }
             }
         }
@@ -6411,6 +6465,11 @@ void desktop_init(void) {
     desktop_update_topbar_status(true);
 
     g_desktop_running = true;
+
+    extern bool g_autostart_craft;
+    if (g_autostart_craft) {
+        desktop_craft_open();
+    }
 }
 
 bool desktop_is_running(void) {
@@ -6616,5 +6675,8 @@ void desktop_task(void) {
         /* Ciclo do motor gráfico LVGL */
         lvgl_port_update();
         vga_flip();
+
+        extern void switch_task(void);
+        switch_task();
     }
 }

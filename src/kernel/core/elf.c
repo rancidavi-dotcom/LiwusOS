@@ -176,13 +176,17 @@ uint64_t elf32_load_file(void *file_buffer, uint32_t file_size) {
   return elf32_load_file_in(current_directory, file_buffer, file_size);
 }
 
-uint64_t elf64_load_file_in(page_directory_t *mm, void *file_buffer,
-                            uint32_t file_size) {
+static uint64_t elf64_load_image(page_directory_t *mm, void *file_buffer,
+                                 uint32_t file_size, char *interp_path,
+                                 size_t interp_path_size, uint64_t *interp_bias) {
   last_elf_load_error = -8;
-  if (!mm || !file_buffer || file_size < sizeof(Elf64_Ehdr)) return 0;
+  if (!mm || file_size < sizeof(Elf64_Ehdr) ||
+      elf_class(file_buffer, file_size) != ELFCLASS64) return 0;
   Elf64_Ehdr *hdr = (Elf64_Ehdr *)file_buffer;
 
   if ((hdr->e_type != ET_EXEC && hdr->e_type != ET_DYN) ||
+      (interp_bias && hdr->e_type != ET_DYN) ||
+      hdr->e_ident[EI_DATA] != 1 || hdr->e_version != 1 ||
       hdr->e_machine != EM_X86_64 ||
       hdr->e_phentsize != sizeof(Elf64_Phdr) ||
       !file_range_ok(file_size, hdr->e_phoff,
@@ -191,7 +195,10 @@ uint64_t elf64_load_file_in(page_directory_t *mm, void *file_buffer,
   Elf64_Phdr *phdr = (Elf64_Phdr *)((uint64_t)file_buffer + hdr->e_phoff);
 
   uint64_t load_bias = 0;
-  if (hdr->e_type == ET_DYN) {
+  if (interp_bias) {
+    /* Place ld.so between the default PIE base and the mmap area. */
+    load_bias = 0x0000700000000000ULL;
+  } else if (hdr->e_type == ET_DYN) {
     uint64_t min_vaddr = UINT64_MAX;
     for (int i = 0; i < hdr->e_phnum; i++) {
       if (phdr[i].p_type != PT_LOAD || phdr[i].p_memsz == 0) continue;
@@ -207,8 +214,20 @@ uint64_t elf64_load_file_in(page_directory_t *mm, void *file_buffer,
   uint64_t max_end = 0;
   int entry_executable = 0;
 
-  for (int i = 0; i < hdr->e_phnum; i++)
-    if (phdr[i].p_type == PT_INTERP) return 0; /* dynamic linker is a later gate */
+  if (interp_path) interp_path[0] = '\0';
+  for (int i = 0; i < hdr->e_phnum; i++) {
+    if (phdr[i].p_type != PT_INTERP) continue;
+    uint64_t length = phdr[i].p_filesz;
+    uint64_t offset = phdr[i].p_offset;
+    if (!interp_path || interp_path[0] || length < 3 ||
+        length > interp_path_size ||
+        !file_range_ok(file_size, offset, length)) return 0;
+    const char *path = (const char *)file_buffer + offset;
+    if (path[0] != '/' || path[length - 1] != '\0') return 0;
+    for (uint64_t j = 1; j < length - 1; j++)
+      if (path[j] == '\0' || path[j] == ':') return 0;
+    memcpy(interp_path, path, (size_t)length);
+  }
 
   for (int i = 0; i < hdr->e_phnum; i++) {
     if (phdr[i].p_type == PT_LOAD) {
@@ -222,7 +241,11 @@ uint64_t elf64_load_file_in(page_directory_t *mm, void *file_buffer,
 
       if (memsz < filesz || vaddr + memsz < vaddr ||
           !file_range_ok(file_size, offset, filesz) ||
-          vaddr < USER_ADDR_MIN || vaddr + memsz > USER_ADDR_MAX) return 0;
+          vaddr < USER_ADDR_MIN ||
+          vaddr + memsz > (interp_bias ? USER_MMAP_TOP : USER_ADDR_MAX)) return 0;
+      if (interp_bias && phdr[i].p_align > 1 &&
+          (load_bias % phdr[i].p_align != 0 ||
+           vaddr % phdr[i].p_align != offset % phdr[i].p_align)) return 0;
       if ((phdr[i].p_flags & 1) && entry_addr >= vaddr &&
           entry_addr < vaddr + memsz) entry_executable = 1;
 
@@ -233,6 +256,7 @@ uint64_t elf64_load_file_in(page_directory_t *mm, void *file_buffer,
       if (end_page > max_end) max_end = end_page;
 
       for (uint64_t p = start_page; p < end_page; p += 4096) {
+        if (interp_bias && vma_find(mm, p)) return 0;
         if (!vmm_page_present_in(mm, p)) {
           void *phys = pmm_alloc_block();
           if (!phys) { last_elf_load_error = -12; return 0; }
@@ -291,8 +315,6 @@ uint64_t elf64_load_file_in(page_directory_t *mm, void *file_buffer,
     }
   }
 
-  last_elf_heap_start = max_end;
-
   for (int i = 0; i < hdr->e_phnum; i++) {
     if (phdr[i].p_type != PT_LOAD || phdr[i].p_memsz == 0) continue;
     uint64_t seg_start = (uint64_t)phdr[i].p_vaddr + load_bias;
@@ -315,8 +337,29 @@ uint64_t elf64_load_file_in(page_directory_t *mm, void *file_buffer,
       vmm_get_mapping_in(mm, entry_addr, 0, &entry_flags) < 0 ||
       !(entry_flags & PTE_U) || (entry_flags & PTE_NX))
     return 0;
+  if (interp_bias) *interp_bias = load_bias;
+  else if (!interp_path) last_elf_heap_start = max_end;
   last_elf_load_error = 0;
   return entry_addr;
+}
+
+uint64_t elf64_load_file_in(page_directory_t *mm, void *file_buffer,
+                            uint32_t file_size) {
+  return elf64_load_image(mm, file_buffer, file_size, 0, 0, 0);
+}
+
+uint64_t elf64_load_linux_in(page_directory_t *mm, void *file_buffer,
+                             uint32_t file_size, char *interp_path,
+                             size_t interp_path_size) {
+  if (!interp_path || !interp_path_size) return 0;
+  return elf64_load_image(mm, file_buffer, file_size, interp_path,
+                          interp_path_size, 0);
+}
+
+uint64_t elf64_load_interpreter_in(page_directory_t *mm, void *file_buffer,
+                                   uint32_t file_size, uint64_t *load_bias_out) {
+  if (!load_bias_out) return 0;
+  return elf64_load_image(mm, file_buffer, file_size, 0, 0, load_bias_out);
 }
 
 uint64_t elf64_load_file(void *file_buffer, uint32_t file_size) {

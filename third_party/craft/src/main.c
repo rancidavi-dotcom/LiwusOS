@@ -2846,8 +2846,10 @@ int main(int argc, char **argv) {
             g->observe1 = g->observe1 % g->player_count;
             g->observe2 = g->observe2 % g->player_count;
             delete_chunks();
-            del_buffer(me->buffer);
-            me->buffer = gen_player_buffer(s->x, s->y, s->z, s->rx, s->ry);
+            if (g->player_count > 1 || g->observe1 != 0 || g->observe2 != 0) {
+                del_buffer(me->buffer);
+                me->buffer = gen_player_buffer(s->x, s->y, s->z, s->rx, s->ry);
+            }
             for (int i = 1; i < g->player_count; i++) {
                 interpolate_player(g->players + i);
             }

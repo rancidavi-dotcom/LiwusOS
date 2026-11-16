@@ -58,6 +58,7 @@ uint32_t *vga_get_backbuffer(void);
 uint32_t vga_get_fb_width(void);
 uint32_t vga_get_fb_height(void);
 uint32_t vga_get_fb_pitch(void);
+uint8_t vga_get_hw_bpp(void);
 void vga_flip(void);
 void vga_clear_framebuffer(uint32_t xrgb);
 int vga_blit_rgb32(const uint32_t *src, uint32_t src_w, uint32_t src_h);

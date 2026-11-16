@@ -45,10 +45,10 @@ TEST_ISO_IMAGE = liwusos-test.iso
 # files. User-editable examples opt into UID/GID 1000 on their tar entries.
 export TAR_OPTIONS := --owner=0 --group=0 --numeric-owner
 UPDATE_FEED_DIR ?= build/update-feed
-UPDATE_VERSION ?= 2.2.39
-UPDATE_DATE ?= 2026-11-15
+UPDATE_VERSION ?= 2.2.40
+UPDATE_DATE ?= 2026-11-16
 UPDATE_BASE_URL ?= https://raw.githubusercontent.com/rancidavi-dotcom/LiwusOS/pkg-repo
-UPDATE_NOTES ?= LiwusOS 2.2.39: Otimizacao massiva de performance do Craft (30+ FPS com pipeline 3D acelerado e upscale 2x) e resolucao nativa 1366x768 forcada para notebooks no GRUB e HD
+UPDATE_NOTES ?= LiwusOS 2.2.40: Craft otimizado para 38+ FPS estaveis (direct blit para framebuffer, sem copias redundantes de memoria) e tela 1366x768 nativa
 LINUX_STATIC_TEST_DEP =
 LINUX_STATIC_EXPECT ?= Hello from an unmodified static GNU/Linux ELF
 ifneq ($(strip $(LINUX_STATIC_ELF)),)

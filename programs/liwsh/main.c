@@ -56,6 +56,18 @@ static int try_exec(const char *path, char **argv, char **envp) {
 
 static void child_exec(char **argv, char **envp) {
     const char *name = argv[0];
+    if (same(name, "linux")) {
+        if (!argv[1]) {
+            write_text("Usage: linux PATH [arguments]\n");
+            liw_exit(2);
+        }
+        int result = liw_execve_linux(argv[1], argv + 1, envp);
+        if (result == -LIW_ENOENT)
+            write_text("liwsh: Linux executable or ELF interpreter not found\n");
+        else
+            report_exec_error(argv[1], result);
+        liw_exit(result == -LIW_ENOENT ? 127 : 126);
+    }
     size_t name_length = text_length(name);
     int slash = has_path_separator(name);
     int has_suffix = has_lxe_suffix(name);
@@ -147,6 +159,7 @@ static int run_builtin(liwsh_cmd_t *cmd, char **envp) {
         write_text("Built-ins: help, version, pwd, cd, ifconfig, ping, date, ntp, nslookup, wget, exit, shutdown\n");
         write_text("Operators: | (pipe), > (redirect output), >> (append output), < (redirect input)\n");
         write_text("Run an application as: program [arguments]\n");
+        write_text("Run a Linux x86-64 ELF as: linux PATH [arguments]\n");
         write_text("Exact paths are tried first; .lxe is the default suffix.\n");
         write_text("Bare names are also searched under /bin.\n");
         write_text("Web text preview: webtext URL [SAVE_PATH] (HTML parsed in ring 3)\n");

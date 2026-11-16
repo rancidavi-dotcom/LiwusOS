@@ -25,6 +25,7 @@ uint8_t vga_fb_blue_size = 0;
 
 static bool is_framebuffer = false;
 static uint32_t *vga_backbuffer = NULL;
+static volatile bool vga_is_dirty = true;
 static uint32_t vga_hw_pitch = 0;
 static uint8_t vga_hw_bpp = 0;
 static size_t vga_row = 0;
@@ -1101,6 +1102,10 @@ uint32_t vga_get_fb_pitch(void) {
     return vga_fb_pitch;
 }
 
+uint8_t vga_get_hw_bpp(void) {
+    return vga_hw_bpp;
+}
+
 void vga_draw_char_fb(char c, int x, int y, uint32_t fg, uint32_t bg) {
     if (!is_framebuffer || !font_data || !vga_backbuffer) return;
     if (x < 0 || y < 0) return;
@@ -1125,8 +1130,14 @@ void vga_draw_char_fb(char c, int x, int y, uint32_t fg, uint32_t bg) {
     }
 }
 
+void vga_mark_dirty(void) {
+    vga_is_dirty = true;
+}
+
 void vga_flip(void) {
     if (!is_framebuffer || !vga_backbuffer) return;
+    if (!vga_is_dirty) return;
+    vga_is_dirty = false;
     if (vga_hw_bpp == 24) {
         uint8_t *fb24 = (uint8_t *)phys_to_virt(vga_fb_addr);
         uint32_t stride_words = vga_fb_pitch / 4U;
