@@ -126,6 +126,12 @@ typedef struct thread {
    * state for their signal probing/installation path. */
   uint64_t linux_sigaction_handler[64];
   uint64_t linux_sigaction_flags[64];
+  uint64_t linux_sigaction_restorer[64];
+  uint64_t linux_altstack_sp;
+  uint64_t linux_altstack_size;
+  uint32_t linux_altstack_flags;
+  uint32_t linux_signal_active;
+  uint64_t linux_signal_frame;
   wait_queue_t *waiting_on;
   struct thread *wait_next;
   uintptr_t wait_space;

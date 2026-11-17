@@ -47,11 +47,11 @@ All items below are real limitations observed or documented. Hypotheses are mark
 - **Reproduce:** Run the updated Linux clone probe; try unsupported operations to confirm `-ENOSYS`.
 - **Resolve when:** Each implemented operation passes Linux ABI probes and multi-waiter/race coverage.
 
-## 7) Missing signals and incomplete process-wait semantics
-- **Symptom:** No signal delivery; wait4 handles only normal exit, PID-positive/-1 and WNOHANG. Process groups, SIGCHLD and resource accounting are absent.
-- **Cause:** Linux signal state and per-process resource accounting are not implemented in LIWUS.
+## 7) Partial signals and incomplete process-wait semantics
+- **Symptom:** The Linux personality now has the ABI plumbing for `rt_sigaction`, `sigaltstack`, a kernel-layout x86-64 `SIGSEGV` frame and `rt_sigreturn`, but delivery is limited to user page faults. Process-directed signals, process groups, SIGCHLD and resource accounting remain absent.
+- **Cause:** Generic LIWUS signal state and full process-signal routing are not implemented; the current frame path exists to unblock Mono's synchronous fault handler.
 - **Evidence:** `linux_syscall_probe` now validates fork, WNOHANG, normal exit encoding, EFAULT without child reaping, zeroed rusage and ECHILD after reap in QEMU. ROADMAP and implementation status document remaining semantics.
-- **Possible solution:** Add generic LIWUS signal state/delivery and process-group/accounting abstractions, then translate Linux wait4/SIGCHLD behaviors inside the personality.
+- **Possible solution:** Expand the frame path into generic LIWUS signal state/delivery and process-group/accounting abstractions, then translate Linux wait4/SIGCHLD behaviors inside the personality.
 - **Dependencies:** Process/thread model and wait queues exist; signal delivery and accounting do not.
 - **Reproduce:** Run `make ring3-test`; the freestanding Linux probe exercises the supported wait4 subset.
 - **Resolve when:** Signal, stop/continue and process-group cases plus real rusage accounting pass Linux ABI probes.
@@ -88,7 +88,7 @@ All items below are real limitations observed or documented. Hypotheses are mark
 ## 11) Granny Unity/Mono bootstrap still stops before the first scene
 - **Symptom:** The original Granny player loads the dynamic ELF, Mono, X11/XInput and the ScreenSelector plugin, reaches the 1024x768 display probe, creates its PlayerPrefs directories and calls the ScreenSelector `Setup`/`Load` hooks, but no Unity `Initialize engine`/`GfxDevice`/scene log appears.
 - **Evidence:** A native Xvfb run reaches `Initialize engine version: 2018.2.19f1` and llvmpipe. On LIWUS, adding the PI futex owner-word operations advances past the second display and ScreenSelector initialization. The current run then faults in Mono's `mono_print_method_from_ip` while dereferencing a null method pointer (`cr2=0`, RIP in `libmonobdwgc-2.0.so`), and the Linux personality terminates the user task. No mutex bypass is retained.
-- **Cause boundary:** The common private futex probes and static musl pthread/condvar tests pass, and clone3 thread creation reaches all Unity worker threads. Unity's glibc/Mono startup still exercises unvalidated signal, loader, graphics and managed-runtime paths; the remaining null dereference is not safe to paper over in the kernel without identifying the missing ABI contract.
+- **Cause boundary:** The common private futex probes and static musl pthread/condvar tests pass, and clone3 thread creation reaches all Unity worker threads. A kernel-layout `SIGSEGV`/`rt_sigreturn` path is now implemented for Mono's synchronous fault ABI, but Unity's glibc/Mono startup still exercises unvalidated loader, graphics and managed-runtime paths; the remaining null dereference is not safe to paper over in the kernel without identifying the missing ABI contract.
 - **Reproduce:** Use the original Granny fixture and `/bin/launchnoshot.lxe` under the QEMU serial probe; compare the LIWUS log with the native Xvfb log.
 - **Resolve when:** The unmodified player reaches Unity initialization and renders its first frame without special user-space or kernel mutex hacks; then validate input and scene loading separately.
 

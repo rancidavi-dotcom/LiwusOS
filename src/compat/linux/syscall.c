@@ -11,6 +11,7 @@
 #include "sleep_mutex.h"
 #include "vma.h"
 #include "vmm.h"
+#include "fpu.h"
 #include <stdint.h>
 
 extern int liwus_linux_socket_writable(int fd);
@@ -445,8 +446,84 @@ typedef struct {
   uint64_t ss_size;
 } linux_stack_t;
 
+#define LINUX_SA_SIGINFO 0x00000004ULL
+#define LINUX_SA_ONSTACK 0x08000000ULL
+
+typedef struct {
+  uint32_t signo;
+  uint32_t errno_value;
+  int32_t code;
+  uint32_t pad;
+  uint8_t payload[112];
+} linux_siginfo128_t;
+
+typedef struct {
+  uint64_t gregs[23];
+  uint64_t fpregs;
+  uint64_t reserved[8];
+} linux_mcontext_t;
+
+typedef struct {
+  uint64_t flags;
+  uint64_t link;
+  linux_stack_t stack;
+  linux_mcontext_t mcontext;
+  /* The kernel rt_sigframe carries the native 64-bit sigset here.  Glibc's
+   * ucontext_t exposes a larger padded sigset_t, but the following siginfo
+   * starts at the kernel ABI offset (ucontext + 304). */
+  uint64_t sigmask;
+} linux_ucontext_t;
+
+typedef struct {
+  uint64_t pretcode;
+  linux_ucontext_t context;
+  linux_siginfo128_t info;
+  uint8_t fpstate[512] __attribute__((aligned(16)));
+} linux_signal_frame_t;
+
+enum {
+  LINUX_REG_R8 = 0, LINUX_REG_R9, LINUX_REG_R10, LINUX_REG_R11,
+  LINUX_REG_R12, LINUX_REG_R13, LINUX_REG_R14, LINUX_REG_R15,
+  LINUX_REG_RDI, LINUX_REG_RSI, LINUX_REG_RBP, LINUX_REG_RBX,
+  LINUX_REG_RDX, LINUX_REG_RAX, LINUX_REG_RCX, LINUX_REG_RSP,
+  LINUX_REG_RIP, LINUX_REG_EFL, LINUX_REG_CSGSFS, LINUX_REG_ERR,
+  LINUX_REG_TRAPNO, LINUX_REG_OLDMASK, LINUX_REG_CR2
+};
+
 static int linux_signal_valid(uint64_t signo) {
   return signo >= 1 && signo <= 64 && signo != 9 && signo != 19;
+}
+
+static void linux_signal_save_gregs(linux_signal_frame_t *frame,
+                                    const registers_t *regs, uint64_t cr2) {
+  uint64_t *g = frame->context.mcontext.gregs;
+  g[LINUX_REG_R8] = regs->r8; g[LINUX_REG_R9] = regs->r9;
+  g[LINUX_REG_R10] = regs->r10; g[LINUX_REG_R11] = regs->r11;
+  g[LINUX_REG_R12] = regs->r12; g[LINUX_REG_R13] = regs->r13;
+  g[LINUX_REG_R14] = regs->r14; g[LINUX_REG_R15] = regs->r15;
+  g[LINUX_REG_RDI] = regs->rdi; g[LINUX_REG_RSI] = regs->rsi;
+  g[LINUX_REG_RBP] = regs->rbp; g[LINUX_REG_RBX] = regs->rbx;
+  g[LINUX_REG_RDX] = regs->rdx; g[LINUX_REG_RAX] = regs->rax;
+  g[LINUX_REG_RCX] = regs->rcx; g[LINUX_REG_RSP] = regs->rsp;
+  g[LINUX_REG_RIP] = regs->rip; g[LINUX_REG_EFL] = regs->rflags;
+  g[LINUX_REG_CSGSFS] = regs->cs & 0xffffU;
+  g[LINUX_REG_ERR] = regs->err_code; g[LINUX_REG_TRAPNO] = regs->int_no;
+  g[LINUX_REG_OLDMASK] = 0; g[LINUX_REG_CR2] = cr2;
+}
+
+static void linux_signal_restore_gregs(registers_t *regs,
+                                       const linux_signal_frame_t *frame) {
+  const uint64_t *g = frame->context.mcontext.gregs;
+  regs->r8 = g[LINUX_REG_R8]; regs->r9 = g[LINUX_REG_R9];
+  regs->r10 = g[LINUX_REG_R10]; regs->r11 = g[LINUX_REG_R11];
+  regs->r12 = g[LINUX_REG_R12]; regs->r13 = g[LINUX_REG_R13];
+  regs->r14 = g[LINUX_REG_R14]; regs->r15 = g[LINUX_REG_R15];
+  regs->rdi = g[LINUX_REG_RDI]; regs->rsi = g[LINUX_REG_RSI];
+  regs->rbp = g[LINUX_REG_RBP]; regs->rbx = g[LINUX_REG_RBX];
+  regs->rdx = g[LINUX_REG_RDX]; regs->rax = g[LINUX_REG_RAX];
+  regs->rcx = g[LINUX_REG_RCX]; regs->rsp = g[LINUX_REG_RSP];
+  regs->rip = g[LINUX_REG_RIP]; regs->rflags = g[LINUX_REG_EFL];
+  regs->cs = 0x1b; regs->ss = 0x23;
 }
 
 static int64_t linux_rt_sigaction(uint64_t signo, const void *user_act,
@@ -467,6 +544,7 @@ static int64_t linux_rt_sigaction(uint64_t signo, const void *user_act,
       return -LINUX_EFAULT;
     thread->linux_sigaction_handler[signo - 1] = action.handler;
     thread->linux_sigaction_flags[signo - 1] = action.flags;
+    thread->linux_sigaction_restorer[signo - 1] = action.restorer;
   }
   return 0;
 }
@@ -497,8 +575,83 @@ static int64_t linux_sigaltstack(const void *user_ss, void *user_old_ss) {
     if (copy_to_user(user_old_ss, &disabled, sizeof(disabled)) < 0)
       return -LINUX_EFAULT;
   }
-  if (user_ss && validate_user_pointer(user_ss, sizeof(linux_stack_t)) < 0)
+  if (user_ss) {
+    linux_stack_t stack;
+    if (copy_from_user(&stack, user_ss, sizeof(stack)) < 0)
+      return -LINUX_EFAULT;
+    current_task->linux_altstack_sp = stack.ss_sp;
+    current_task->linux_altstack_size = stack.ss_size;
+    current_task->linux_altstack_flags = (uint32_t)stack.ss_flags;
+  }
+  return 0;
+}
+
+int linux_deliver_user_signal(registers_t *regs, int signo, uint64_t fault_addr) {
+  if (!regs || !current_task || !current_task->process ||
+      current_task->process->abi != TASK_ABI_LINUX_X86_64 ||
+      signo < 1 || signo > 64 ||
+      (current_task->sigmask & (1ULL << (signo - 1))) ||
+      current_task->linux_signal_active)
+    return 0;
+  uint64_t handler = current_task->linux_sigaction_handler[signo - 1];
+  if (handler <= 1) return 0;
+  uint64_t flags = current_task->linux_sigaction_flags[signo - 1];
+  uint64_t restorer = current_task->linux_sigaction_restorer[signo - 1];
+  uint64_t stack_top = regs->rsp;
+  if ((flags & LINUX_SA_ONSTACK) && current_task->linux_altstack_sp &&
+      current_task->linux_altstack_size &&
+      !(current_task->linux_altstack_flags & 2U))
+    stack_top = current_task->linux_altstack_sp + current_task->linux_altstack_size;
+  if (stack_top < sizeof(linux_signal_frame_t) + 64) return 0;
+  uint64_t frame_addr = ((stack_top - sizeof(linux_signal_frame_t) - 8) & ~0xFULL) + 8;
+  if (frame_addr < USER_ADDR_MIN || frame_addr > USER_ADDR_MAX - sizeof(linux_signal_frame_t) ||
+      validate_user_write((void *)(uintptr_t)frame_addr, sizeof(linux_signal_frame_t)) < 0)
+    return 0;
+  linux_signal_frame_t frame;
+  memset(&frame, 0, sizeof(frame));
+  frame.pretcode = restorer;
+  frame.info.signo = (uint32_t)signo;
+  frame.info.code = 1;
+  memcpy(frame.info.payload, &fault_addr, sizeof(fault_addr));
+  frame.context.stack.ss_sp = current_task->linux_altstack_sp;
+  frame.context.stack.ss_size = current_task->linux_altstack_size;
+  frame.context.stack.ss_flags = (int32_t)current_task->linux_altstack_flags;
+  frame.context.mcontext.fpregs = frame_addr + offsetof(linux_signal_frame_t, fpstate);
+  frame.context.sigmask = current_task->sigmask;
+  if (current_task->fpu_ctx) {
+    size_t fpu_bytes = fpu_context_size < sizeof(frame.fpstate)
+                           ? fpu_context_size : sizeof(frame.fpstate);
+    memcpy(frame.fpstate, current_task->fpu_ctx, fpu_bytes);
+  }
+  linux_signal_save_gregs(&frame, regs, fault_addr);
+  if (copy_to_user((void *)(uintptr_t)frame_addr, &frame, sizeof(frame)) < 0) return 0;
+  current_task->linux_signal_frame = frame_addr;
+  current_task->linux_signal_active = 1;
+  current_task->sigmask |= (1ULL << (signo - 1));
+  regs->rsp = frame_addr;
+  regs->rip = handler;
+  regs->rdi = (uint64_t)signo;
+  if (flags & LINUX_SA_SIGINFO) {
+    regs->rsi = frame_addr + offsetof(linux_signal_frame_t, info);
+    regs->rdx = frame_addr + offsetof(linux_signal_frame_t, context);
+  } else {
+    regs->rsi = 0; regs->rdx = 0;
+  }
+  return 1;
+}
+
+static int64_t linux_rt_sigreturn(registers_t *regs) {
+  if (!regs || !current_task || !current_task->linux_signal_active ||
+      !current_task->linux_signal_frame)
+    return -LINUX_EINVAL;
+  linux_signal_frame_t frame;
+  if (copy_from_user(&frame, (const void *)(uintptr_t)current_task->linux_signal_frame,
+                     sizeof(frame)) < 0)
     return -LINUX_EFAULT;
+  linux_signal_restore_gregs(regs, &frame);
+  current_task->sigmask = frame.context.sigmask;
+  current_task->linux_signal_frame = 0;
+  current_task->linux_signal_active = 0;
   return 0;
 }
 
@@ -1563,6 +1716,9 @@ void linux_syscall_handler(registers_t *regs) {
     case 14: /* rt_sigprocmask */
       regs->rax = (uint64_t)linux_rt_sigprocmask(
           regs->rdi, (const void *)regs->rsi, (void *)regs->rdx, regs->r10);
+      break;
+    case 15: /* rt_sigreturn */
+      regs->rax = (uint64_t)linux_rt_sigreturn(regs);
       break;
     case 131: /* sigaltstack */
       regs->rax = (uint64_t)linux_sigaltstack(

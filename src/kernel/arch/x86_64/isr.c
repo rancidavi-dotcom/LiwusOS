@@ -31,19 +31,19 @@ void isr_handler(registers_t *regs) {
   if (regs->int_no == 128) {
     syscall_handler(regs);
   } else {
+    uint64_t fault_addr = 0;
     serial_print("CPU exception: ");
     serial_print_hex(regs->int_no);
     serial_print(" err=");
     serial_print_hex(regs->err_code);
     if (regs->int_no == 14) {
-      uint64_t cr2;
-      asm volatile("mov %%cr2, %0" : "=r"(cr2));
-      if ((regs->cs & 3) == 0 && kernel_stack_is_guard(cr2)) {
+      asm volatile("mov %%cr2, %0" : "=r"(fault_addr));
+      if ((regs->cs & 3) == 0 && kernel_stack_is_guard(fault_addr)) {
         extern void kernel_panic(const char *msg);
         kernel_panic("kernel stack guard page fault");
       }
       serial_print(" cr2=");
-      serial_print_hex(cr2);
+      serial_print_hex(fault_addr);
     }
 serial_print(" rip=");
       serial_print_hex(regs->rip);
@@ -66,6 +66,8 @@ serial_print(" rip=");
       serial_print("\n");
 
       if ((regs->cs & 0x3) == 0x3 && current_task && current_task->user_mode) {
+        if (regs->int_no == 14 && linux_deliver_user_signal(regs, 11, fault_addr))
+          return;
         serial_print("user task killed after exception\n");
         sys_exit_process(128 + (int)regs->int_no);
       } else {

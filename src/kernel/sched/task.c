@@ -1493,6 +1493,16 @@ int task_clone_thread(registers_t *regs, uint64_t user_stack,
   thread->time_slice = task_quantum(thread);
   thread->fs_base = set_tls ? tls_base : parent->fs_base;
   thread->user_gs_base = parent->user_gs_base;
+  thread->sigmask = parent->sigmask;
+  memcpy(thread->linux_sigaction_handler, parent->linux_sigaction_handler,
+         sizeof(thread->linux_sigaction_handler));
+  memcpy(thread->linux_sigaction_flags, parent->linux_sigaction_flags,
+         sizeof(thread->linux_sigaction_flags));
+  memcpy(thread->linux_sigaction_restorer, parent->linux_sigaction_restorer,
+         sizeof(thread->linux_sigaction_restorer));
+  thread->linux_altstack_sp = parent->linux_altstack_sp;
+  thread->linux_altstack_size = parent->linux_altstack_size;
+  thread->linux_altstack_flags = parent->linux_altstack_flags;
   thread->clear_child_tid = clear_child_tid ? child_tid_address : 0;
   strncpy(thread->name, parent->name, sizeof(thread->name) - 1);
 
