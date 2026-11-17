@@ -1698,8 +1698,11 @@ void linux_syscall_handler(registers_t *regs) {
                   file->base_addr == 2) ||
                  (access == 2))
           regs->rax = LINUX_O_WRONLY;
-        else if (file->type == LIWUS_FD_TYPE_SOCKET)
+        else if (file->type == LIWUS_FD_TYPE_SOCKET) {
           regs->rax = LINUX_O_RDWR;
+          if (liwus_linux_socket_get_nonblock(fd) > 0)
+            regs->rax |= LINUX_O_NONBLOCK;
+        }
         else if (access == 3)
           regs->rax = LINUX_O_RDWR;
         else
@@ -1745,9 +1748,8 @@ void linux_syscall_handler(registers_t *regs) {
             regs->rax = 0; /* O_APPEND has no effect on a pipe. */
           }
         } else if (file->type == LIWUS_FD_TYPE_SOCKET) {
-          /* AF_UNIX compatibility endpoints are always nonblocking at the
-           * transport layer; accept Xlib's mode transition as a no-op. */
-          regs->rax = 0;
+          regs->rax = (uint64_t)(int64_t)liwus_linux_socket_set_nonblock(
+              fd, (argument & LINUX_O_NONBLOCK) != 0);
         } else if (file->type == LIWUS_FD_TYPE_FILE && file->description) {
           if (argument & LINUX_O_APPEND)
             file->description->status_flags |= KFILE_STATUS_APPEND;

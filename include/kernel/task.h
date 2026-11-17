@@ -271,6 +271,8 @@ int liwus_linux_socket_connect(int fd, const void *user_addr, uint32_t length);
 int liwus_linux_socket_accept(int fd);
 int liwus_linux_socket_read(int fd, void *user_buf, uint32_t count);
 int liwus_linux_socket_write(int fd, const void *user_buf, uint32_t count);
+int liwus_linux_socket_set_nonblock(int fd, int enabled);
+int liwus_linux_socket_get_nonblock(int fd);
 int liwus_linux_socket_readable(int fd);
 int liwus_linux_socket_epoll_config(int fd, int epfd, uint32_t events,
                                     uint64_t data, int enable);

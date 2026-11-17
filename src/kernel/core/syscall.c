@@ -404,6 +404,7 @@ typedef struct liwus_linux_socket {
   bool listening;
   bool connected;
   bool peer_closed;
+  bool nonblocking;
   char path[LIWUS_LINUX_SOCKET_PATH_MAX];
   struct liwus_linux_socket *peer;
   struct liwus_linux_socket *next_global;
@@ -610,6 +611,8 @@ int liwus_linux_socket_accept(int fd) {
 int liwus_linux_socket_read(int fd, void *user_buf, uint32_t count) {
   liwus_linux_socket_t *socket = linux_socket_from_fd(fd);
   if (!socket || !socket->connected) return -9;
+  if (socket->nonblocking && socket->rx_count == 0 && !socket->peer_closed)
+    return -11;
   for (uint32_t attempt = 0; socket->rx_count == 0 && !socket->peer_closed &&
                               attempt < 1000; attempt++)
     task_sleep_ms(1);
@@ -653,6 +656,19 @@ int liwus_linux_socket_write(int fd, const void *user_buf, uint32_t count) {
     done += chunk;
   }
   return (int)done;
+}
+
+int liwus_linux_socket_set_nonblock(int fd, int enabled) {
+  liwus_linux_socket_t *socket = linux_socket_from_fd(fd);
+  if (!socket) return -9;
+  socket->nonblocking = enabled != 0;
+  return 0;
+}
+
+int liwus_linux_socket_get_nonblock(int fd) {
+  liwus_linux_socket_t *socket = linux_socket_from_fd(fd);
+  if (!socket) return -9;
+  return socket->nonblocking ? 1 : 0;
 }
 
 int liwus_linux_socket_readable(int fd) {
