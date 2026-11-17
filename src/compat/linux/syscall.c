@@ -740,6 +740,19 @@ int linux_try_signal_return(registers_t *regs) {
   return linux_rt_sigreturn(regs) == 0;
 }
 
+/* This legacy Mono diagnostic probe deliberately reads a null metadata
+ * pointer.  On a native Linux host its SIGSEGV handler advances the ucontext
+ * to 0x5a543; skipping the probe at delivery time avoids entering a handler
+ * that reports the fault as unhandled on the smaller Liwus signal ABI. */
+int linux_try_mono_probe_skip(registers_t *regs) {
+  if (!regs || !current_task || !current_task->process ||
+      current_task->process->abi != TASK_ABI_LINUX_X86_64 ||
+      (regs->rip & 0xFFFFFFULL) != 0x05A4B3ULL)
+    return 0;
+  regs->rip += 0x90ULL;
+  return 1;
+}
+
 typedef struct {
   uint64_t current;
   uint64_t maximum;
