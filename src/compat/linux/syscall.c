@@ -223,6 +223,34 @@ static int linux_epoll_fd_valid(int fd) {
              LIWUS_FD_TYPE_EPOLL;
 }
 
+static int linux_fd_readable_compat(int fd) {
+  if (!current_task || !current_task->process || fd < 0 || fd >= 32)
+    return 0;
+  kfile_t *file = &current_task->process->file_descriptors[fd];
+  if (file->type == LIWUS_FD_TYPE_SOCKET)
+    return liwus_linux_socket_readable(fd);
+  if (file->type == LIWUS_FD_TYPE_PIPE && file->socket_ptr) {
+    pipe_t *pipe = (pipe_t *)file->socket_ptr;
+    return file->base_addr == 1
+        ? (pipe->bytes_avail != 0 || pipe->writers == 0) : 0;
+  }
+  return file->type == LIWUS_FD_TYPE_FILE;
+}
+
+static int linux_fd_writable_compat(int fd) {
+  if (!current_task || !current_task->process || fd < 0 || fd >= 32)
+    return 0;
+  kfile_t *file = &current_task->process->file_descriptors[fd];
+  if (file->type == LIWUS_FD_TYPE_SOCKET)
+    return 1;
+  if (file->type == LIWUS_FD_TYPE_PIPE && file->socket_ptr) {
+    pipe_t *pipe = (pipe_t *)file->socket_ptr;
+    return file->base_addr == 2 && pipe->readers != 0 &&
+           pipe->bytes_avail < PIPE_BUF_SIZE;
+  }
+  return file->type == LIWUS_FD_TYPE_FILE;
+}
+
 extern int sys_read(int fd, void *buf, uint32_t count);
 extern int sys_write(int fd, const void *buf, uint32_t count);
 extern int sys_close(int fd);
@@ -2082,6 +2110,114 @@ poll_again:
       regs->rax = ready;
       break;
     }
+    case 23: { /* select: fd-set compatibility for Xlib/Unity wakeups */
+      uint64_t nfds = regs->rdi;
+      if (nfds > 32) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+        break;
+      }
+      uint64_t read_set = 0, write_set = 0, except_set = 0;
+      if ((regs->rsi && copy_from_user(&read_set, (const void *)regs->rsi,
+                                      sizeof(read_set)) < 0) ||
+          (regs->rdx && copy_from_user(&write_set, (const void *)regs->rdx,
+                                       sizeof(write_set)) < 0) ||
+          (regs->r10 && copy_from_user(&except_set, (const void *)regs->r10,
+                                       sizeof(except_set)) < 0)) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+        break;
+      }
+      uint64_t requested_read = read_set;
+      uint64_t requested_write = write_set;
+      uint64_t deadline = timer_monotonic_ticks;
+      int timeout_ms = -1;
+      if (regs->r8) {
+        struct { int64_t sec; int64_t usec; } tv;
+        if (copy_from_user(&tv, (const void *)regs->r8, sizeof(tv)) < 0 ||
+            tv.sec < 0 || tv.usec < 0 || tv.usec >= 1000000) {
+          regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+          break;
+        }
+        uint64_t total = (uint64_t)tv.sec * 1000ULL +
+                         (uint64_t)tv.usec / 1000ULL;
+        timeout_ms = total > 0x7fffffffULL ? 0x7fffffff : (int)total;
+      }
+select_again:
+      read_set = write_set = except_set = 0;
+      uint32_t ready = 0;
+      for (uint32_t fd = 0; fd < nfds; fd++) {
+        uint64_t bit = 1ULL << fd;
+        if ((requested_read & bit) && liwus_linux_socket_readable((int)fd)) {
+          read_set |= bit;
+          ready++;
+        }
+        if (requested_write & bit && fd < 32 &&
+            current_task->process->file_descriptors[fd].type != 0) {
+          write_set |= bit;
+          if (!(requested_read & bit)) ready++;
+        }
+      }
+      if (!ready && timeout_ms != 0) {
+        uint64_t elapsed = (timer_monotonic_ticks - deadline) * 10ULL;
+        if (timeout_ms < 0 || elapsed < (uint64_t)timeout_ms) {
+          uint32_t sleep_ms = 10;
+          if (timeout_ms > 0 && (uint64_t)timeout_ms - elapsed < sleep_ms)
+            sleep_ms = (uint32_t)((uint64_t)timeout_ms - elapsed);
+          if (sleep_ms == 0) sleep_ms = 1;
+          task_sleep_ms(sleep_ms);
+          goto select_again;
+        }
+      }
+      if (regs->rsi && copy_to_user((void *)regs->rsi, &read_set,
+                                   sizeof(read_set)) < 0)
+        ready = 0;
+      if (regs->rdx && copy_to_user((void *)regs->rdx, &write_set,
+                                   sizeof(write_set)) < 0)
+        ready = 0;
+      if (regs->r10 && copy_to_user((void *)regs->r10, &except_set,
+                                   sizeof(except_set)) < 0)
+        ready = 0;
+      regs->rax = ready;
+      break;
+    }
+    case 270: { /* pselect6: same readiness model, ignoring signal masks */
+      /* pselect6 arguments are nfds, readfds, writefds, exceptfds, timeout,
+       * sigmask.  Signal masks are intentionally ignored by this personality. */
+      uint64_t nfds = regs->rdi;
+      if (nfds > 32) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+        break;
+      }
+      uint64_t read_set = 0, write_set = 0, except_set = 0;
+      if (regs->rsi && copy_from_user(&read_set, (const void *)regs->rsi,
+                                     sizeof(read_set)) < 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+        break;
+      }
+      if (regs->rdx && copy_from_user(&write_set, (const void *)regs->rdx,
+                                     sizeof(write_set)) < 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+        break;
+      }
+      if (regs->r10 && copy_from_user(&except_set, (const void *)regs->r10,
+                                      sizeof(except_set)) < 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+        break;
+      }
+      uint64_t ready_read = 0, ready_write = 0;
+      for (uint32_t fd = 0; fd < nfds; fd++) {
+        uint64_t bit = 1ULL << fd;
+        if ((read_set & bit) && liwus_linux_socket_readable((int)fd))
+          ready_read |= bit;
+        if ((write_set & bit) && fd < 32 &&
+            current_task->process->file_descriptors[fd].type != 0)
+          ready_write |= bit;
+      }
+      if (regs->rsi) copy_to_user((void *)regs->rsi, &ready_read, sizeof(ready_read));
+      if (regs->rdx) copy_to_user((void *)regs->rdx, &ready_write, sizeof(ready_write));
+      if (regs->r10) copy_to_user((void *)regs->r10, &except_set, sizeof(except_set));
+      regs->rax = __builtin_popcountll(ready_read | ready_write);
+      break;
+    }
     case 213: /* epoll_create: allocate an inert event queue for probes */
       if (regs->rdi == 0) {
         regs->rax = (uint64_t)(int64_t)linux_epoll_create_fd();
@@ -2175,15 +2311,19 @@ poll_again:
         regs->rax = (uint64_t)-(int64_t)LINUX_EBADF;
         break;
       }
-      for (int fd = 0; fd < 32 && ready < maxevents; fd++) {
-        uint32_t watched_events = 0;
-        uint64_t watched_data = 0;
-        int has_event = liwus_linux_socket_epoll_event(fd, (int)regs->rdi,
-                                                       &watched_events, &watched_data);
-        int readable = liwus_linux_socket_readable(fd);
-        if (!has_event || !readable) continue;
+      for (int watch = 0; watch < 32 && ready < maxevents; watch++) {
+        int fd = linux_epoll_watches[ep_slot][watch].fd;
+        if (fd < 0) continue;
+        uint32_t watched_events = linux_epoll_watches[ep_slot][watch].events;
+        uint64_t watched_data = linux_epoll_watches[ep_slot][watch].data;
+        int readable = (watched_events & 0x001U) &&
+                       linux_fd_readable_compat(fd);
+        int writable = (watched_events & 0x004U) &&
+                       linux_fd_writable_compat(fd);
+        if (!readable && !writable) continue;
         linux_epoll_event_t event = {
-            .events = watched_events & 0xFFFFU,
+            .events = ((readable ? 0x001U : 0U) |
+                       (writable ? 0x004U : 0U)) & 0xFFFFU,
             .data = watched_data };
         if (copy_to_user((uint8_t *)(uintptr_t)regs->rsi +
                          ready * sizeof(event), &event, sizeof(event)) < 0) {
@@ -2376,6 +2516,12 @@ poll_again:
           (int)regs->r10);
       break;
     }
+    case 280: /* utimensat: SDFS timestamps are maintained by the VFS */
+      regs->rax = 0;
+      break;
+    case 285: /* fallocate: sparse growth is handled by ordinary writes */
+      regs->rax = 0;
+      break;
     case 102: /* getuid */
       regs->rax = current_task && current_task->process
           ? current_task->process->uid : 0;
@@ -2714,6 +2860,90 @@ poll_again:
       regs->rax = 0;
       break;
     }
+    case 36: { /* getitimer: compatibility snapshot for Mono's timer probe */
+      if (regs->rdi > 2 || !regs->rsi ||
+          validate_user_write((void *)regs->rsi, 32) < 0) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+        break;
+      }
+      uint8_t zero_timer[32] = {0};
+      regs->rax = copy_to_user((void *)regs->rsi, zero_timer,
+                               sizeof(zero_timer)) < 0
+          ? (uint64_t)-(int64_t)LINUX_EFAULT : 0;
+      break;
+    }
+    case 38: { /* setitimer: accept/disable interval timers used by Unity/Mono */
+      if (regs->rdi > 2 || !regs->rsi) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+        break;
+      }
+      uint8_t requested_timer[32];
+      if (copy_from_user(requested_timer, (const void *)regs->rsi,
+                         sizeof(requested_timer)) < 0 ||
+          (regs->rdx && validate_user_write((void *)regs->rdx, 32) < 0)) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+        break;
+      }
+      if (regs->rdx) {
+        uint8_t zero_timer[32] = {0};
+        if (copy_to_user((void *)regs->rdx, zero_timer,
+                         sizeof(zero_timer)) < 0) {
+          regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+          break;
+        }
+      }
+      regs->rax = 0;
+      break;
+    }
+    case 91: { /* fchmod: update the in-memory VFS mode for open files */
+      int fd = (int)regs->rdi;
+      if (fd < 0 || fd >= 32 ||
+          current_task->process->file_descriptors[fd].type !=
+              LIWUS_FD_TYPE_FILE) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EBADF;
+        break;
+      }
+      kfile_t *file = &current_task->process->file_descriptors[fd];
+      fs_node_t *node = file->description ? file->description->node : NULL;
+      if (!node) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EBADF;
+        break;
+      }
+      node->mask = (node->mask & ~0777u) | ((uint32_t)regs->rsi & 0777u);
+      regs->rax = 0;
+      break;
+    }
+    case 111: /* getpgrp: one process group per Liwus process for now */
+      regs->rax = current_task->process->pid;
+      break;
+    case 117: /* setresuid: identity changes are not needed by userland probes */
+    case 119: /* setresgid */
+      regs->rax = 0;
+      break;
+    case 140: /* getpriority: scheduler priorities are not exposed to guests */
+      regs->rax = 20;
+      break;
+    case 141: /* setpriority */
+      regs->rax = 0;
+      break;
+    case 146: /* sched_get_priority_max */
+      regs->rax = 99;
+      break;
+    case 147: /* sched_get_priority_min */
+      regs->rax = 1;
+      break;
+    case 148: /* sched_rr_get_interval */
+      if (regs->rsi && validate_user_write((void *)regs->rsi, 16) < 0)
+        regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
+      else {
+        if (regs->rsi) {
+          uint8_t zero_interval[16] = {0};
+          copy_to_user((void *)regs->rsi, zero_interval,
+                       sizeof(zero_interval));
+        }
+        regs->rax = 0;
+      }
+      break;
     case 56: { /* clone: initial support for shared-process threads */
       uint64_t flags = regs->rdi;
       /* glibc uses clone(CLONE_VM|CLONE_VFORK|SIGCHLD) for popen() and
