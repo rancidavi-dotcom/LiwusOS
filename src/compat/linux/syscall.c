@@ -128,6 +128,13 @@
  * The file read may block in the VFS, so this must be a sleepable lock. */
 static sleep_mutex_t linux_vm_lock = SLEEP_MUTEX_INITIALIZER;
 
+/* Mesa's software renderer uses memfd_create() for scratch BOs and shader
+ * caches.  SDFS does not expose anonymous inodes yet, so back the descriptor
+ * with a private regular file in /tmp.  The file is intentionally left in
+ * place: this keeps the implementation independent of unlink-after-open
+ * semantics while preserving the memfd ABI (read/write/mmap/ftruncate). */
+static uint32_t linux_memfd_sequence;
+
 typedef struct {
   struct {
     int32_t fd;
@@ -886,6 +893,67 @@ static int linux_translate_open_flags(uint64_t flags, int *native_flags,
   return 0;
 }
 
+static int linux_memfd_create_compat(uint32_t flags) {
+  const uint32_t supported = 1u /* MFD_CLOEXEC */ | 2u /* MFD_ALLOW_SEALING */ |
+                             4u /* MFD_HUGETLB (ignored) */ |
+                             8u /* MFD_NOEXEC_SEAL (accepted) */;
+  if (flags & ~supported) return -LINUX_EINVAL;
+  char path[64] = "/tmp/.liwus-memfd-";
+  size_t pos = strlen(path);
+  uint32_t value = ++linux_memfd_sequence;
+  char digits[11];
+  size_t count = 0;
+  do {
+    digits[count++] = (char)('0' + value % 10u);
+    value /= 10u;
+  } while (value && count < sizeof(digits));
+  while (count) path[pos++] = digits[--count];
+  path[pos] = '\0';
+
+  int native_flags = 0;
+  uint32_t descriptor_flags = 0;
+  uint32_t status_flags = 0;
+  int require_directory = 0;
+  uint64_t open_flags = LINUX_O_RDWR | LINUX_O_CREAT | LINUX_O_EXCL;
+  if (flags & 1u) open_flags |= LINUX_O_CLOEXEC;
+  int rc = linux_translate_open_flags(open_flags, &native_flags,
+                                      &descriptor_flags,
+                                      &require_directory, &status_flags);
+  if (rc < 0) return rc;
+  rc = sys_openat_mode(LINUX_AT_FDCWD, 1, path, native_flags, 0600,
+                       descriptor_flags, require_directory, status_flags);
+  return rc < 0 ? -LINUX_ENOMEM : rc;
+}
+
+static int linux_ftruncate_compat(int fd, uint64_t length) {
+  if (fd < 0 || fd >= (int)(sizeof(current_task->process->file_descriptors) /
+                            sizeof(current_task->process->file_descriptors[0])))
+    return -LINUX_EBADF;
+  if (length > UINT32_MAX) return -LINUX_EOVERFLOW;
+  kfile_t *file = &current_task->process->file_descriptors[fd];
+  if (file->type != LIWUS_FD_TYPE_FILE || !file->description ||
+      !(file->description->access & LIWUS_FD_ACCESS_WRITE))
+    return -LINUX_EBADF;
+  fs_node_t *node = file->description->node;
+  if (!node || !(node->flags & FS_FILE)) return -LINUX_EINVAL;
+  uint32_t target = (uint32_t)length;
+  if (target < node->length) {
+    if (target != 0 || vfs_truncate(node) < 0) return -LINUX_EOPNOTSUPP;
+  } else if (target > node->length) {
+    uint8_t zeros[4096] = {0};
+    uint32_t offset = node->length;
+    while (offset < target) {
+      uint32_t chunk = target - offset;
+      if (chunk > sizeof(zeros)) chunk = sizeof(zeros);
+      if (write_fs(node, offset, chunk, zeros) != chunk) return -LINUX_EIO;
+      offset += chunk;
+    }
+  }
+  file->size = node->length;
+  file->description->size = node->length;
+  return 0;
+}
+
 /* Linux brk exposes the exact program-break byte address, while its mapping
  * changes are page-granular. Keep the exact value in process state and use
  * the shared LIWUS VMA/PMM/VMM mechanisms underneath. */
@@ -1490,6 +1558,10 @@ void linux_syscall_handler(registers_t *regs) {
       regs->rax = (uint64_t)linux_getrandom(regs->rdi, regs->rsi,
                                             (uint32_t)regs->rdx);
       break;
+    case 319: /* memfd_create: regular-file fallback for Mesa/Unity scratch */
+      regs->rax = (uint64_t)(int64_t)linux_memfd_create_compat(
+          (uint32_t)regs->rsi);
+      break;
     case 436: /* close_range: close or mark CLOEXEC, bounded by LIWUS fd table */
       regs->rax = (uint64_t)linux_close_range((uint32_t)regs->rdi,
           (uint32_t)regs->rsi, (uint32_t)regs->rdx);
@@ -1844,6 +1916,10 @@ void linux_syscall_handler(registers_t *regs) {
       regs->rax = (uint64_t)(int64_t)rc;
       break;
     }
+    case 77: /* ftruncate: needed by memfd-backed GL allocations */
+      regs->rax = (uint64_t)(int64_t)linux_ftruncate_compat(
+          (int)regs->rdi, regs->rsi);
+      break;
     case 258: { /* mkdirat: generic CWD or directory-fd path lookup */
       int dirfd = (int)regs->rdi;
       int rc = sys_mkdir_at(dirfd, dirfd == LINUX_AT_FDCWD,

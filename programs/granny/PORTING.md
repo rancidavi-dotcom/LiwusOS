@@ -141,8 +141,9 @@ The source-side compile gate is passed. The LiwusOS runtime gate is not:
 | Load the Vita build in LiwusOS | Not compatible | Vita ARM32 IL2CPP/SUPRX output and Vita APIs |
 | Start the Linux player's ELF interpreter | Passed in QEMU | The original Granny executable reaches glibc's shared library loader |
 | Load shared libraries | Passed for the staged Unity build in QEMU | glibc transfers control to Unity, which loads Mono with `dlopen` |
-| Initialize Mono | In progress | `/proc` (`maps`, `stat`, `readlink`), signal masks, `getrlimit(RLIMIT_STACK)`, JIT `MAP_32BIT`/RWX, futexes, TLS, POSIX scheduling, `poll`/`epoll` and AF_UNIX stream socket probes now let Mono create its worker pool; the player then reaches SDL bootstrap and reports `Display 0 '0': 1024x768` |
-| Run Unity graphics/input/audio on LiwusOS | Pending | The Linux player still needs an X11-compatible window/display path (or an SDL framebuffer backend), plus GL/input/audio services |
+| Initialize Mono | Passed through Unity bootstrap in QEMU | `/proc` (`maps`, `stat`, `readlink`), signal masks, `getrlimit(RLIMIT_STACK)`, JIT `MAP_32BIT`/RWX, futexes, TLS, POSIX scheduling, `poll`/`epoll`, AF_UNIX stream sockets, `memfd_create`/`ftruncate`, and the Mesa software stack now let the player reach `Display 0 'screen': 1024x768` |
+| Create an OpenGL context | Passed by isolated GLX probe in QEMU | Xvfb + llvmpipe returns `GL_OK 4.6 (Compatibility Profile)` after staging Mesa/DRM/GBM dependencies |
+| Run Unity graphics/input/audio on LiwusOS | In progress | X11/GLX and the GTK2-free `ScreenSelector.so` path are active; the Unity player remains alive after display enumeration but has not yet exposed a mapped game window/menu |
 | Package a functional Granny `.lxe` | Pending | The original player has not reached Unity's menu on LiwusOS; no screenshot or package is claimed |
 
 The current route reuses the Linux Unity player and its Mono runtime. The Linux
@@ -150,15 +151,17 @@ compatibility layer now includes `poll`/`epoll`, AF_UNIX stream sockets,
 `socketpair`, Linux-correct `recvmsg` output fields, descriptor `O_NONBLOCK`
 tracking, and display-lock publication. A raw X11 probe now completes the
 initial setup reply, `GetInputFocus`, and `QueryExtension` requests. The
-remaining X11 client failure is in the higher-level Xlib/Unity setup path, not
-the AF_UNIX handshake itself. The source tree now includes an optional
+raw X11 and higher-level Xlib handshakes now complete; the remaining runtime
+blocker is inside the Unity window/GfxDevice setup after display enumeration,
+not the AF_UNIX handshake. The source tree now includes an optional
 `programs/granny/compat/xkbshim.c` preload shim that forces Xlib's documented
 non-XKB fallback path. A probe with
 `SDL_VIDEODRIVER=dummy` and `SDL_AUDIODRIVER=dummy` reaches Unity's display
-enumeration but produces no frame, so it is not a menu screenshot. The next
-checkpoint is GL/input/audio services. The optional
+enumeration but produces no frame, so it is not a menu screenshot. The optional
 `programs/granny/compat/screenselector_stub.c` can replace the GTK2-dependent
 `ScreenSelector.so`; with that stub and the X11 transport, the player reaches
-SDL display enumeration (`Display 0 '0': 1024x768`).
+SDL display enumeration (`Display 0 'screen': 1024x768`) and the GLX probe can
+create a software context. The player still needs to reach a mapped window
+before a menu screenshot or functional `.lxe` package can be claimed.
 The QEMU fixtures used during this work are temporary and are not
 distributable `.lxe` packages.
