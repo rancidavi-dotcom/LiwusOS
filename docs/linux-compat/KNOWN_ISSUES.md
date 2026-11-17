@@ -85,6 +85,13 @@ All items below are real limitations observed or documented. Hypotheses are mark
 - **Reproduce:** `make smap-test`; static glibc smoke: `make smap-test LINUX_STATIC_ELF=/tmp/liwus-static-glibc-v3-hello`.
 - **Resolve when:** Every enabled xstate component is preserved across kernel entry, interrupts, thread/process switches and CPU migration.
 
+## 11) Granny Unity/Mono bootstrap still stops before the first scene
+- **Symptom:** The original Granny player loads the dynamic ELF, Mono, X11/XInput and the ScreenSelector plugin, and reaches the 1024x768 display probe, but no Unity `Initialize engine`/`GfxDevice`/scene log appears.
+- **Evidence:** A native Xvfb run reaches `Initialize engine version: 2018.2.19f1` and llvmpipe. On LIWUS, the main thread then waits on a private Mono futex while worker threads remain blocked in startup barriers; no matching wake for the initial lock is observed. Isolated futex/mutex bypass experiments reached GLX but either spun or triggered glibc mutex consistency failures, so none were retained.
+- **Cause boundary:** The common private futex probes and static musl pthread/condvar tests pass, but Unity's glibc/Mono startup interleavings exercise unvalidated clone/TLS/futex/robust-mutex behavior and are not safe to paper over in the kernel.
+- **Reproduce:** Use the original Granny fixture and `/bin/launchnoshot.lxe` under the QEMU serial probe; compare the LIWUS log with the native Xvfb log.
+- **Resolve when:** The unmodified player reaches Unity initialization and renders its first frame without special user-space or kernel mutex hacks; then validate input and scene loading separately.
+
 ## Notes
 - None of these indicate fundamental design flaws - they are planned incremental work.
 - Do not guess; verify against code/tests when investigating.
