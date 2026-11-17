@@ -1972,7 +1972,10 @@ poll_again:
           return;
         }
         pollfd.revents = 0;
-        if (liwus_linux_socket_readable(pollfd.fd) &&
+        if (pollfd.fd < 0 || pollfd.fd >= 32 ||
+            current_task->process->file_descriptors[pollfd.fd].type == 0) {
+          pollfd.revents |= 0x020; /* POLLNVAL */
+        } else if (liwus_linux_socket_readable(pollfd.fd) &&
             (pollfd.events & 0x001))
           pollfd.revents |= 0x001; /* POLLIN */
         if (pollfd.fd >= 0 && pollfd.fd < 32 &&
