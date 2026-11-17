@@ -1959,6 +1959,9 @@ void linux_syscall_handler(registers_t *regs) {
         regs->rax = (uint64_t)-(int64_t)LINUX_EFAULT;
         break;
       }
+      int timeout = (int)regs->rdx;
+      uint64_t poll_start = timer_monotonic_ticks;
+poll_again:
       uint32_t ready = 0;
       for (uint64_t i = 0; i < nfds; i++) {
         linux_pollfd_t pollfd;
@@ -1983,11 +1986,20 @@ void linux_syscall_handler(registers_t *regs) {
           return;
         }
       }
-      int timeout = (int)regs->rdx;
-      if (!ready && timeout > 0)
-        task_sleep_ms((uint32_t)(timeout > 100 ? 100 : timeout));
-      else if (!ready && timeout < 0)
-        task_sleep_ms(100);
+      if (!ready && timeout != 0) {
+        uint64_t elapsed_ms =
+            (timer_monotonic_ticks - poll_start) * 10ULL;
+        if (timeout < 0 || elapsed_ms < (uint64_t)timeout) {
+          uint32_t sleep_ms = 10;
+          if (timeout > 0) {
+            uint64_t remaining = (uint64_t)timeout - elapsed_ms;
+            if (remaining < sleep_ms) sleep_ms = (uint32_t)remaining;
+          }
+          if (sleep_ms == 0) sleep_ms = 1;
+          task_sleep_ms(sleep_ms);
+          goto poll_again;
+        }
+      }
       regs->rax = ready;
       break;
     }
