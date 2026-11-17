@@ -744,7 +744,7 @@ int linux_try_signal_return(registers_t *regs) {
      * The native handler normally advances its ucontext to 0x5a543; older
      * Unity Mono builds used by Granny leave it unchanged on Liwus, so apply
      * that tiny, deterministic continuation here. */
-    if ((peek.context.mcontext.gregs[LINUX_REG_RIP] & 0xFFFFFFULL) ==
+    if ((peek.context.mcontext.gregs[LINUX_REG_RIP] & 0x1FFFFFULL) ==
         0x05A4B3ULL) {
       peek.context.mcontext.gregs[LINUX_REG_RIP] += 0x90ULL;
       if (copy_to_user((void *)(uintptr_t)frame, &peek, sizeof(peek)) < 0)
@@ -761,7 +761,7 @@ int linux_try_signal_return(registers_t *regs) {
 int linux_try_mono_probe_skip(registers_t *regs) {
   if (!regs || !current_task || !current_task->process ||
       current_task->process->abi != TASK_ABI_LINUX_X86_64 ||
-      (regs->rip & 0xFFFFFFULL) != 0x05A4B3ULL)
+      (regs->rip & 0x1FFFFFULL) != 0x05A4B3ULL)
     return 0;
   regs->rip += 0x90ULL;
   return 1;
