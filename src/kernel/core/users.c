@@ -196,10 +196,10 @@ void users_init(void) {
     }
 
     /* Cria pastas home */
-    sdfs_create_dir("/home");
-    sdfs_create_dir("/home/davi");
-    sdfs_create_dir("/home/guest");
-    sdfs_create_dir("/root");
+    sdfs_create_dir_as("/home", 0, 0, 0755);
+    sdfs_create_dir_as("/home/davi", 1000, 1000, 0755);
+    sdfs_create_dir_as("/home/guest", 1001, 1001, 0755);
+    sdfs_create_dir_as("/root", 0, 0, 0755);
 
     /* Define davi como usuario ativo padrao */
     g_active_user_idx = 1;
