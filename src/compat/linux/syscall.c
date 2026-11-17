@@ -13,6 +13,8 @@
 #include "vmm.h"
 #include <stdint.h>
 
+extern int liwus_linux_socket_writable(int fd);
+
 #define LINUX_ENOSYS 38
 #define LINUX_EPERM 1
 #define LINUX_ENOMEM 12
@@ -242,7 +244,7 @@ static int linux_fd_writable_compat(int fd) {
     return 0;
   kfile_t *file = &current_task->process->file_descriptors[fd];
   if (file->type == LIWUS_FD_TYPE_SOCKET)
-    return 1;
+    return liwus_linux_socket_writable(fd);
   if (file->type == LIWUS_FD_TYPE_PIPE && file->socket_ptr) {
     pipe_t *pipe = (pipe_t *)file->socket_ptr;
     return file->base_addr == 2 && pipe->readers != 0 &&
@@ -2082,9 +2084,8 @@ poll_again:
         } else if (liwus_linux_socket_readable(pollfd.fd) &&
             (pollfd.events & 0x001))
           pollfd.revents |= 0x001; /* POLLIN */
-        if (pollfd.fd >= 0 && pollfd.fd < 32 &&
-            current_task->process->file_descriptors[pollfd.fd].type ==
-                LIWUS_FD_TYPE_SOCKET && (pollfd.events & 0x004))
+        if ((pollfd.events & 0x004) &&
+            liwus_linux_socket_writable(pollfd.fd))
           pollfd.revents |= 0x004; /* POLLOUT: connected AF_UNIX streams */
         if (pollfd.revents) ready++;
         if (copy_to_user((uint8_t *)(uintptr_t)regs->rdi + i * sizeof(pollfd),
@@ -2151,7 +2152,8 @@ select_again:
           ready++;
         }
         if (requested_write & bit && fd < 32 &&
-            current_task->process->file_descriptors[fd].type != 0) {
+            (current_task->process->file_descriptors[fd].type == LIWUS_FD_TYPE_FILE ||
+             liwus_linux_socket_writable((int)fd))) {
           write_set |= bit;
           if (!(requested_read & bit)) ready++;
         }
@@ -2209,7 +2211,8 @@ select_again:
         if ((read_set & bit) && liwus_linux_socket_readable((int)fd))
           ready_read |= bit;
         if ((write_set & bit) && fd < 32 &&
-            current_task->process->file_descriptors[fd].type != 0)
+            (current_task->process->file_descriptors[fd].type == LIWUS_FD_TYPE_FILE ||
+             liwus_linux_socket_writable((int)fd)))
           ready_write |= bit;
       }
       if (regs->rsi) copy_to_user((void *)regs->rsi, &ready_read, sizeof(ready_read));

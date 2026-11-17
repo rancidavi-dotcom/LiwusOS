@@ -678,6 +678,16 @@ int liwus_linux_socket_readable(int fd) {
          socket->peer_closed;
 }
 
+/* A listening stream is not writable.  Reporting POLLOUT for it makes Xorg
+ * call accept() repeatedly even when no client is queued. */
+int liwus_linux_socket_writable(int fd) {
+  liwus_linux_socket_t *socket = linux_socket_from_fd(fd);
+  if (!socket || !socket->connected || socket->listening || !socket->peer ||
+      socket->peer->peer_closed)
+    return 0;
+  return socket->peer->rx_count < LIWUS_LINUX_SOCKET_RX_CAP;
+}
+
 int liwus_linux_socket_epoll_config(int fd, int epfd, uint32_t events,
                                     uint64_t data, int enable) {
   liwus_linux_socket_t *socket = linux_socket_from_fd(fd);
