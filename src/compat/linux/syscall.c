@@ -373,7 +373,18 @@ static int64_t linux_sendmsg_recvmsg(int fd, uint64_t user_msg, int write) {
   if (copy_from_user(&msg, (const void *)user_msg, sizeof(msg)) < 0)
     return -LINUX_EFAULT;
   if (msg.iov_len > 1024) return -LINUX_EINVAL;
-  return linux_readv_writev(fd, msg.iov, msg.iov_len, write);
+  int64_t result = linux_readv_writev(fd, msg.iov, msg.iov_len, write);
+  if (!write && result >= 0) {
+    /* Connected AF_UNIX streams have no returned name or ancillary data.
+     * Linux still clears these output fields; leaving stack garbage here can
+     * make Xlib interpret a successful recvmsg as MSG_TRUNC/MSG_CTRUNC. */
+    msg.name_len = 0;
+    msg.control_len = 0;
+    msg.flags = 0;
+    if (copy_to_user((void *)user_msg, &msg, sizeof(msg)) < 0)
+      return -LINUX_EFAULT;
+  }
+  return result;
 }
 
 /* x86-64 Linux rt_sigaction layout. */
@@ -1687,6 +1698,8 @@ void linux_syscall_handler(registers_t *regs) {
                   file->base_addr == 2) ||
                  (access == 2))
           regs->rax = LINUX_O_WRONLY;
+        else if (file->type == LIWUS_FD_TYPE_SOCKET)
+          regs->rax = LINUX_O_RDWR;
         else if (access == 3)
           regs->rax = LINUX_O_RDWR;
         else
