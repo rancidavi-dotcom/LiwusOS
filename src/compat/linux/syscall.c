@@ -38,6 +38,8 @@ extern int liwus_linux_socket_writable(int fd);
 #define LINUX_ESPIPE 29
 #define LINUX_EOPNOTSUPP 95
 #define LINUX_EAGAIN 11
+#define LINUX_EBUSY 16
+#define LINUX_EDEADLK 35
 #define LINUX_EIO 5
 #define LINUX_ETIMEDOUT 110
 #define LINUX_CLOSE_RANGE_CLOEXEC 4U
@@ -51,10 +53,14 @@ extern int liwus_linux_socket_writable(int fd);
 #define LINUX_FUTEX_WAKE 1
 #define LINUX_FUTEX_REQUEUE 3
 #define LINUX_FUTEX_CMP_REQUEUE 4
+#define LINUX_FUTEX_LOCK_PI 6
+#define LINUX_FUTEX_UNLOCK_PI 7
+#define LINUX_FUTEX_TRYLOCK_PI 8
 #define LINUX_FUTEX_WAIT_BITSET 9
 #define LINUX_FUTEX_WAKE_BITSET 10
 #define LINUX_FUTEX_PRIVATE_FLAG 128
 #define LINUX_FUTEX_CLOCK_REALTIME 256
+#define LINUX_FUTEX_WAITERS 0x80000000U
 #define LINUX_F_DUPFD 0
 #define LINUX_F_GETFD 1
 #define LINUX_F_SETFD 2
@@ -608,6 +614,67 @@ static int linux_nanosleep_milliseconds(uint64_t user_timespec,
   uint64_t milliseconds = (uint64_t)ts.tv_sec * 1000ULL + fractional_ms;
   if (milliseconds > UINT32_MAX) return -LINUX_EINVAL;
   *out_ms = (uint32_t)milliseconds;
+  return 0;
+}
+
+/* Unity's glibc uses the PI futex operations for a small set of startup
+ * mutexes.  Liwus is single-CPU, so priority inheritance itself is not
+ * observable yet; preserve the Linux owner-word protocol and use the normal
+ * private futex wait queue for contention. */
+static int linux_futex_pi_lock(uint32_t *address, uint32_t timeout_ticks,
+                               bool timed, bool try_only) {
+  if (!current_task || !current_task->process || !address ||
+      ((uintptr_t)address & 3U) != 0 ||
+      validate_user_write(address, sizeof(*address)) < 0)
+    return -LINUX_EFAULT;
+  uint32_t tid = (uint32_t)current_task->id;
+  for (;;) {
+    uint32_t observed = 0;
+    if (copy_from_user_u32_atomic(&observed, address) < 0)
+      return -LINUX_EFAULT;
+    uint32_t owner = observed & ~LINUX_FUTEX_WAITERS;
+    if (owner == 0) {
+      uint32_t desired = tid;
+      if (copy_to_user(address, &desired, sizeof(desired)) < 0)
+        return -LINUX_EFAULT;
+      /* The scheduler is single-core, so the owner cannot change between the
+       * read and publication above.  Re-read to retain a defensive check for
+       * future SMP implementations. */
+      uint32_t check = 0;
+      if (copy_from_user_u32_atomic(&check, address) < 0)
+        return -LINUX_EFAULT;
+      if ((check & ~LINUX_FUTEX_WAITERS) == tid)
+        return 0;
+      continue;
+    }
+    if (owner == tid) return -LINUX_EDEADLK;
+    if (try_only) return -LINUX_EBUSY;
+
+    uint32_t wait_value = observed | LINUX_FUTEX_WAITERS;
+    if (copy_to_user(address, &wait_value, sizeof(wait_value)) < 0)
+      return -LINUX_EFAULT;
+    int rc = timed
+        ? task_futex_wait_private_timed(address, wait_value, timeout_ticks)
+        : task_futex_wait_private(address, wait_value);
+    if (rc == TASK_WAIT_RESULT_TIMEOUT) return -LINUX_ETIMEDOUT;
+    if (rc < 0 && rc != -LINUX_EAGAIN) return rc;
+  }
+}
+
+static int linux_futex_pi_unlock(uint32_t *address) {
+  if (!current_task || !current_task->process || !address ||
+      ((uintptr_t)address & 3U) != 0 ||
+      validate_user_write(address, sizeof(*address)) < 0)
+    return -LINUX_EFAULT;
+  uint32_t observed = 0;
+  if (copy_from_user_u32_atomic(&observed, address) < 0)
+    return -LINUX_EFAULT;
+  if ((observed & ~LINUX_FUTEX_WAITERS) != (uint32_t)current_task->id)
+    return -LINUX_EPERM;
+  uint32_t unlocked = 0;
+  if (copy_to_user(address, &unlocked, sizeof(unlocked)) < 0)
+    return -LINUX_EFAULT;
+  task_futex_wake_private(address, 1);
   return 0;
 }
 
@@ -3122,7 +3189,25 @@ select_again:
        * FUTEX_PRIVATE_FLAG).  Liwus currently has no cross-process shared
        * mappings, so the same address-space keyed wait queues provide the
        * correct semantics for both spellings. */
-      if (command == LINUX_FUTEX_WAIT) {
+      if (command == LINUX_FUTEX_LOCK_PI ||
+          command == LINUX_FUTEX_TRYLOCK_PI) {
+        uint32_t timeout_ticks = 0;
+        bool timed = regs->r10 != 0;
+        int rc = 0;
+        if (timed) {
+          rc = linux_futex_timeout_ticks(regs->r10, &timeout_ticks);
+          if (rc < 0) {
+            regs->rax = (uint64_t)(int64_t)rc;
+            break;
+          }
+        }
+        rc = linux_futex_pi_lock((uint32_t *)regs->rdi, timeout_ticks, timed,
+                                 command == LINUX_FUTEX_TRYLOCK_PI);
+        regs->rax = (uint64_t)(int64_t)rc;
+      } else if (command == LINUX_FUTEX_UNLOCK_PI) {
+        int rc = linux_futex_pi_unlock((uint32_t *)regs->rdi);
+        regs->rax = (uint64_t)(int64_t)rc;
+      } else if (command == LINUX_FUTEX_WAIT) {
         if (((uintptr_t)regs->rdi & 3U) != 0) {
           regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
           break;
