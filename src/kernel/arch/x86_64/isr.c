@@ -66,6 +66,8 @@ serial_print(" rip=");
       serial_print("\n");
 
       if ((regs->cs & 0x3) == 0x3 && current_task && current_task->user_mode) {
+        if (regs->int_no == 13 && linux_try_signal_return(regs))
+          return;
         if ((regs->int_no == 14 || regs->int_no == 13) &&
             linux_deliver_user_signal(regs, 11,
                                       regs->int_no == 14 ? fault_addr : regs->rip))

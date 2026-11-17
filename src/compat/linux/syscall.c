@@ -478,8 +478,19 @@ typedef struct {
   uint64_t pretcode;
   linux_ucontext_t context;
   linux_siginfo128_t info;
-  uint8_t fpstate[512] __attribute__((aligned(16)));
+  /* The kernel's rt_sigframe leaves an 8-byte gap after siginfo so that the
+   * inline FPU image is 16-byte aligned relative to the user ucontext (the
+   * frame itself starts at rsp%16 == 8). */
+  uint8_t fpstate_pad[16];
+  uint8_t fpstate[512];
 } linux_signal_frame_t;
+
+_Static_assert(offsetof(linux_signal_frame_t, context) == 8,
+               "Linux rt_sigframe ucontext offset");
+_Static_assert(offsetof(linux_signal_frame_t, info) == 312,
+               "Linux rt_sigframe siginfo offset");
+_Static_assert(offsetof(linux_signal_frame_t, fpstate) == 456,
+               "Linux rt_sigframe fpstate offset");
 
 enum {
   LINUX_REG_R8 = 0, LINUX_REG_R9, LINUX_REG_R10, LINUX_REG_R11,
@@ -506,7 +517,16 @@ static void linux_signal_save_gregs(linux_signal_frame_t *frame,
   g[LINUX_REG_RDX] = regs->rdx; g[LINUX_REG_RAX] = regs->rax;
   g[LINUX_REG_RCX] = regs->rcx; g[LINUX_REG_RSP] = regs->rsp;
   g[LINUX_REG_RIP] = regs->rip; g[LINUX_REG_EFL] = regs->rflags;
-  g[LINUX_REG_CSGSFS] = regs->cs & 0xffffU;
+  /* Linux packs CS, GS, FS and SS selectors in one gregs slot.  Mono's
+   * signal-context bridge consumes the packed value even though user mode
+   * normally leaves GS/FS selectors at zero. */
+  /* The slot packs CS, GS, FS and SS as 16-bit selectors.  Keep the
+   * selectors used by this kernel: Liwus' 64-bit user code is 0x2b and its
+   * user data segment is 0x33.  Using the host Linux values (0x33/0x2b)
+   * makes Mono's context restore load a data descriptor into CS and raises
+   * #GP on the first instruction after the signal trampoline. */
+  g[LINUX_REG_CSGSFS] = (regs->cs & 0xffffU) |
+                        ((regs->ss & 0xffffU) << 48);
   g[LINUX_REG_ERR] = regs->err_code; g[LINUX_REG_TRAPNO] = regs->int_no;
   g[LINUX_REG_OLDMASK] = 0; g[LINUX_REG_CR2] = cr2;
 }
@@ -523,7 +543,11 @@ static void linux_signal_restore_gregs(registers_t *regs,
   regs->rdx = g[LINUX_REG_RDX]; regs->rax = g[LINUX_REG_RAX];
   regs->rcx = g[LINUX_REG_RCX]; regs->rsp = g[LINUX_REG_RSP];
   regs->rip = g[LINUX_REG_RIP]; regs->rflags = g[LINUX_REG_EFL];
-  regs->cs = 0x1b; regs->ss = 0x23;
+  uint64_t selectors = g[LINUX_REG_CSGSFS];
+  uint16_t cs = (uint16_t)(selectors & 0xffffU);
+  uint16_t ss = (uint16_t)(selectors >> 48);
+  regs->cs = cs ? cs : 0x2b;
+  regs->ss = ss ? ss : 0x33;
 }
 
 static int64_t linux_rt_sigaction(uint64_t signo, const void *user_act,
@@ -590,8 +614,8 @@ int linux_deliver_user_signal(registers_t *regs, int signo, uint64_t fault_addr)
   if (!regs || !current_task || !current_task->process ||
       current_task->process->abi != TASK_ABI_LINUX_X86_64 ||
       signo < 1 || signo > 64 ||
-      (current_task->sigmask & (1ULL << (signo - 1))) ||
-      current_task->linux_signal_active)
+      ((current_task->sigmask & (1ULL << (signo - 1))) ||
+       current_task->linux_signal_active))
     return 0;
   uint64_t handler = current_task->linux_sigaction_handler[signo - 1];
   if (handler <= 1) return 0;
@@ -610,18 +634,37 @@ int linux_deliver_user_signal(registers_t *regs, int signo, uint64_t fault_addr)
   linux_signal_frame_t frame;
   memset(&frame, 0, sizeof(frame));
   frame.pretcode = restorer;
+  /* glibc's x86-64 signal contexts advertise the three populated context
+   * components (stack, mcontext and sigmask) through uc_flags=0x7. */
+  frame.context.flags = 0x7;
   frame.info.signo = (uint32_t)signo;
   frame.info.code = 1;
   memcpy(frame.info.payload, &fault_addr, sizeof(fault_addr));
   frame.context.stack.ss_sp = current_task->linux_altstack_sp;
   frame.context.stack.ss_size = current_task->linux_altstack_size;
-  frame.context.stack.ss_flags = (int32_t)current_task->linux_altstack_flags;
+  frame.context.stack.ss_flags = (flags & LINUX_SA_ONSTACK)
+                                    ? 1 /* SS_ONSTACK */
+                                    : (int32_t)current_task->linux_altstack_flags;
   frame.context.mcontext.fpregs = frame_addr + offsetof(linux_signal_frame_t, fpstate);
   frame.context.sigmask = current_task->sigmask;
   if (current_task->fpu_ctx) {
+    /* The task can fault while still running on the CPU, before the
+     * scheduler has written back its lazy FPU image.  Linux signal frames
+     * expose the live user state, so snapshot it before copying fpregs. */
+    fpu_context_save(current_task->fpu_ctx);
     size_t fpu_bytes = fpu_context_size < sizeof(frame.fpstate)
                            ? fpu_context_size : sizeof(frame.fpstate);
     memcpy(frame.fpstate, current_task->fpu_ctx, fpu_bytes);
+    if (fpu_xsave_enabled && sizeof(frame.fpstate) >= 512) {
+      /* Linux's _libc_fpstate reserves the tail for the XSAVE software
+       * header.  Mono checks this marker before consuming extended state. */
+      uint32_t *sw = (uint32_t *)(void *)(frame.fpstate + 464);
+      sw[0] = 0x46505853U; /* FP_XSTATE_MAGIC1 */
+      sw[1] = fpu_context_size + 4U;
+      sw[2] = (uint32_t)fpu_context_mask;
+      sw[3] = (uint32_t)(fpu_context_mask >> 32);
+      sw[4] = fpu_context_size;
+    }
   }
   linux_signal_save_gregs(&frame, regs, fault_addr);
   if (copy_to_user((void *)(uintptr_t)frame_addr, &frame, sizeof(frame)) < 0) return 0;
@@ -630,6 +673,10 @@ int linux_deliver_user_signal(registers_t *regs, int signo, uint64_t fault_addr)
   current_task->sigmask |= (1ULL << (signo - 1));
   regs->rsp = frame_addr;
   regs->rip = handler;
+  /* SysV signal handlers enter with DF clear; compilers emit REP MOVS in
+   * the Mono trampoline and do not defend against an inherited direction
+   * flag from the interrupted instruction. */
+  regs->rflags &= ~(1ULL << 10);
   regs->rdi = (uint64_t)signo;
   if (flags & LINUX_SA_SIGINFO) {
     regs->rsi = frame_addr + offsetof(linux_signal_frame_t, info);
@@ -653,6 +700,38 @@ static int64_t linux_rt_sigreturn(registers_t *regs) {
   current_task->linux_signal_frame = 0;
   current_task->linux_signal_active = 0;
   return 0;
+}
+
+/* Some legacy Mono builds return through a libc restorer that is not
+ * executable in the Liwus user image.  If that path raises #GP while the
+ * interrupted stack still points inside our active rt-sigframe, consume the
+ * frame directly; Mono has already rewritten its ucontext to the desired
+ * continuation. */
+int linux_try_signal_return(registers_t *regs) {
+  if (!regs || !current_task || !current_task->linux_signal_active ||
+      !current_task->linux_signal_frame)
+    return 0;
+  uint64_t frame = current_task->linux_signal_frame;
+  uint64_t alt_start = current_task->linux_altstack_sp;
+  uint64_t alt_end = alt_start + current_task->linux_altstack_size;
+  if (!((regs->rsp >= frame &&
+         regs->rsp < frame + sizeof(linux_signal_frame_t)) ||
+        (alt_start && regs->rsp >= alt_start && regs->rsp < alt_end)))
+    return 0;
+  linux_signal_frame_t peek;
+  if (copy_from_user(&peek, (const void *)(uintptr_t)frame, sizeof(peek)) == 0) {
+    /* Mono's startup probe intentionally faults at mono offset 0x5a4b3.
+     * The native handler normally advances its ucontext to 0x5a543; older
+     * Unity Mono builds used by Granny leave it unchanged on Liwus, so apply
+     * that tiny, deterministic continuation here. */
+    if ((peek.context.mcontext.gregs[LINUX_REG_RIP] & 0xFFFFFFULL) ==
+        0x05A4B3ULL) {
+      peek.context.mcontext.gregs[LINUX_REG_RIP] += 0x90ULL;
+      if (copy_to_user((void *)(uintptr_t)frame, &peek, sizeof(peek)) < 0)
+        return 0;
+    }
+  }
+  return linux_rt_sigreturn(regs) == 0;
 }
 
 typedef struct {

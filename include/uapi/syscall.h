@@ -10,6 +10,7 @@ void syscall_handler(registers_t *regs);
 int sys_execve_linux(registers_t *regs, const char *filename,
                      char *const argv[], char *const envp[]);
 int linux_deliver_user_signal(registers_t *regs, int signo, uint64_t fault_addr);
+int linux_try_signal_return(registers_t *regs);
 int launch_initrd_program(const char *filename);
 int launch_initrd_program_argv(const char *filename, char *const argv[]);
 const char *get_launch_last_error(void);

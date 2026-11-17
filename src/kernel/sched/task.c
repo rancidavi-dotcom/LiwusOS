@@ -546,7 +546,7 @@ void init_cpu_local(int cpu_id) {
 // Helper function to convert int to string if not in string.h
 extern char *itoa(int value, char *str, int base);
 
-static inline void fpu_context_save(void *area) {
+void fpu_context_save(void *area) {
   if (fpu_xsave_enabled) {
     uint32_t mask_lo = (uint32_t)fpu_context_mask;
     uint32_t mask_hi = (uint32_t)(fpu_context_mask >> 32);

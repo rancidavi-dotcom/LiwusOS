@@ -11,4 +11,7 @@ extern int fpu_xsave_enabled;
 /* Enable the selected x87/SSE state (and AVX when XSAVE is available) locally. */
 void init_fpu(void);
 
+/* Snapshot the currently active x87/SSE/AVX state into a task-owned image. */
+void fpu_context_save(void *area);
+
 #endif
