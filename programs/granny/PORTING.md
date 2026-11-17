@@ -147,7 +147,8 @@ The source-side compile gate is passed. The LiwusOS runtime gate is not:
 
 The current route reuses the Linux Unity player and its Mono runtime. The Linux
 compatibility layer now includes `poll`/`epoll`, AF_UNIX stream sockets,
-`socketpair`, and display-lock publication. A raw X11 probe now completes the
+`socketpair`, Linux-correct `recvmsg` output fields, descriptor `O_NONBLOCK`
+tracking, and display-lock publication. A raw X11 probe now completes the
 initial setup reply, `GetInputFocus`, and `QueryExtension` requests. The
 remaining X11 client failure is in the higher-level Xlib/Unity setup path, not
 the AF_UNIX handshake itself. The source tree now includes an optional
