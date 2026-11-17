@@ -48,8 +48,8 @@ All items below are real limitations observed or documented. Hypotheses are mark
 - **Resolve when:** Each implemented operation passes Linux ABI probes and multi-waiter/race coverage.
 
 ## 7) Partial signals and incomplete process-wait semantics
-- **Symptom:** The Linux personality now has the ABI plumbing for `rt_sigaction`, `sigaltstack`, a kernel-layout x86-64 `SIGSEGV` frame and `rt_sigreturn`, plus narrowly-scoped Mono startup handling for the legacy null-probe path. Delivery remains limited to user page faults. Process-directed signals, process groups, SIGCHLD and resource accounting remain absent.
-- **Cause:** Generic LIWUS signal state and full process-signal routing are not implemented; the current frame path exists to unblock Mono's synchronous fault handler.
+- **Symptom:** The Linux personality now has the ABI plumbing for `rt_sigaction`, `sigaltstack`, a kernel-layout x86-64 `SIGSEGV` frame and `rt_sigreturn`, plus basic per-thread `tgkill` queuing/wakeup and narrowly-scoped Mono startup handling for the legacy null-probe path. Process-directed signals, process groups, SIGCHLD and resource accounting remain absent.
+- **Cause:** Generic LIWUS signal state and full process-signal routing are not implemented; the current frame path exists to unblock Mono's synchronous fault handler and the `tgkill` path only covers a queued signal to a thread in the current Linux process.
 - **Evidence:** `linux_syscall_probe` now validates fork, WNOHANG, normal exit encoding, EFAULT without child reaping, zeroed rusage and ECHILD after reap in QEMU. The Granny-specific probe can now be skipped at the known Mono instruction before signal delivery, and the fallback restorer path restores the saved FPU image. ROADMAP and implementation status document remaining semantics.
 - **Possible solution:** Expand the frame path into generic LIWUS signal state/delivery and process-group/accounting abstractions, then translate Linux wait4/SIGCHLD behaviors inside the personality.
 - **Dependencies:** Process/thread model and wait queues exist; signal delivery and accounting do not.

@@ -172,6 +172,21 @@ uint32_t wait_queue_count(wait_queue_t *queue) {
   return count;
 }
 
+int task_interrupt_wait(thread_t *thread) {
+  if (!thread) return 0;
+  uint64_t flags = scheduler_lock_irqsave();
+  if (thread->state != TASK_BLOCKED || !thread->waiting_on) {
+    scheduler_unlock_irqrestore(flags);
+    return 0;
+  }
+  wait_queue_unlink_locked(thread->waiting_on, thread);
+  thread->wait_result = TASK_WAIT_RESULT_INTERRUPTED;
+  thread->state = TASK_READY;
+  thread->time_slice = task_quantum(thread);
+  scheduler_unlock_irqrestore(flags);
+  return 1;
+}
+
 #define FUTEX_QUEUE_COUNT 64
 #define EAGAIN 11
 static wait_queue_t futex_private_queues[FUTEX_QUEUE_COUNT];

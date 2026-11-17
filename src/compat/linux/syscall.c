@@ -687,6 +687,20 @@ int linux_deliver_user_signal(registers_t *regs, int signo, uint64_t fault_addr)
   return 1;
 }
 
+static void linux_deliver_pending_signal(registers_t *regs) {
+  if (!regs || !current_task) return;
+  uint64_t pending = current_task->linux_pending_signals &
+                     ~current_task->sigmask;
+  while (pending) {
+    int signo = 1;
+    while (signo <= 64 && !(pending & (1ULL << (signo - 1)))) signo++;
+    if (signo > 64) return;
+    current_task->linux_pending_signals &= ~(1ULL << (signo - 1));
+    if (linux_deliver_user_signal(regs, signo, 0)) return;
+    pending &= ~(1ULL << (signo - 1));
+  }
+}
+
 static int64_t linux_rt_sigreturn(registers_t *regs) {
   if (!regs || !current_task || !current_task->linux_signal_active ||
       !current_task->linux_signal_frame)
@@ -907,6 +921,7 @@ static int linux_futex_pi_lock(uint32_t *address, uint32_t timeout_ticks,
     int rc = timed
         ? task_futex_wait_private_timed(address, wait_value, timeout_ticks)
         : task_futex_wait_private(address, wait_value);
+    if (rc == TASK_WAIT_RESULT_INTERRUPTED) return -LINUX_EINTR;
     if (rc == TASK_WAIT_RESULT_TIMEOUT) return -LINUX_ETIMEDOUT;
     if (rc < 0 && rc != -LINUX_EAGAIN) return rc;
   }
@@ -3163,7 +3178,7 @@ select_again:
         break;
       }
       if (milliseconds) task_sleep_ms(milliseconds);
-      /* LIWUS has no Linux signal delivery yet; rem is not modified. */
+      /* Pending Linux signals are delivered after the syscall below. */
       regs->rax = 0;
       break;
     }
@@ -3179,8 +3194,7 @@ select_again:
         break;
       }
       if (milliseconds) task_sleep_ms(milliseconds);
-      /* There is no signal delivery in this personality yet, so rem stays
-       * untouched and a valid request always completes normally. */
+      /* A valid request completes normally unless a pending signal wakes it. */
       regs->rax = 0;
       break;
     }
@@ -3415,13 +3429,35 @@ select_again:
     case 324: /* membarrier: no-op for the single-core scheduler */
       regs->rax = 0;
       break;
-    case 234: { /* tgkill: preserve errno semantics until signal delivery lands */
-      if (regs->rdi != (uint64_t)current_task->process->pid &&
-          regs->rdi != 0) {
-        regs->rax = (uint64_t)-(int64_t)LINUX_ESRCH;
-      } else {
-        regs->rax = 0;
+    case 234: { /* tgkill: queue a signal for a Linux thread and wake waits */
+      uint64_t tgid = regs->rdi;
+      uint64_t tid = regs->rsi;
+      uint64_t signo = regs->rdx;
+      if (signo > 64) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_EINVAL;
+        break;
       }
+      if (tgid != 0 && tgid != (uint64_t)current_task->process->pid) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_ESRCH;
+        break;
+      }
+      thread_t *target = NULL;
+      for (thread_t *thread = current_task->process->threads; thread;
+           thread = thread->process_next) {
+        if ((uint64_t)thread->id == tid) {
+          target = thread;
+          break;
+        }
+      }
+      if (!target) {
+        regs->rax = (uint64_t)-(int64_t)LINUX_ESRCH;
+        break;
+      }
+      if (signo != 0) {
+        target->linux_pending_signals |= 1ULL << (signo - 1);
+        task_interrupt_wait(target);
+      }
+      regs->rax = 0;
       break;
     }
     case 202: { /* futex operations translate to generic private wait queues */
@@ -3482,6 +3518,7 @@ select_again:
                                        (uint32_t)regs->rdx);
         }
         if (rc == TASK_WAIT_RESULT_TIMEOUT) rc = -LINUX_ETIMEDOUT;
+        if (rc == TASK_WAIT_RESULT_INTERRUPTED) rc = -LINUX_EINTR;
         regs->rax = (uint64_t)(int64_t)rc;
       } else if (command == LINUX_FUTEX_WAKE) {
         if (((uintptr_t)regs->rdi & 3U) != 0 || regs->rdx > 0x7fffffffULL) {
@@ -3513,6 +3550,7 @@ select_again:
             (uint32_t *)regs->rdi, (uint32_t)regs->rdx, timeout_ticks, timed,
             (uint32_t)regs->r9);
         if (rc == TASK_WAIT_RESULT_TIMEOUT) rc = -LINUX_ETIMEDOUT;
+        if (rc == TASK_WAIT_RESULT_INTERRUPTED) rc = -LINUX_EINTR;
         regs->rax = (uint64_t)(int64_t)rc;
       } else if (command == LINUX_FUTEX_WAKE_BITSET) {
         if (((uintptr_t)regs->rdi & 3U) != 0 ||
@@ -3588,4 +3626,5 @@ select_again:
       regs->rax = (uint64_t)-(int64_t)LINUX_ENOSYS;
       break;
   }
+  linux_deliver_pending_signal(regs);
 }

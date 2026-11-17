@@ -29,6 +29,7 @@ typedef void (*wait_cancel_fn)(void *context);
 
 /* Internal wait result, not an errno value. The calling ABI translates it. */
 #define TASK_WAIT_RESULT_TIMEOUT (-4096)
+#define TASK_WAIT_RESULT_INTERRUPTED (-4097)
 
 #define PIPE_BUF_SIZE 4096
 #define KFILE_FLAG_CLOEXEC 0x00000001u
@@ -121,6 +122,7 @@ typedef struct thread {
   uint64_t user_gs_base;
   uint64_t clear_child_tid;
   uint64_t sigmask;
+  uint64_t linux_pending_signals;
   /* Linux personality signal dispositions.  The native scheduler keeps
    * delivery disabled for now, but runtimes still need real rt_sigaction
    * state for their signal probing/installation path. */
@@ -316,6 +318,7 @@ extern int foreground_job_id;
 int task_create_job(void);
 int task_set_foreground_job(int job_id);
 void task_kill_job(int job_id);
+int task_interrupt_wait(thread_t *thread);
 
 // Per-CPU variables and TLS support
 typedef struct {
