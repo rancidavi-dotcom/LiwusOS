@@ -156,6 +156,9 @@ the AF_UNIX handshake itself. The source tree now includes an optional
 non-XKB fallback path. A probe with
 `SDL_VIDEODRIVER=dummy` and `SDL_AUDIODRIVER=dummy` reaches Unity's display
 enumeration but produces no frame, so it is not a menu screenshot. The next
-checkpoint is the XKB/X11 display path, followed by GL/input/audio services.
+checkpoint is GL/input/audio services. The optional
+`programs/granny/compat/screenselector_stub.c` can replace the GTK2-dependent
+`ScreenSelector.so`; with that stub and the X11 transport, the player reaches
+SDL display enumeration (`Display 0 '0': 1024x768`).
 The QEMU fixtures used during this work are temporary and are not
 distributable `.lxe` packages.
