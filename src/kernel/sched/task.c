@@ -557,7 +557,7 @@ void fpu_context_save(void *area) {
   }
 }
 
-static inline void fpu_context_restore(void *area) {
+void fpu_context_restore(void *area) {
   if (fpu_xsave_enabled) {
     uint32_t mask_lo = (uint32_t)fpu_context_mask;
     uint32_t mask_hi = (uint32_t)(fpu_context_mask >> 32);

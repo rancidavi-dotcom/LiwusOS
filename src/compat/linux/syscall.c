@@ -695,6 +695,12 @@ static int64_t linux_rt_sigreturn(registers_t *regs) {
   if (copy_from_user(&frame, (const void *)(uintptr_t)current_task->linux_signal_frame,
                      sizeof(frame)) < 0)
     return -LINUX_EFAULT;
+  if (current_task->fpu_ctx) {
+    size_t fpu_bytes = fpu_context_size < sizeof(frame.fpstate)
+                           ? fpu_context_size : sizeof(frame.fpstate);
+    memcpy(current_task->fpu_ctx, frame.fpstate, fpu_bytes);
+    fpu_context_restore(current_task->fpu_ctx);
+  }
   linux_signal_restore_gregs(regs, &frame);
   current_task->sigmask = frame.context.sigmask;
   current_task->linux_signal_frame = 0;

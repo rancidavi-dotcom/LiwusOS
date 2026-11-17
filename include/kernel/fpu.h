@@ -13,5 +13,6 @@ void init_fpu(void);
 
 /* Snapshot the currently active x87/SSE/AVX state into a task-owned image. */
 void fpu_context_save(void *area);
+void fpu_context_restore(void *area);
 
 #endif
